@@ -1,80 +1,175 @@
-ifndef VERSDIR
-export VERSDIR=$(shell /bin/pwd)
+BUILD_ROOT ?= $(src)
+
+ccflags-y := -D__DARLING__
+
+duct_flags := -I$(BUILD_ROOT)/EXTERNAL_HEADERS \
+	-I$(BUILD_ROOT)/EXTERNAL_HEADERS/bsd \
+	-DPAGE_SIZE_FIXED \
+	-DCONFIG_SCHED_TRADITIONAL \
+	-freorder-blocks \
+	-fno-builtin \
+	-fno-common \
+	-fsigned-bitfields \
+	-fno-strict-aliasing \
+	-fno-keep-inline-functions \
+	-DAPPLE \
+	-DKERNEL \
+	-DKERNEL_PRIVATE \
+	-DXNU_KERNEL_PRIVATE \
+	-DPRIVATE \
+	-D__MACHO__=1 \
+	-Dvolatile=__volatile \
+	-DNEXT \
+	-Wno-error=cast-align \
+	-Wno-unused-parameter \
+	-Wno-missing-prototypes \
+	-Wno-unused-variable \
+	-D__STDC_VERSION__=199901L \
+	-D__LITTLE_ENDIAN__=1 \
+	-Wno-declaration-after-statement \
+	-Wno-undef \
+	-Wno-maybe-uninitialized \
+	-D__private_extern__=extern \
+	-D_MODE_T -D_NLINK_T -DVM32_SUPPORT=1 -DMACH_KERNEL_PRIVATE
+
+duct_bsd_flags :=  -I$(BUILD_ROOT)/miggen/bsd \
+      -I$(BUILD_ROOT)/bsd \
+      -I$(BUILD_ROOT)/osfmk \
+      -I$(BUILD_ROOT)/iokit \
+      -I$(BUILD_ROOT)/libkern \
+      -I$(BUILD_ROOT)/libsa \
+      -I$(BUILD_ROOT)/libsa \
+      -I$(BUILD_ROOT)/pexpert \
+      -I$(BUILD_ROOT)/security \
+      -I$(BUILD_ROOT)/export-headers \
+	  -I$(BUILD_ROOT)/osfmk/libsa \
+	  -I$(BUILD_ROOT)/osfmk/mach_debug \
+	  -I$(BUILD_ROOT)/ \
+	  -I$(BUILD_ROOT)/miggen/osfmk \
+      -DARCH_PRIVATE \
+      -DDRIVER_PRIVATE \
+      -D_KERNEL_BUILD \
+      -DKERNEL_BUILD \
+      -DMACH_KERNEL \
+      -DBSD_BUILD \
+      -DBSD_KERNEL_PRIVATE \
+      -DLP64KERN=1 \
+      -DLP64_DEBUG=0 \
+      -DTIMEZONE=0 \
+      -DPST=0 \
+      -DQUOTA \
+      -DABSOLUTETIME_SCALAR_TYPE \
+      -DCONFIG_LCTX \
+      -DMACH \
+      -DCONFIG_ZLEAKS \
+      -DNO_DIRECT_RPC \
+      -DIPFIREWALL_FORWARD \
+      -DIPFIREWALL_DEFAULT_TO_ACCEPT \
+      -DTRAFFIC_MGT \
+      -DRANDOM_IP_ID \
+      -DTCP_DROP_SYNFIN \
+      -DICMP_BANDLIM \
+      -DIFNET_INPUT_SANITY_CHK \
+      -DPSYNCH \
+      -DSECURE_KERNEL \
+      -DOLD_SEMWAIT_SIGNAL \
+      -DCONFIG_MBUF_JUMBO \
+      -DCONFIG_WORKQUEUE \
+      -DCONFIG_HFS_STD \
+      -DCONFIG_HFS_TRIM \
+      -DNAMEDSTREAMS \
+      -DCONFIG_VOLFS \
+      -DCONFIG_IMGSRC_ACCESS \
+      -DCONFIG_TRIGGERS \
+      -DCONFIG_VFS_FUNNEL \
+      -DCONFIG_EXT_RESOLVER \
+      -DCONFIG_SEARCHFS \
+      -DIPSEC \
+      -DIPSEC_ESP \
+      -DIPV6FIREWALL_DEFAULT_TO_ACCEPT \
+      -Dcrypto \
+      -Drandomipid \
+      -DCONFIG_KN_HASHSIZE=20 \
+      -DCONFIG_VNODES=750 \
+      -DCONFIG_VNODE_FREE_MIN=75 \
+      -DCONFIG_NC_HASH=1024 \
+      -DCONFIG_VFS_NAMES=2048 \
+      -DCONFIG_MAX_CLUSTERS=4 \
+      -DKAUTH_CRED_PRIMES_COUNT=3 \
+      -DKAUTH_CRED_PRIMES="{5, 17, 97}" \
+      -DCONFIG_MIN_NBUF=64 \
+      -DCONFIG_MIN_NIOBUF=32 \
+      -DCONFIG_NMBCLUSTERS="((1024 * 256) / MCLBYTES)" \
+      -DCONFIG_TCBHASHSIZE=128 \
+      -DCONFIG_ICMP_BANDLIM=50 \
+      -DCONFIG_AIO_MAX=10 \
+      -DCONFIG_AIO_PROCESS_MAX=4 \
+      -DCONFIG_AIO_THREAD_COUNT=2 \
+      -DCONFIG_THREAD_MAX=1024 \
+      -DCONFIG_MAXVIFS=2 \
+      -DCONFIG_MFCTBLSIZ=16 \
+      -DCONFIG_MSG_BSIZE=4096 \
+      -DCONFIG_ENFORCE_SIGNED_CODE \
+      -DCONFIG_MEMORYSTATUS \
+      -DCONFIG_JETSAM \
+      -DCONFIG_FREEZE \
+      -DVM_PRESSURE_EVENTS \
+      -DCONFIG_KERNEL_0DAY_SYSCALL_HANDLER \
+      -DEVENTMETER \
+      -DCONFIG_APP_PROFILE=0 \
+      -DDEBUG
+duct_bsd_flags += $(duct_flags)
+
+ccflags-y += $(duct_bsd_flags)
+#CFLAGS_dummy.o := $(duct_bsd_flags)
+#CFLAGS_dummy-kern.o := $(duct_bsd_flags)
+
+# If KERNELRELEASE is defined, we've been invoked from the
+# kernel build system and can use its language.
+ifneq ($(KERNELRELEASE),)
+	obj-m := darling-mach.o
+#	darling-mach-objs := duct/bsd/dummy.o \
+		duct/osfmk/dummy-kern.o \
+		duct/osfmk/dummy-arm-locks-arm.o
+	darling-mach-objs := osfmk/ipc/ipc_entry.o \
+		osfmk/ipc/ipc_hash.o \
+		osfmk/ipc/ipc_space.o \
+		osfmk/ipc/ipc_kmsg.o \
+		osfmk/ipc/ipc_labelh.o \
+		osfmk/ipc/ipc_notify.o \
+		osfmk/ipc/ipc_object.o \
+		osfmk/ipc/ipc_pset.o \
+		osfmk/ipc/ipc_table.o \
+		osfmk/ipc/mig_log.o \
+		osfmk/ipc/mach_port.o \
+		osfmk/ipc/mach_msg.o \
+		osfmk/ipc/mach_debug.o \
+		osfmk/ipc/mach_kernelrpc.o \
+		osfmk/ipc/ipc_init.o \
+		osfmk/ipc/ipc_right.o \
+		osfmk/ipc/ipc_mqueue.o \
+		osfmk/ipc/ipc_port.o \
+		osfmk/kern/sync_sema.o \
+		linux/down_interruptible.o
+
+# Otherwise we were called directly from the command
+# line; invoke the kernel build system.
+else
+	KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+	PWD := $(shell pwd)
+default:
+	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
+
 endif
-ifndef SRCROOT
-export SRCROOT=$(shell /bin/pwd)
-endif
-ifndef OBJROOT
-export OBJROOT=$(SRCROOT)/BUILD/obj/
-endif
-ifndef DSTROOT
-export DSTROOT=$(SRCROOT)/BUILD/dst/
-endif
-ifndef SYMROOT
-export SYMROOT=$(SRCROOT)/BUILD/sym/
-endif
 
-export MakeInc_cmd=${VERSDIR}/makedefs/MakeInc.cmd
-export MakeInc_def=${VERSDIR}/makedefs/MakeInc.def
-export MakeInc_rule=${VERSDIR}/makedefs/MakeInc.rule
-export MakeInc_dir=${VERSDIR}/makedefs/MakeInc.dir
+all:
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
+clean:
+	rm -f *.o *.ko
+	rm -f *.mod.c
+	rm -rf modules.order Module.symvers
 
-include $(MakeInc_cmd)
-include $(MakeInc_def)
-
-ALL_SUBDIRS = \
-	iokit \
-	osfmk \
-	bsd  \
-	pexpert \
-	libkern \
-	libsa \
-	security
-
-CONFIG_SUBDIRS_I386 = config
-CONFIG_SUBDIRS_X86_64 = config
-CONFIG_SUBDIRS_ARM = config
-
-INSTINC_SUBDIRS = $(ALL_SUBDIRS) EXTERNAL_HEADERS
-INSTINC_SUBDIRS_I386 = $(INSTINC_SUBDIRS)
-INSTINC_SUBDIRS_X86_64 = $(INSTINC_SUBDIRS)
-INSTINC_SUBDIRS_ARM = $(INSTINC_SUBDIRS)
-
-EXPINC_SUBDIRS = $(ALL_SUBDIRS)
-EXPINC_SUBDIRS_I386 = $(EXPINC_SUBDIRS)
-EXPINC_SUBDIRS_X86_64 = $(EXPINC_SUBDIRS)
-EXPINC_SUBDIRS_ARM = $(EXPINC_SUBDIRS)
-
-SETUP_SUBDIRS = SETUP
-
-COMP_SUBDIRS_I386 = $(ALL_SUBDIRS)
-COMP_SUBDIRS_X86_64 = $(ALL_SUBDIRS)
-COMP_SUBDIRS_ARM = $(ALL_SUBDIRS)
-
-INST_SUBDIRS =	\
-	libkern	\
-	libsa   \
-	iokit	\
-	osfmk	\
-	bsd	\
-	config	\
-	security
-
-INSTALL_KERNEL_FILE = mach_kernel
-
-INSTALL_KERNEL_DIR = /
-
-INSTALL_KERNEL_SYM_DIR = $(INSTALL_KERNEL_DIR)/System/Library/Extensions/KDK/
-
-
-INSTMAN_SUBDIRS = \
-	bsd
-
-include $(MakeInc_rule)
-include $(MakeInc_dir)
-
-# This target is defined to compile and run xnu_quick_test under testbots
-testbots:
-	/usr/bin/make MORECFLAGS="-D RUN_UNDER_TESTBOTS=1" testbots -C ./tools/tests/xnu_quick_test/
+install:
+	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules_install
 
