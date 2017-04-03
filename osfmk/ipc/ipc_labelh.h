@@ -55,7 +55,7 @@
 #define _IPC_LABELH_H_
 
 #include <kern/lock.h>
-#include <ipc/ipc_port.h>
+//#include <ipc/ipc_port.h>
 #include <security/_label.h>
 
 #if CONFIG_MACF_MACH

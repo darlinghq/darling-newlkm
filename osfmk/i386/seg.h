@@ -303,6 +303,7 @@ __END_DECLS
 
 #else // __x86_64__
 
+#ifndef __DARLING__
 /*
  * Kernel descriptors for MACH - 64-bit flat address space.
  */
@@ -321,6 +322,8 @@ __END_DECLS
 #define USER_LDT	0x58		/* 11: */
 					/* 12: other 8 bytes of USER_LDT */
 #define KERNEL_DS	0x68		/* 13: 32-bit kernel data */
+
+#endif
 
 #endif
 

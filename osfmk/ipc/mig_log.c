@@ -89,6 +89,8 @@ int mig_tracing, mig_errors, mig_full_tracing;
  *	#include <mig_log.h>
  */ 
 
+#include <linux/printk.h>
+
 void
 MigEventTracer(
 	mig_who_t		who,
@@ -103,11 +105,11 @@ MigEventTracer(
 	char			*file,
 	unsigned int		line)
 {
-    printf("%d|%d|%d", who, what, msgh_id); 
+    printk(KERN_DEBUG "%d|%d|%d", who, what, msgh_id); 
     if (mig_full_tracing)
-	printf(" -- sz%d|kpd%d|ret(0x%x)|p%d|o%d|op%d|%s, %d", 
+	printk(KERN_DEBUG " -- sz%d|kpd%d|ret(0x%x)|p%d|o%d|op%d|%s, %d", 
 	    size, kpd, retcode, ports, oolports, ool, file, line); 
-    printf("\n");
+    printk(KERN_DEBUG "\n");
 }
 
 void
@@ -119,7 +121,7 @@ MigEventErrors(
 	unsigned int		line)
 {
     if (what == MACH_MSG_ERROR_UNKNOWN_ID)
-	printf("%d|%d|%d -- %s %d\n", who, what, *(int *)par, file, line); 
+	printk(KERN_DEBUG "%d|%d|%d -- %s %d\n", who, what, *(int *)par, file, line); 
     else
-	printf("%d|%d|%s -- %s %d\n", who, what, (char *)par, file, line); 
+	printk(KERN_DEBUG "%d|%d|%s -- %s %d\n", who, what, (char *)par, file, line); 
 }

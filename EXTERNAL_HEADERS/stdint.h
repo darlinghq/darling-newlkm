@@ -160,7 +160,9 @@ typedef unsigned long long      uintmax_t;
    Should end up being {-127,127} or {0,255} ... or bigger.
    My bet would be on one of {U}INT32_{MIN,MAX}. */
 
+#ifndef SIZE_MAX
 #define SIZE_MAX          UINT32_MAX
+#endif
 
 #ifndef WCHAR_MAX
 #define WCHAR_MAX         INT32_MAX

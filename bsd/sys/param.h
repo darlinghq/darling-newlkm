@@ -151,7 +151,9 @@
 #define	NBPW	sizeof(int)	/* number of bytes per word (integer) */
 
 #define	CMASK	022		/* default file mask: S_IWGRP|S_IWOTH */
+#ifndef NODEV
 #define	NODEV	(dev_t)(-1)	/* non-existent device */
+#endif
 
 /*
  * Clustering of hardware pages on machines with ridiculously small
@@ -207,7 +209,9 @@
  * infinite loops reasonably quickly.
  */
 #define	MAXPATHLEN	PATH_MAX
+#ifndef MAXSYMLINKS
 #define MAXSYMLINKS	32
+#endif
 
 /* Bit map related macros. */
 #define	setbit(a,i)	(((char *)(a))[(i)/NBBY] |= 1<<((i)%NBBY))

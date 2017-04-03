@@ -46,6 +46,7 @@
 #define _JBLEN ((9 * 2) + 3 + 16)
 typedef int jmp_buf[_JBLEN];
 typedef int sigjmp_buf[_JBLEN + 1];
+typedef jmp_buf jmp_buf_t;
 
 #else
 

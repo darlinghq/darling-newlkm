@@ -200,29 +200,37 @@ static inline void set_es(uint16_t es)
 	__asm__ volatile("mov %0, %%es" : : "r" (es));
 }
 
+#ifndef get_ds
 static inline uint16_t get_ds(void)
 {
 	uint16_t ds;
 	__asm__ volatile("mov %%ds, %0" : "=r" (ds));
 	return ds;
 }
+#endif
 
+#ifndef set_ds
 static inline void set_ds(uint16_t ds)
 {
 	__asm__ volatile("mov %0, %%ds" : : "r" (ds));
 }
+#endif
 
+#ifndef get_fs
 static inline uint16_t get_fs(void)
 {
 	uint16_t fs;
 	__asm__ volatile("mov %%fs, %0" : "=r" (fs));
 	return fs;
 }
+#endif
 
+#ifndef set_fs
 static inline void set_fs(uint16_t fs)
 {
 	__asm__ volatile("mov %0, %%fs" : : "r" (fs));
 }
+#endif
 
 static inline uint16_t get_gs(void)
 {
@@ -397,12 +405,16 @@ static inline void flush_tlb_raw(void)
 	set_cr3_raw(get_cr3_raw());
 }
 #endif
+extern int rdmsr64_carefully(uint32_t msr, uint64_t *val);
+extern int wrmsr64_carefully(uint32_t msr, uint64_t val);
 #endif	/* MACH_KERNEL_PRIVATE */
 
+#ifndef __DARLING__
 static inline void wbinvd(void)
 {
 	__asm__ volatile("wbinvd");
 }
+#endif
 
 static inline void invlpg(uintptr_t addr)
 {
@@ -415,6 +427,7 @@ static inline void invlpg(uintptr_t addr)
  * pointer indirection), this allows gcc to optimize better
  */
 
+#ifndef __DARLING__
 #define rdmsr(msr,lo,hi) \
 	__asm__ volatile("rdmsr" : "=a" (lo), "=d" (hi) : "c" (msr))
 
@@ -428,6 +441,7 @@ static inline void invlpg(uintptr_t addr)
 
 #define rdpmc(counter,lo,hi) \
 	__asm__ volatile("rdpmc" : "=a" (lo), "=d" (hi) : "c" (counter))
+#endif
 
 #ifdef __i386__
 
@@ -474,12 +488,14 @@ static inline void wrmsr64(uint32_t msr, uint64_t val)
 	wrmsr(msr, (val & 0xFFFFFFFFUL), ((val >> 32) & 0xFFFFFFFFUL));
 }
 
+#ifndef __DARLING__
 static inline uint64_t rdtsc64(void)
 {
 	uint64_t lo, hi;
 	rdtsc(lo, hi);
 	return ((hi) << 32) | (lo);
 }
+#endif
 
 static inline uint64_t rdtscp64(uint32_t *aux)
 {
@@ -501,11 +517,11 @@ static inline uint64_t rdtscp64(uint32_t *aux)
  * The implementation is in locore.s.
  */
 extern int rdmsr_carefully(uint32_t msr, uint32_t *lo, uint32_t *hi);
-
 __END_DECLS
 
 #endif	/* ASSEMBLER */
 
+#ifndef __DARLING__
 #define MSR_IA32_P5_MC_ADDR			0
 #define MSR_IA32_P5_MC_TYPE			1
 #define MSR_IA32_PLATFORM_ID			0x17
@@ -528,7 +544,9 @@ __END_DECLS
 #define MSR_IA32_UPDT_TRIG			0x79
 #define MSR_IA32_BIOS_SIGN_ID			0x8b
 #define MSR_IA32_UCODE_WRITE			MSR_IA32_UPDT_TRIG
+#ifndef MSR_IA32_UCODE_REV
 #define MSR_IA32_UCODE_REV			MSR_IA32_BIOS_SIGN_ID
+#endif
 
 #define MSR_IA32_PERFCTR0			0xc1
 #define MSR_IA32_PERFCTR1			0xc2
@@ -537,8 +555,6 @@ __END_DECLS
 
 #define MSR_IA32_MPERF				0xE7
 #define MSR_IA32_APERF				0xE8
-
-#define MSR_PMG_CST_CONFIG_CONTROL		0xe2
 
 #define MSR_IA32_BBL_CR_CTL			0x119
 
@@ -560,7 +576,6 @@ __END_DECLS
 
 #define MSR_IA32_MISC_ENABLE			0x1a0
 
-#define MSR_IA32_ENERGY_PERFORMANCE_BIAS	0x1b0
 #define MSR_IA32_PACKAGE_THERM_STATUS		0x1b1
 #define MSR_IA32_PACKAGE_THERM_INTERRUPT	0x1b2
 
@@ -618,9 +633,23 @@ __END_DECLS
 #define MSR_IA32_PKG_POWER_SKU_UNIT		0x606
 #define MSR_IA32_PKG_C2_RESIDENCY		0x60D
 #define MSR_IA32_PKG_ENERGY_STATUS		0x611
-#define MSR_IA32_PRIMARY_PLANE_ENERY_STATUS	0x639
-#define MSR_IA32_SECONDARY_PLANE_ENERY_STATUS	0x641
+
+#define MSR_IA32_DDR_ENERGY_STATUS		0x619
+#define MSR_IA32_LLC_FLUSHED_RESIDENCY_TIMER	0x61D
+#define MSR_IA32_RING_PERF_STATUS		0x621
+
+#define MSR_IA32_PKG_C8_RESIDENCY		0x630
+#define MSR_IA32_PKG_C9_RESIDENCY		0x631
+#define MSR_IA32_PKG_C10_RESIDENCY		0x632
+
+#define MSR_IA32_PP0_ENERGY_STATUS		0x639
+#define MSR_IA32_PP1_ENERGY_STATUS		0x641
+#define MSR_IA32_IA_PERF_LIMIT_REASONS		0x690
+#define MSR_IA32_GT_PERF_LIMIT_REASONS		0x6B0
+
+#ifndef MSR_IA32_TSC_DEADLINE
 #define MSR_IA32_TSC_DEADLINE			0x6e0
+#endif
 
 #define	MSR_IA32_EFER				0xC0000080
 #define	    MSR_IA32_EFER_SCE			    0x00000001
@@ -637,5 +666,7 @@ __END_DECLS
 #define MSR_IA32_GS_BASE			0xC0000101
 #define MSR_IA32_KERNEL_GS_BASE			0xC0000102
 #define MSR_IA32_TSC_AUX			0xC0000103
+
+#endif
 
 #endif	/* _I386_PROC_REG_H_ */

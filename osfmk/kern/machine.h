@@ -73,11 +73,13 @@ extern kern_return_t cpu_start(
 extern void cpu_exit_wait(
 					int                 slot_num);
 
+#ifndef __DARLING__
 extern kern_return_t cpu_info(
 					processor_flavor_t  flavor,
 					int                 slot_num,
 					processor_info_t    info,
 					unsigned int        *count);
+#endif
 
 extern kern_return_t cpu_info_count(
 					processor_flavor_t  flavor,

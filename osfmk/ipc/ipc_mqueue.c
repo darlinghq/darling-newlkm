@@ -582,7 +582,8 @@ ipc_mqueue_post(
 
                 if (lwait) {
                         struct task_struct    * ltask   = lwait->private;
-                        receiver    = ltask->mach_thread;
+//                        receiver    = ltask->mach_thread;
+#warning GET MACH THREAD HERE
                         // thread_lock (receiver);
                 }
                 spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);

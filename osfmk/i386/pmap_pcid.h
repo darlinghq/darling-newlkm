@@ -49,8 +49,10 @@ extern uint32_t pmap_pcid_ncpus;
 static inline void
 tlb_flush_global(void) {
 	uintptr_t cr4 = get_cr4();
+#ifndef __DARLING__
 	pmap_assert(ml_get_interrupts_enabled() == FALSE || get_preemption_level() !=0);
 	pmap_assert2(((cr4 & CR4_PGE) || ml_at_interrupt_context()), "CR4: 0x%lx", cr4);
+#endif
 	/*
 	 * We are, unfortunately, forced to rely on this expensive
 	 * read-modify-write-write scheme due to the inadequate
@@ -77,7 +79,11 @@ static inline void pmap_pcid_invalidate_all_cpus(pmap_t tpmap) {
 }
 
 static inline void pmap_pcid_validate_current(void) {
+#ifdef __DARLING__
+	int	ccpu = cpu_number;
+#else
 	int	ccpu = cpu_number();
+#endif
 	volatile uint8_t *cptr = cpu_datap(ccpu)->cpu_pmap_pcid_coherentp;
 #ifdef	PMAP_MODULE
 	pmap_assert(cptr == &(current_thread()->map->pmap->pmap_pcid_coherency_vector[ccpu]));

@@ -573,7 +573,11 @@ extern pmap_memory_region_t pmap_memory_regions[];
 
 static inline void
 set_dirbase(pmap_t tpmap, __unused thread_t thread) {
+#ifdef __DARLING__
+	int ccpu = cpu_number;
+#else
 	int ccpu = cpu_number();
+#endif
 	cpu_datap(ccpu)->cpu_task_cr3 = tpmap->pm_cr3;
 	cpu_datap(ccpu)->cpu_task_map = tpmap->pm_task_map;
 #ifndef __i386__

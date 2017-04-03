@@ -420,10 +420,12 @@ struct thread {
 	uint32_t		syscalls_mach;
 	ledger_t		t_ledger;
 	ledger_t		t_threadledger;	/* per thread ledger */
+#ifndef __DARLING__
 	struct process_policy ext_appliedstate;	/* externally applied actions */
 	struct process_policy ext_policystate;	/* externally defined process policy states*/
 	struct process_policy appliedstate;		/* self applied acions */
 	struct process_policy policystate;		/* process wide policy states */
+#endif
 #if CONFIG_EMBEDDED
 	task_watch_t *	taskwatch;		/* task watch */
 	integer_t		saved_importance;		/* saved task-relative importance */
@@ -437,6 +439,10 @@ struct thread {
 					callout_woken_from_platform_idle:1,
 					thread_bitfield_unused:14;
 
+#if defined (__DARLING__)
+        struct task_struct        * linux_task;
+        // linux_wait_queue_t          lwait;
+#endif
 };
 
 #define ith_state		saved.receive.state
@@ -456,10 +462,9 @@ struct thread {
 #define sth_result		saved.sema.result
 #define sth_continuation	saved.sema.continuation
 
+
 extern void			thread_bootstrap(void) __attribute__((section("__TEXT, initcode")));
-
 extern void			thread_init(void) __attribute__((section("__TEXT, initcode")));
-
 extern void			thread_daemon_init(void);
 
 #define	thread_reference_internal(thread)	\
@@ -482,8 +487,13 @@ extern void			thread_terminate_self(void);
 extern kern_return_t	thread_terminate_internal(
 							thread_t		thread);
 
+#if defined (__DARLING__)
+extern void			thread_start_internal(
+							thread_t			thread);
+#else
 extern void			thread_start_internal(
 							thread_t			thread) __attribute__ ((noinline));
+#endif
 
 extern void			thread_terminate_enqueue(
 						thread_t		thread);

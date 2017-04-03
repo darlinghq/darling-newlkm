@@ -31,6 +31,6 @@
 #ifndef	_MACHINE_SETJMP_H_
 #define	_MACHINE_SETJMP_H_
 
-#include <setjmp.h>
+#include <i386/setjmp.h>
 
 #endif	/* _MACHINE_SETJMP_H_ */

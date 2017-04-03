@@ -75,6 +75,8 @@
 #include <kern/timer_call.h>
 #include <kern/ast.h>
 
+typedef uint32_t ast_t;
+
 #define	NRQS		128				/* 128 levels per run queue */
 #define NRQBM		(NRQS / 32)		/* number of words per bit map */
 

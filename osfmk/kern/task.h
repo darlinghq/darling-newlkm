@@ -313,7 +313,9 @@ struct task {
 		uint32_t  p_switch;			   /* total processor switches */
 		uint32_t  ps_switch;		   /* total pset switches */
 
+#ifndef __DARLING__
 	zinfo_usage_t tkm_zinfo;	/* per-task, per-zone usage statistics */
+#endif
 
 #ifdef  MACH_BSD 
 	void *bsd_info;

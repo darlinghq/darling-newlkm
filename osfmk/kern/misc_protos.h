@@ -54,6 +54,8 @@
 #define MAX(a,b) (((a)>(b))?(a):(b))
 #endif  /* MAX */
 
+#ifndef __DARLING__
+
 /* Set a bit in a bit array */
 extern void setbit(
 	int		which,
@@ -223,4 +225,5 @@ struct kmod_info_t;
 
 extern uint64_t early_random(void);
 
+#endif
 #endif	/* _MISC_PROTOS_H_ */

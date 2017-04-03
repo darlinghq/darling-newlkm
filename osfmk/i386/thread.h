@@ -119,7 +119,7 @@ struct x86_kernel_state {
 /*
  * Maps state flavor to number of words in the state:
  */
-__private_extern__ unsigned int _MachineStateCount[];
+/* __private_extern__ */ extern unsigned int _MachineStateCount[];
 
 /*
  * The machine-dependent thread state - registers and all platform-dependent
@@ -198,6 +198,9 @@ extern void act_thread_cfree(void *ctx);
 static inline vm_offset_t
 current_stack_depth(void)
 {
+#ifdef __DARLING__
+	return 0;
+#else
 	vm_offset_t	stack_ptr;
 
 	assert(get_preemption_level() > 0 || !ml_get_interrupts_enabled());
@@ -210,6 +213,7 @@ current_stack_depth(void)
 	return (current_cpu_datap()->cpu_kernel_stack
 		+ sizeof(struct x86_kernel_state)
 		- stack_ptr); 
+#endif
 }
 
 /*

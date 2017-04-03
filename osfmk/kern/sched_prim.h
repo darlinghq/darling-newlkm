@@ -72,6 +72,7 @@
 #include <kern/clock.h>
 #include <kern/kern_types.h>
 #include <kern/thread.h>
+#include <kern/ast.h>
 #include <sys/cdefs.h>
 
 #ifdef	MACH_KERNEL_PRIVATE
@@ -269,15 +270,15 @@ boolean_t	sched_grrr_fairshare_queue_remove(thread_t thread);
 extern boolean_t sched_generic_direct_dispatch_to_idle_processors;
 
 /* Set the maximum interrupt level for the thread */
-__private_extern__ wait_interrupt_t thread_interrupt_level(
+/* __private_extern__ */ extern wait_interrupt_t thread_interrupt_level(
 						wait_interrupt_t interruptible);
 
-__private_extern__ wait_result_t thread_mark_wait_locked(
+/* __private_extern__ */ extern wait_result_t thread_mark_wait_locked(
 						thread_t		 thread,
 						wait_interrupt_t interruptible);
 
 /* Wake up locked thread directly, passing result */
-__private_extern__ kern_return_t clear_wait_internal(
+/* __private_extern__ */ extern kern_return_t clear_wait_internal(
 						thread_t		thread,
 						wait_result_t	result);
 
