@@ -40,6 +40,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // #include <mach/mach_types.h>
 #include <kern/mach_param.h>
 #include <kern/thread.h>
+#include <kern/spl.h>
 
 #include "duct_post_xnu.h"
 
@@ -460,7 +461,8 @@ xnu_wait_queue_t duct__wait_queue_walkup (xnu_wait_queue_t waitq, event64_t even
 int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, int sync, void * key)
 {
         struct task_struct    * ltask   = lwait->private;
-        thread_t                thread  = ltask->mach_thread;
+        thread_t                thread  = /* ltask->mach_thread */ 0;
+#warning GET MACH THREAD HERE!
 
         printk ( KERN_NOTICE "- thread: 0x%p wakeup_event: 0x%llx, thread's wait_event: 0x%llx\n",
                  thread, CAST_EVENT64_T (key), thread->wait_event );

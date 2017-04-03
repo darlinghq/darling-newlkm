@@ -197,8 +197,8 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                           boolean_t src_destroy, boolean_t src_volatile,
                                           vm_map_copy_t * copy_result, boolean_t use_maxprot )
 {
-        printk ( KERN_NOTICE "- BUG: vm_map_copyin_common to current_map: 0x%p from src_map: 0x%p, addr: 0x%x, len: 0x%x destroy: %d\n",
-                 current_map (), src_map, src_addr, len, src_destroy );
+        printk ( KERN_NOTICE "- BUG: vm_map_copyin_common to current_map: %p from src_map: %p, addr: %p, len: 0x%llx destroy: %d\n",
+                 current_map (), src_map, (void*) src_addr, len, src_destroy );
 
         // dump_stack ();
 
@@ -238,6 +238,9 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
         // printk ( KERN_NOTICE "- copy: 0x%p, sizeof vm_area_struct: %d\n",
         //          copy, sizeof(struct vm_area_struct) );
 
+#warning IMPLEMENT MEMORY COPY!
+		return KERN_FAILURE;
+#if 0
         switch (copy->type) {
             #if defined (__DARLING__)
             #else
@@ -254,7 +257,6 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                         }
                         return KERN_SUCCESS;
             #endif
-
                 case VM_MAP_COPY_LINUX_VMA_LIST:
                 {
                         // WC assert that we destroy source so that we don't
@@ -328,8 +330,8 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                         *copy_result    = copy;
                         return KERN_SUCCESS;
                 }
-
         }
+#endif
 
         // initialise list head
         // vm_map_copy_first_entry (copy)  = vm_map_copy_to_entry (copy);
@@ -455,7 +457,8 @@ static const struct vm_operations_struct special_mapping_vmops = {
 kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr, vm_map_copy_t copy)
 {
         printk ( KERN_NOTICE "- BUG: vm_map_copyout (current_map: 0x%p) to dst_map: 0x%p, addr: 0x%p, copy: 0x%p\n",
-                 current_map (), dst_map, dst_addr, copy );
+                 current_map (), dst_map, (void*) dst_addr, copy );
+#if 0
 		down_write (&linux_current->mm->mmap_sem);
 
 
@@ -501,4 +504,7 @@ out:
 		up_write (&linux_current->mm->mmap_sem);
         kmem_cache_free(vm_area_cachep, vma);
         return ret;
+#endif
+#warning IMPLEMENT MEMORY COPYOUT
+		return KERN_FAILURE;
 }

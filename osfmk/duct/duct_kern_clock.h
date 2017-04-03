@@ -37,6 +37,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
+#include <kern/clock.h>
 
 #define XNU_USE_MACHTRAP_WRAPPERS_TIMEKEEPING
 
@@ -55,6 +56,6 @@ extern kern_return_t xnusys_mach_wait_until_trap (struct mach_wait_until_trap_ar
 #endif
 
 // Add when compiling iokit/Kernel
-extern void clock_get_calendar_microtime (uint32_t *secs, uint32_t *microsecs);
+extern void clock_get_calendar_microtime (clock_sec_t *secs, clock_usec_t *microsecs);
 
 #endif // DUCT_KERN_CLOCK_H

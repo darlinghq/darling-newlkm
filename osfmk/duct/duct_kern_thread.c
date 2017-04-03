@@ -41,6 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <kern/mach_param.h>
 #include <kern/thread.h>
+#include <kern/ipc_tt.h>
 
 #include "duct_post_xnu.h"
 
@@ -98,7 +99,7 @@ void duct_thread_bootstrap (void)
 
         thread_template.ref_count = 2;
 
-        thread_template.reason = AST_NONE;
+        thread_template.reason = 0;
         thread_template.at_safe_point = FALSE;
         thread_template.wait_event = NO_EVENT64;
         thread_template.wait_queue = WAIT_QUEUE_NULL;
@@ -190,10 +191,13 @@ void duct_thread_bootstrap (void)
         thread_template.t_ledger = LEDGER_NULL;
         thread_template.t_threadledger = LEDGER_NULL;
 
-        thread_template.appliedstate = default_task_null_policy;
+ 
+#if 0
+		thread_template.appliedstate = default_task_null_policy;
         thread_template.ext_appliedstate = default_task_null_policy;
         thread_template.policystate = default_task_proc_policy;
         thread_template.ext_policystate = default_task_proc_policy;
+#endif
     #if CONFIG_EMBEDDED
         thread_template.taskwatch = NULL;
         thread_template.saved_importance = 0;
@@ -201,7 +205,8 @@ void duct_thread_bootstrap (void)
 
         init_thread = thread_template;
 
-    #if defined (__DARLING__)
+#warning Init thread initialization disabled!
+    #if defined (__DARLING__) && 0
         // machine_set_current_thread(&init_thread);
         linux_current->mach_thread      = (void *) &init_thread;
         init_thread.linux_task          = linux_current;
@@ -266,7 +271,10 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
 
         // WC - todo: compat_uthread_alloc
-        new_thread->compat_uthread = (void *) compat_uthread_alloc (parent_task, new_thread);
+#warning compat_uthread disabled
+#if 0
+		new_thread->compat_uthread = (void *) compat_uthread_alloc (parent_task, new_thread);
+#endif
 
 // #ifdef MACH_BSD
 //     new_thread->uthread = uthread_alloc(parent_task, new_thread, (options & TH_OPTION_NOCRED) != 0);
@@ -489,10 +497,17 @@ static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_t
 }
 
 
+#ifdef current_thread
+#undef current_thread
+#endif
 thread_t current_thread (void)
 {
         // kprintf ("calling current thread on linux task: 0x%x\n", (unsigned int) linux_current);
+#if 0
         return (thread_t) linux_current->mach_thread;
+#endif
+#warning GET CURRENT MACH THREAD HERE!
+		return 0;
 }
 
 void duct_thread_deallocate (thread_t thread)
@@ -520,12 +535,13 @@ void duct_thread_deallocate (thread_t thread)
     //     }
     // #endif  /* MACH_BSD */
 
+#if 0
         void      * uthread     = thread->compat_uthread;
         thread->compat_uthread  = NULL;
         // WC - todo check below: should use zone free (), not uthread_free
         compat_uthread_zone_free (uthread);
         // compat_uthread_free (thread->compat_uthread);
-
+#endif
 
         // if (thread->t_ledger)
         //         ledger_dereference(thread->t_ledger);
@@ -546,7 +562,7 @@ void duct_thread_deallocate (thread_t thread)
 }
 
 
-
+#if 0
 kern_return_t thread_set_cthread_self (uint32_t cthread)
 {
         thread_t    thread      = current_thread ();
@@ -573,4 +589,5 @@ kern_return_t xnusys_thread_set_cthread_self (uint32_t cthread)
 
         return thread_set_cthread_self (cthread);
 }
+#endif
 #endif

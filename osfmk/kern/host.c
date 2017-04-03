@@ -62,6 +62,11 @@
  *	Non-ipc host functions.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/host_info.h>
@@ -87,6 +92,10 @@
 #include <kern/processor.h>
 
 #include <vm/vm_map.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 host_data_t	realhost;
 
@@ -146,7 +155,10 @@ host_info(
 	host_info_t				info,
 	mach_msg_type_number_t	*count)
 {
-
+#if defined (__DARLING__)
+    kprintf("not implemented: host_info()\n");
+    return KERN_SUCCESS;
+#else
 	if (host == HOST_NULL)
 		return (KERN_INVALID_ARGUMENT);
 	
@@ -261,6 +273,7 @@ host_info(
 	default:
 		return (KERN_INVALID_ARGUMENT);
 	}
+#endif
 }
 
 kern_return_t
@@ -270,6 +283,10 @@ host_statistics(
 	host_info_t				info,
 	mach_msg_type_number_t	*count)
 {
+#if defined (__DARLING__)
+    kprintf("not implemented: host_statistics()\n");
+    return -1;
+#else
 	uint32_t	i;
 
 	if (host == HOST_NULL)
@@ -461,6 +478,7 @@ MACRO_END
 	default:
 		return (KERN_INVALID_ARGUMENT);
 	}
+#endif
 }
 
 
@@ -600,6 +618,10 @@ get_sched_statistics(
 		struct _processor_statistics_np *out, 
 		uint32_t *count)
 {
+#if defined (__DARLING__)
+    kprintf("not implemented: host_statistics()\n");
+    return -1;
+#else
 	processor_t processor;
 
 	if (!sched_stats_active) {
@@ -652,6 +674,7 @@ get_sched_statistics(
 	*count += (uint32_t)sizeof(struct _processor_statistics_np);
 	
 	return KERN_SUCCESS;
+#endif
 }
 
 kern_return_t
@@ -678,13 +701,18 @@ host_kernel_version(
 	host_t			host,
 	kernel_version_t	out_version)
 {
-
+#if defined (__DARLING__)
+#warning Implement host_kernel_version?
+    kprintf("not implemented: host_kernel_version()\n");
+    return -1;
+#else
 	if (host == HOST_NULL)
 		return(KERN_INVALID_ARGUMENT);
 
 	(void) strncpy(out_version, version, sizeof(kernel_version_t));
 
 	return(KERN_SUCCESS);
+#endif
 }
 
 /*

@@ -45,5 +45,8 @@ void machine_set_current_thread (thread_t thread)
 {
         CurrentThread   = thread;
 
+#if 0
         linux_current->mach_thread      = (void *) thread;
+#endif
+#warning SET MACH THREAD HERE?
 }

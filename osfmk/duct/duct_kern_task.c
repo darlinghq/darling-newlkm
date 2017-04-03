@@ -41,6 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/mach_param.h>
 #include <kern/task.h>
 #include <kern/locks.h>
+#include <kern/ipc_tt.h>
 
 #include "duct_post_xnu.h"
 
@@ -83,7 +84,7 @@ void duct_task_init (void)
          * Create the kernel task as the first task.
          */
     #ifdef __LP64__
-        if (task_create_internal(TASK_NULL, FALSE, TRUE, &kernel_task) != KERN_SUCCESS)
+        if (duct_task_create_internal(TASK_NULL, FALSE, TRUE, &kernel_task) != KERN_SUCCESS)
     #else
         if (duct_task_create_internal(TASK_NULL, FALSE, FALSE, &kernel_task) != KERN_SUCCESS)
     #endif

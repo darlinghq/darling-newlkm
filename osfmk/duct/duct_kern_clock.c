@@ -75,7 +75,7 @@ void clock_get_uptime (uint64_t * result)
         *result     = mach_absolute_time ();
 }
 
-void clock_get_calendar_microtime (uint32_t *secs, uint32_t *microsecs)
+void clock_get_calendar_microtime (clock_sec_t *secs, clock_usec_t *microsecs)
 {
         kprintf ("not implemented: clock_get_calendar_microtime()\n");
 }
@@ -83,7 +83,7 @@ void clock_get_calendar_microtime (uint32_t *secs, uint32_t *microsecs)
 #if defined (XNU_USE_MACHTRAP_WRAPPERS_TIMEKEEPING)
 kern_return_t xnusys_mach_timebase_info_trap (struct mach_timebase_info_trap_args * args)
 {
-        printk (KERN_NOTICE "- args->info: 0x%x\n", args->info);
+        printk (KERN_NOTICE "- args->info: 0x%llx\n", args->info);
 
         // printk (KERN_NOTICE "xnusys_mach_timebase_info_trap: is invalid\n");
         kern_return_t   retval  = duct_mach_timebase_info_trap (args);

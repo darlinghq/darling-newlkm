@@ -68,6 +68,11 @@
  *	Task and thread related IPC functions.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -97,6 +102,14 @@
 #include <vm/vm_protos.h>
 
 #include <security/mac_mach_internal.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
+#if defined (__DARLING__)
+static ipc_port_t launchd_bootstrap_port    = NULL;
+#endif
 
 /* forward declarations */
 task_t convert_port_to_locked_task(ipc_port_t port);
@@ -145,6 +158,8 @@ ipc_task_init(
 	task->itk_sself = ipc_port_make_send(kport);
 	task->itk_space = space;
 
+#if defined (__PALANDO_DUCT)
+#else
 #if CONFIG_MACF_MACH
 	if (parent)
 		mac_task_label_associate(parent, task, &parent->maclabel,
@@ -210,6 +225,7 @@ ipc_task_init(
 
 		itk_unlock(parent);
 	}
+#endif
 }
 
 /*
@@ -697,6 +713,7 @@ mach_reply_port(
 	kern_return_t kr;
 
 	kr = ipc_port_alloc(current_task()->itk_space, &name, &port);
+    
 	if (kr == KERN_SUCCESS)
 		ip_unlock(port);
 	else
@@ -851,7 +868,22 @@ task_get_special_port(
 		break;
 
 	    case TASK_BOOTSTRAP_PORT:
-		port = ipc_port_copy_send(task->itk_bootstrap);
+		
+    #if defined (__DARLING__)
+        // printk ( KERN_NOTICE "- task_get_special_port(comm): %s pid: %d, task->itk_bootstrap: 0x%p\n",
+        //          linux_current->comm, task_pid_vnr (linux_current), task->itk_bootstrap );
+
+        if (strcmp (linux_current->comm, "launchd") != 0 && task->itk_bootstrap == NULL) {
+                // foreign process not decending from launchd
+                port    = ipc_port_copy_send (launchd_bootstrap_port);
+
+                printk ( KERN_NOTICE "- task_get_special_port(%s): returning launchd bootstrap port 0x%p\n",
+                         linux_current->comm, launchd_bootstrap_port);
+        }
+        else
+    #endif
+	    port = ipc_port_copy_send(task->itk_bootstrap);
+		
 		break;
 
 	    case TASK_SEATBELT_PORT:
@@ -867,6 +899,11 @@ task_get_special_port(
 		return KERN_INVALID_ARGUMENT;
 	}
 	itk_unlock(task);
+
+#if defined (__DARLING__)
+    printk ( KERN_NOTICE "- task_get_special_port(%s) (task: 0x%p, ->itk_bootstrap: 0x%p, which: %d) to return port: 0x%p\n",
+             linux_current->comm, task, task->itk_bootstrap, which, port );
+#endif
 
 	*portp = port;
 	return KERN_SUCCESS;
@@ -894,6 +931,11 @@ task_set_special_port(
 	int		which,
 	ipc_port_t	port)
 {
+#if defined (__DARLING__)
+    printk ( KERN_NOTICE "- task_set_special_port(%s) (task: 0x%p, which: %d, port: 0x%p) called\n",
+             linux_current->comm, task, which, port );
+#endif
+
 	ipc_port_t *whichp;
 	ipc_port_t old;
 
@@ -910,6 +952,19 @@ task_set_special_port(
 		break;
 
 	    case TASK_BOOTSTRAP_PORT:
+		
+    #if defined (__DARLING__)
+        // printk ( KERN_NOTICE "- task_set_special_port: comm: %s pid: %d, port: 0x%p\n",
+        //          linux_current->comm, task_pid_vnr (linux_current), port);
+
+        if (!strcmp (linux_current->comm, "launchd") && port != 0) {
+                // launchd process updating bootstrap port
+                printk (KERN_NOTICE "- saving launchd boostrap port: 0x%p\n", port);
+                launchd_bootstrap_port      = port;
+        }
+        // task_pid_vnr (linux_current) == 1
+    #endif
+	
 		whichp = &task->itk_bootstrap;
 		break;
 

@@ -38,6 +38,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // #include <mach/mach_types.h>
 
+extern void kprintf(const char* format, ...);
+
 unsigned long duct_ml_irqsave_setenabled (boolean_t enable)
 {
         unsigned long   flags;
@@ -63,3 +65,4 @@ boolean_t ml_set_interrupts_enabled (boolean_t enable)
         kprintf (KERN_NOTICE "BUG: ml_set_interrupts_enabled () called\n");
         return FALSE;
 }
+

@@ -51,8 +51,8 @@ kern_return_t duct_thread_terminate (thread_t thread)
 
         struct task_struct        * linux_task      = thread->linux_task;
 
-        printk ( KERN_NOTICE "- duct_thread_terminate, thread: 0x%x, linux_task: 0x%x, pid: %d, state: %ld\n",
-                 (unsigned int) thread, (unsigned int) linux_task, linux_task->pid, linux_task->state);
+        printk ( KERN_NOTICE "- duct_thread_terminate, thread: %p, linux_task: %p, pid: %d, state: %ld\n",
+                 thread, linux_task, linux_task->pid, linux_task->state);
 
         kern_return_t   result;
 

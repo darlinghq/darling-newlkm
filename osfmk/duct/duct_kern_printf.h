@@ -36,7 +36,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DUCT_KERN_PRINTF_H
 
 #include <mach/mach_types.h>
+
+#ifdef __arm__
 #include <mach/arm/boolean.h>
+#else
+#include <mach/i386/boolean.h>
+#endif
 extern int printf(const char * param, ...);
 
 #endif // DUCT_KERN_PRINTF_H

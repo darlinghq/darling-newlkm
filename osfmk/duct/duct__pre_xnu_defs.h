@@ -108,6 +108,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // linux/arch/arm/include/asm/current.h
 #define linux_current       (get_current())
 #undef current
+#undef current_thread_info
+#define current_thread_info() ((struct thread_info *)linux_current)
+
+#undef IA32_PAGE_OFFSET
+#define IA32_PAGE_OFFSET    ((linux_current->personality & ADDR_LIMIT_3GB) ? \
+                    0xc0000000 : 0xFFFFe000)
 
 // linux/include/linux/wait.h
 #undef init_wait

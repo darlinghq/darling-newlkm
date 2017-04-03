@@ -57,5 +57,5 @@ void duct_bcopy (const void * src, void * dst, size_t n)
 
 void duct_bzero (void * ptr, size_t n)
 {
-        __memzero (ptr, n);
+	    memset(ptr, 0, n);
 }

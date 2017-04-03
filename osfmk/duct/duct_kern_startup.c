@@ -51,6 +51,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern void compat_init (void);
 
 static void duct_kernel_bootstrap_thread (void);
+void duct_wait_queue_bootstrap (void);
 
 // WC: should be in duct_startup.c
 void __init duct_kernel_early_bootstrap (void)
@@ -133,8 +134,8 @@ void __init duct_kernel_bootstrap (void)
         thread          = current_thread ();
         thread->task    = kernel_task;
 
-        kprintf ("current_thread(0x%x)\n", (unsigned int) thread);
-        kprintf ("kernel_task(0x%x)\n", (unsigned int) kernel_task);
+        kprintf ("current_thread(0x%p)\n", thread);
+        kprintf ("kernel_task(0x%p)\n", kernel_task);
 
 
 

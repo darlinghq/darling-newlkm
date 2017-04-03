@@ -114,7 +114,7 @@ kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach
         // printk (KERN_NOTICE "mmap: requested addr: 0x%x\n", map_addr);
 
         map_addr    =
-        do_mmap (NULL, map_addr, map_size, map_prot, map_flags, 0);
+        do_mmap (NULL, map_addr, map_size, map_prot, map_flags, 0, 0, NULL);
 
         // printk ( KERN_NOTICE "mmap: returned addr: 0x%x, bad: %d\n", 
         //          map_addr, BAD_ADDR (map_addr) ? 1 : 0 );

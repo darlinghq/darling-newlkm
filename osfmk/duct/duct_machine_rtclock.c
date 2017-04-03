@@ -112,7 +112,7 @@ uint64_t mach_absolute_time (void)
         return ktime_to_ns (ktime_get_boottime ());
 }
 
-
+#if 0
 uint32_t xnusys_mach_absolute_time (struct pt_regs * regs)
 {
         uint64_t    abstime     = mach_absolute_time ();
@@ -127,6 +127,7 @@ uint32_t xnusys_mach_absolute_time (struct pt_regs * regs)
                          
         return (abstime & 0xffffffff);
 }
+#endif
 
 void clock_interval_to_absolutetime_interval (uint32_t interval, uint32_t scale_factor, uint64_t * result)
 {
