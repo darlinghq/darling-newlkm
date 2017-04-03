@@ -69,6 +69,11 @@
  *	Functions to manipulate IPC ports.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <norma_vm.h>
 #include <zone_debug.h>
 #include <mach_assert.h>
@@ -93,6 +98,10 @@
 #include <security/mac_mach_internal.h>
 
 #include <string.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 decl_lck_mtx_data(,	ipc_port_multiple_lock_data)
 lck_mtx_ext_t	ipc_port_multiple_lock_data_ext;
@@ -1488,6 +1497,9 @@ ipc_port_init_debug(
 	for (i = 0; i < IP_NSPARES; ++i)
 		port->ip_spares[i] = 0;	
 
+#if defined (__DARLING__)
+
+#else
 #ifdef MACH_BSD
 	task_t task = current_task();
 	if (task != TASK_NULL) {
@@ -1496,6 +1508,7 @@ ipc_port_init_debug(
 			port->ip_spares[0] = proc_pid(proc);
 	}
 #endif /* MACH_BSD */
+#endif /* __DARLING__ */
 
 #if 0
 	lck_spin_lock(&port_alloc_queue_lock);

@@ -51,6 +51,11 @@
  * SUCH DAMAGE.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_port.h>
 #include <ipc/ipc_labelh.h>

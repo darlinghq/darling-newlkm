@@ -37,10 +37,13 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/kern_control.h>
+#if defined (__DARLING__)
+#else
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#endif
 
 __BEGIN_DECLS
 
@@ -315,7 +318,8 @@ struct proc_threadwithpathinfo {
  *  Socket 
  */
 
-
+#if defined (__DARLING__)
+#else
 /*
  * IPv4 and IPv6 Sockets
  */
@@ -418,6 +422,7 @@ struct ndrv_info {
 	uint32_t	ndrvsi_if_unit;
 	char		ndrvsi_if_name[IF_NAMESIZE];
 };
+#endif
 
 /*
  * Kernel Event Sockets
@@ -470,6 +475,8 @@ struct sockbuf_info {
 	short			sbi_timeo;
 };
 
+#if defined (__DARLING__)
+#else
 enum {
 	SOCKINFO_GENERIC	= 0,
 	SOCKINFO_IN		= 1,
@@ -515,7 +522,7 @@ struct socket_fdinfo {
 	struct socket_info	psi;
 };
 
-
+#endif
 
 struct psem_info {
 	struct vinfo_stat	psem_stat;
@@ -727,7 +734,10 @@ struct psemnode ;
 struct pipe;
 #endif
 
+#if defined (__DARLING__)
+#else
 extern int fill_socketinfo(socket_t so, struct socket_info *si);
+#endif
 extern int fill_pshminfo(struct pshmnode * pshm, struct pshm_info * pinfo);
 extern int fill_pseminfo(struct psemnode * psem, struct psem_info * pinfo);
 extern int fill_pipeinfo(struct pipe * cpipe, struct pipe_info * pinfo);

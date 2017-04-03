@@ -40,6 +40,10 @@ struct ksyn_waitq_element {
 	uint32_t	kwe_count;			/* upper bound on number of matches still pending */
 	uint32_t 	kwe_psynchretval;		/* thread retval */
 	void		*kwe_uth;			/* uthread */
+#if defined (__DARLING__)
+        linux_wait_queue_t      linux_wait;
+        int                     woken_up;
+#endif
 };
 typedef struct ksyn_waitq_element * ksyn_waitq_element_t;
 

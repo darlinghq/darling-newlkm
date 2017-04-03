@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_vm_server.h>
@@ -34,6 +39,11 @@
 #include <kern/task.h>
 #include <kern/ipc_tt.h>
 #include <vm/vm_protos.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
 
 int
 _kernelrpc_mach_vm_allocate_trap(struct _kernelrpc_mach_vm_allocate_trap_args *args)

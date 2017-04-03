@@ -1360,8 +1360,8 @@ vm_map_find_space(
 	return(KERN_SUCCESS);
 }
 
-int vm_map_pmap_enter_print = FALSE;
-int vm_map_pmap_enter_enable = FALSE;
+int vm_map_pmap_enter_print = TRUE;
+int vm_map_pmap_enter_enable = TRUE;
 
 /*
  *	Routine:	vm_map_pmap_enter [internal only]
@@ -1410,9 +1410,9 @@ vm_map_pmap_enter(
 			return;
 		}
 
-		if (vm_map_pmap_enter_print) {
-			printf("vm_map_pmap_enter:");
-			printf("map: %p, addr: %llx, object: %p, offset: %llx\n",
+		{
+			kprintf("vm_map_pmap_enter:");
+			kprintf("map: %p, addr: %llx, object: %p, offset: %llx\n",
 			       map, (unsigned long long)addr, object, (unsigned long long)offset);
 		}
 		type_of_fault = DBG_CACHE_HIT_FAULT;
@@ -1564,13 +1564,17 @@ vm_map_enter(
 	vm_map_offset_t		effective_min_offset, effective_max_offset;
 	kern_return_t		kr;
 
+#if 0
+    kprintf("vm_map_enter: pmap -> <0x%08x>, 0x%08x (%08x, %08x)\n", map, map->pmap, *address, size);
+#endif
+
 	if (superpage_size) {
 		switch (superpage_size) {
 			/*
 			 * Note that the current implementation only supports
 			 * a single size for superpages, SUPERPAGE_SIZE, per
 			 * architecture. As soon as more sizes are supposed
-			 * to be supported, SUPERPAGE_SIZE has to be replaced
+			 * to be supported, sSUPERPAGE_SIZE has to be replaced
 			 * with a lookup of the size depending on superpage_size.
 			 */
 #ifdef __x86_64__
@@ -1705,7 +1709,6 @@ StartAgain: ;
 		/*
 		 *	Calculate the first possible address.
 		 */
-
 		if (start < effective_min_offset)
 			start = effective_min_offset;
 		if (start > effective_max_offset)
@@ -1774,6 +1777,8 @@ StartAgain: ;
 				RETURN(KERN_NO_SPACE);
 			start = end;
 			end += size;
+            
+            
 
 			if ((end > effective_max_offset) || (end < start)) {
 				if (map->wait_for_space) {
@@ -1787,7 +1792,8 @@ StartAgain: ;
 						goto StartAgain;
 					}
 				}
-				RETURN(KERN_NO_SPACE);
+                RETURN(KERN_NO_SPACE);
+                
 			}
 
 			/*
@@ -1988,7 +1994,6 @@ StartAgain: ;
 				       (vm_object_offset_t) 0,
 				       (vm_map_size_t)(entry->vme_end - entry->vme_start),
 				       (vm_map_size_t)(end - entry->vme_end))) {
-
 			/*
 			 *	Coalesced the two objects - can extend
 			 *	the previous map entry to include the
@@ -2056,6 +2061,7 @@ StartAgain: ;
 				submap = (vm_map_t) object;
 				submap_is_64bit = vm_map_is_64bit(submap);
 				use_pmap = (alias == VM_MEMORY_SHARED_PMAP);
+
 	#ifndef NO_NESTED_PMAP 
 				if (use_pmap && submap->pmap == NULL) {
 					ledger_t ledger = map->pmap->ledger;
@@ -2127,9 +2133,7 @@ StartAgain: ;
 
 	vm_map_unlock(map);
 	map_locked = FALSE;
-
 	new_mapping_established = TRUE;
-
 	/*	Wire down the new entry if the user
 	 *	requested all new map entries be wired.
 	 */
@@ -8495,6 +8499,8 @@ vm_map_fork(
 	new_pmap = pmap_create(ledger, (vm_map_size_t) 0,
 #if defined(__i386__) || defined(__x86_64__)
 			       old_map->pmap->pm_task_map != TASK_MAP_32BIT
+#elif defined(__arm__)
+                    0
 #else
 #error Unknown architecture.
 #endif
@@ -10438,7 +10444,7 @@ vm_map_behavior_set(
 	XPR(XPR_VM_MAP,
 	    "vm_map_behavior_set, 0x%X start 0x%X end 0x%X behavior %d",
 	    map, start, end, new_behavior, 0);
-
+	
 	if (start > end ||
 	    start < vm_map_min(map) ||
 	    end > vm_map_max(map)) {

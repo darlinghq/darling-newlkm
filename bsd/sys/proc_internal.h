@@ -203,6 +203,36 @@ struct proc;
  * which might be addressible only on a processor on which the process
  * is running.
  */
+#if defined (__DARLING__) && ! defined (__cplusplus)
+struct compat_proc {
+		pid_t                   p_pid;			/* Process identifier. (static)*/
+		user_addr_t             p_threadstart;          /* pthread start fn */
+		user_addr_t             p_wqthread;             /* pthread workqueue fn */
+		int                     p_pthsize;              /* pthread size */
+		user_addr_t             p_targconc;             /* target concurrency ptr */
+		uint64_t                p_dispatchqueue_offset;
+
+	#if 0
+		spinlock_t      p_lock;                 /* pthread lock */
+		void *          p_wqptr;                /* workq ptr */
+		int             p_wqsize;               /* allocated size */
+		boolean_t       p_wqiniting;            /* semaphore to serialze wq_open */
+		spinlock_t      p_wqlock;               /* lock to protect work queue */
+	#endif
+
+		void                  * p_pthhash;              /* pthread waitqueue hash */
+
+        struct mutex            kev_mutex;
+
+        /* spin kevprocfd */
+        spinlock_t              kevprocfd_lock;
+        wait_queue_head_t	    kevfd_waitqh;
+
+        struct list_head        kevprocfd_ctx_links;
+        struct list_head        kqueue_links;
+};
+
+#else
 struct	proc {
 	LIST_ENTRY(proc) p_list;		/* List of all processes. */
 
@@ -386,6 +416,7 @@ struct	proc {
 #endif
 	int		p_dirty;			/* dirty state */ 
 };
+#endif
 
 #define PGRPID_DEAD 0xdeaddead
 
@@ -597,7 +628,7 @@ struct user64_extern_proc {
  */
 extern int nprocs, maxproc;		/* Current and max number of procs. */
 extern int maxprocperuid;		/* Current number of procs per uid */
-__private_extern__ int hard_maxproc;	/* hard limit */
+/* __private_extern__ */ extern int hard_maxproc;	/* hard limit */
 extern unsigned int proc_shutdown_exitcount;
 
 #define	PID_MAX		99999
@@ -662,12 +693,12 @@ extern void proc_fdlock(struct proc *);
 extern void proc_fdlock_spin(struct proc *);
 extern void proc_fdunlock(struct proc *);
 extern void proc_fdlock_assert(proc_t p, int assertflags);
-__private_extern__ int proc_core_name(const char *name, uid_t uid, pid_t pid,
+/* __private_extern__ */ extern int proc_core_name(const char *name, uid_t uid, pid_t pid,
 		char *cr_name, size_t cr_name_len);
 extern int isinferior(struct proc *, struct proc *);
-__private_extern__ struct proc *pzfind(pid_t);	/* Find zombie by id. */
-__private_extern__ struct proc *proc_find_zombref(pid_t);	/* Find zombie by id. */
-__private_extern__ void proc_drop_zombref(struct proc * p);	/* Find zombie by id. */
+/* __private_extern__ */ extern struct proc *pzfind(pid_t);	/* Find zombie by id. */
+/* __private_extern__ */ extern struct proc *proc_find_zombref(pid_t);	/* Find zombie by id. */
+/* __private_extern__ */ extern void proc_drop_zombref(struct proc * p);	/* Find zombie by id. */
 
 
 extern struct	lctx *lcfind(pid_t);		/* Find a login context by id */

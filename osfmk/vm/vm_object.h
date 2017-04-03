@@ -66,7 +66,6 @@
 #ifndef	_VM_VM_OBJECT_H_
 #define _VM_VM_OBJECT_H_
 
-#include <debug.h>
 #include <mach_assert.h>
 #include <mach_pagemap.h>
 #include <task_swapper.h>
@@ -86,6 +85,8 @@
 #include <kern/macro_help.h>
 #include <ipc/ipc_types.h>
 #include <vm/pmap.h>
+
+#include <kern/clock.h>
 
 #if	MACH_PAGEMAP
 #include <vm/vm_external.h>
@@ -381,10 +382,10 @@ struct vm_object {
 	__object->memq_hint = __page;				\
 	MACRO_END
 
-__private_extern__
+/* __private_extern__ */ extern
 vm_object_t	kernel_object;		/* the single kernel object */
 
-__private_extern__
+/* __private_extern__ */ extern
 unsigned int	vm_object_absent_max;	/* maximum number of absent pages
 					   at a time for each object */
 
@@ -428,26 +429,28 @@ extern lck_attr_t		vm_map_lck_attr;
 /*
  *	Declare procedures that operate on VM objects.
  */
+#if defined (__DARLING__)
+/* __private_extern__ */ extern void		vm_object_bootstrap(void);
+ #else
+/* __private_extern__ */ extern void		vm_object_bootstrap(void) __attribute__((section("__TEXT, initcode")));
+#endif
+/* __private_extern__ */ extern void		vm_object_init(void);
 
-__private_extern__ void		vm_object_bootstrap(void) __attribute__((section("__TEXT, initcode")));
+/* __private_extern__ */ extern void		vm_object_init_lck_grp(void);
 
-__private_extern__ void		vm_object_init(void);
+/* __private_extern__ */ extern void		vm_object_reaper_init(void);
 
-__private_extern__ void		vm_object_init_lck_grp(void);
-
-__private_extern__ void		vm_object_reaper_init(void);
-
-__private_extern__ vm_object_t	vm_object_allocate(
+/* __private_extern__ */ extern vm_object_t	vm_object_allocate(
 					vm_object_size_t	size);
 
-__private_extern__ void    _vm_object_allocate(vm_object_size_t size,
+/* __private_extern__ */ extern void    _vm_object_allocate(vm_object_size_t size,
 			    vm_object_t object);
 
 #if	TASK_SWAPPER
 
-__private_extern__ void	vm_object_res_reference(
+/* __private_extern__ */ extern void	vm_object_res_reference(
 				vm_object_t 		object);
-__private_extern__ void	vm_object_res_deallocate(
+/* __private_extern__ */ extern void	vm_object_res_deallocate(
 				vm_object_t		object);
 #define	VM_OBJ_RES_INCR(object)	(object)->res_count++
 #define	VM_OBJ_RES_DECR(object)	(object)->res_count--
@@ -484,7 +487,7 @@ __private_extern__ void	vm_object_res_deallocate(
 	MACRO_END
 
 
-__private_extern__ void		vm_object_reference(
+/* __private_extern__ */ extern void		vm_object_reference(
 					vm_object_t	object);
 
 #if	!MACH_ASSERT
@@ -501,14 +504,14 @@ MACRO_END
 
 #endif	/* MACH_ASSERT */
 
-__private_extern__ void		vm_object_deallocate(
+/* __private_extern__ */ extern void		vm_object_deallocate(
 					vm_object_t	object);
 
-__private_extern__ kern_return_t vm_object_release_name(
+/* __private_extern__ */ extern kern_return_t vm_object_release_name(
 					vm_object_t	object,
 					int		flags);
 							
-__private_extern__ void		vm_object_pmap_protect(
+/* __private_extern__ */ extern void		vm_object_pmap_protect(
 					vm_object_t		object,
 					vm_object_offset_t	offset,
 					vm_object_size_t	size,
@@ -516,33 +519,33 @@ __private_extern__ void		vm_object_pmap_protect(
 					vm_map_offset_t		pmap_start,
 					vm_prot_t		prot);
 
-__private_extern__ void		vm_object_page_remove(
+/* __private_extern__ */ extern void		vm_object_page_remove(
 					vm_object_t		object,
 					vm_object_offset_t	start,
 					vm_object_offset_t	end);
 
-__private_extern__ void		vm_object_deactivate_pages(
+/* __private_extern__ */ extern void		vm_object_deactivate_pages(
 					vm_object_t		object,
 					vm_object_offset_t	offset,
 					vm_object_size_t	size,
 					boolean_t               kill_page,
 					boolean_t		reusable_page);
 
-__private_extern__ void	vm_object_reuse_pages(
+/* __private_extern__ */ extern void	vm_object_reuse_pages(
 	vm_object_t		object,
 	vm_object_offset_t	start_offset,
 	vm_object_offset_t	end_offset,
 	boolean_t		allow_partial_reuse);
 
-__private_extern__ void		vm_object_purge(
+/* __private_extern__ */ extern void		vm_object_purge(
 					vm_object_t		object);
 
-__private_extern__ kern_return_t vm_object_purgable_control(
+/* __private_extern__ */ extern kern_return_t vm_object_purgable_control(
 	vm_object_t	object,
 	vm_purgable_t	control,
 	int		*state);
 
-__private_extern__ boolean_t	vm_object_coalesce(
+/* __private_extern__ */ extern boolean_t	vm_object_coalesce(
 					vm_object_t		prev_object,
 					vm_object_t		next_object,
 					vm_object_offset_t	prev_offset,
@@ -550,24 +553,24 @@ __private_extern__ boolean_t	vm_object_coalesce(
 					vm_object_size_t	prev_size,
 					vm_object_size_t	next_size);
 
-__private_extern__ boolean_t	vm_object_shadow(
+/* __private_extern__ */ extern boolean_t	vm_object_shadow(
 					vm_object_t		*object,
 					vm_object_offset_t	*offset,
 					vm_object_size_t	length);
 
-__private_extern__ void		vm_object_collapse(
+/* __private_extern__ */ extern void		vm_object_collapse(
 					vm_object_t		object,
 					vm_object_offset_t	offset,
 					boolean_t		can_bypass);
 
-__private_extern__ boolean_t	vm_object_copy_quickly(
+/* __private_extern__ */ extern boolean_t	vm_object_copy_quickly(
 				vm_object_t		*_object,
 				vm_object_offset_t	src_offset,
 				vm_object_size_t	size,
 				boolean_t		*_src_needs_copy,
 				boolean_t		*_dst_needs_copy);
 
-__private_extern__ kern_return_t	vm_object_copy_strategically(
+/* __private_extern__ */ extern kern_return_t	vm_object_copy_strategically(
 				vm_object_t		src_object,
 				vm_object_offset_t	src_offset,
 				vm_object_size_t	size,
@@ -575,14 +578,14 @@ __private_extern__ kern_return_t	vm_object_copy_strategically(
 				vm_object_offset_t	*dst_offset,
 				boolean_t		*dst_needs_copy);
 
-__private_extern__ kern_return_t	vm_object_copy_slowly(
+/* __private_extern__ */ extern kern_return_t	vm_object_copy_slowly(
 				vm_object_t		src_object,
 				vm_object_offset_t	src_offset,
 				vm_object_size_t	size,
 				boolean_t		interruptible,
 				vm_object_t		*_result_object);
 
-__private_extern__ vm_object_t	vm_object_copy_delayed(
+/* __private_extern__ */ extern vm_object_t	vm_object_copy_delayed(
 				vm_object_t		src_object,
 				vm_object_offset_t	src_offset,
 				vm_object_size_t	size,
@@ -590,14 +593,14 @@ __private_extern__ vm_object_t	vm_object_copy_delayed(
 
 
 
-__private_extern__ kern_return_t	vm_object_destroy(
+/* __private_extern__ */ extern kern_return_t	vm_object_destroy(
 					vm_object_t	object,
 					kern_return_t	reason);
 
-__private_extern__ void		vm_object_pager_create(
+/* __private_extern__ */ extern void		vm_object_pager_create(
 					vm_object_t	object);
 
-__private_extern__ void		vm_object_page_map(
+/* __private_extern__ */ extern void		vm_object_page_map(
 				vm_object_t	object,
 				vm_object_offset_t	offset,
 				vm_object_size_t	size,
@@ -605,7 +608,7 @@ __private_extern__ void		vm_object_page_map(
 					(void *, vm_object_offset_t),
 					void 		*map_fn_data);
 
-__private_extern__ kern_return_t vm_object_upl_request(
+/* __private_extern__ */ extern kern_return_t vm_object_upl_request(
 				vm_object_t		object, 
 				vm_object_offset_t	offset,
 				upl_size_t		size,
@@ -614,12 +617,12 @@ __private_extern__ kern_return_t vm_object_upl_request(
 				unsigned int		*count,
 				int			flags);
 
-__private_extern__ kern_return_t vm_object_transpose(
+/* __private_extern__ */ extern kern_return_t vm_object_transpose(
 				vm_object_t		object1,
 				vm_object_t		object2,
 				vm_object_size_t	transpose_size);
 
-__private_extern__ boolean_t vm_object_sync(
+/* __private_extern__ */ extern boolean_t vm_object_sync(
 				vm_object_t		object,
 				vm_object_offset_t	offset,
 				vm_object_size_t	size,
@@ -627,7 +630,7 @@ __private_extern__ boolean_t vm_object_sync(
 				boolean_t		should_return,
 				boolean_t		should_iosync);
 
-__private_extern__ kern_return_t vm_object_update(
+/* __private_extern__ */ extern kern_return_t vm_object_update(
 				vm_object_t		object,
 				vm_object_offset_t	offset,
 				vm_object_size_t	size,
@@ -637,7 +640,7 @@ __private_extern__ kern_return_t vm_object_update(
 				int			flags,
 				vm_prot_t		prot);
 
-__private_extern__ kern_return_t vm_object_lock_request(
+/* __private_extern__ */ extern kern_return_t vm_object_lock_request(
 				vm_object_t		object,
 				vm_object_offset_t	offset,
 				vm_object_size_t	size,
@@ -647,7 +650,7 @@ __private_extern__ kern_return_t vm_object_lock_request(
 
 
 
-__private_extern__ vm_object_t	vm_object_enter(
+/* __private_extern__ */ extern vm_object_t	vm_object_enter(
 					memory_object_t		pager,
 					vm_object_size_t	size,
 					boolean_t		internal,
@@ -655,20 +658,20 @@ __private_extern__ vm_object_t	vm_object_enter(
 					boolean_t		check_named);
 
 
-__private_extern__ void	vm_object_cluster_size(
+/* __private_extern__ */ extern void	vm_object_cluster_size(
 					vm_object_t		object,
 					vm_object_offset_t	*start,
 					vm_size_t		*length,
 					vm_object_fault_info_t  fault_info,
 					uint32_t		*io_streaming);
 
-__private_extern__ kern_return_t vm_object_populate_with_private(
+/* __private_extern__ */ extern kern_return_t vm_object_populate_with_private(
 	vm_object_t		object,
 	vm_object_offset_t	offset,
 	ppnum_t			phys_page,
 	vm_size_t		size);
 
-__private_extern__ void vm_object_change_wimg_mode(
+/* __private_extern__ */ extern void vm_object_change_wimg_mode(
 	vm_object_t		object,
 	unsigned int		wimg_mode);
 
@@ -691,7 +694,7 @@ extern kern_return_t vm_object_range_op(
 	uint32_t		*range);
 
 
-__private_extern__ void		vm_object_reap_pages(
+/* __private_extern__ */ extern void		vm_object_reap_pages(
 	                                vm_object_t object,
 					int	reap_type);
 #define REAP_REAP	0
@@ -702,7 +705,7 @@ __private_extern__ void		vm_object_reap_pages(
 #if CONFIG_FREEZE
 struct default_freezer_handle;
 
-__private_extern__ kern_return_t 
+/* __private_extern__ */ extern kern_return_t 
 vm_object_pack(
 	unsigned int		*purgeable_count,
 	unsigned int		*wired_count,
@@ -713,7 +716,7 @@ vm_object_pack(
 	vm_object_t		src_object,
 	struct default_freezer_handle *df_handle);
 
-__private_extern__ void
+/* __private_extern__ */ extern void
 vm_object_pack_pages(
 	unsigned int		*wired_count,
 	unsigned int		*clean_count,
@@ -722,11 +725,11 @@ vm_object_pack_pages(
 	vm_object_t		src_object,
 	struct default_freezer_handle *df_handle);
 
-__private_extern__ void
+/* __private_extern__ */ extern void
 vm_object_pageout(
 	vm_object_t     object);
 
-__private_extern__  kern_return_t
+/* __private_extern__ */ extern  kern_return_t
 vm_object_pagein(
 	vm_object_t     object);
 #endif /* CONFIG_FREEZE */

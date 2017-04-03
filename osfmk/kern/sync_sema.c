@@ -36,6 +36,12 @@
  *	Contains RT distributed semaphore synchronization services.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/kern_return.h>
@@ -59,6 +65,11 @@
 #include <kern/mach_param.h>
 
 #include <libkern/OSAtomic.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
 
 static unsigned int semaphore_event;
 #define SEMAPHORE_EVENT CAST_EVENT64_T(&semaphore_event)
@@ -174,6 +185,9 @@ semaphore_create(
 	if (s == SEMAPHORE_NULL)
 		return KERN_RESOURCE_SHORTAGE; 
 
+#if defined (__DARLING__)
+    sema_init (&s->lsem, value);
+#else
 	kret = wait_queue_init(&s->wait_queue, policy); /* also inits lock */
 	if (kret != KERN_SUCCESS) {
 		zfree(semaphore_zone, s);
@@ -181,6 +195,7 @@ semaphore_create(
 	}
 
 	s->count = value;
+#endif
 
 	/*
 	 * One reference for caller, one for port, and one for owner
@@ -233,6 +248,9 @@ semaphore_destroy(
 	task_t			task,
 	semaphore_t		semaphore)
 {
+#if defined (__DARLING__)
+        printk (KERN_NOTICE "not implemented: semaphore_destroy (), sema: 0x%p\n", semaphore);
+#else
 	int				old_count;
 	spl_t			spl_level;
 
@@ -285,6 +303,7 @@ semaphore_destroy(
 	 *  the semaphore structure if the reference count goes to zero.
 	 */
 	semaphore_dereference(semaphore);
+#endif
 	return KERN_SUCCESS;
 }
 
@@ -301,6 +320,23 @@ semaphore_signal_internal(
 	thread_t		thread,
 	int				options)
 {
+#if defined (__DARLING__)
+        printk (KERN_NOTICE "thread: sema: 0x%p, thread: 0x%p, options: 0x%x\n", semaphore, thread, options);
+
+        // WC - should lock as we are accessing internally
+        if (!semaphore->active) {
+                return KERN_TERMINATED;
+        }
+
+        if (thread != THREAD_NULL) {
+                printk (KERN_NOTICE "thread not null: not implemented\n");
+        }
+
+        up (&semaphore->lsem);
+
+        return KERN_NOT_WAITING;
+#else
+
 	kern_return_t kr;
 	spl_t  spl_level;
 
@@ -312,6 +348,7 @@ semaphore_signal_internal(
 		splx(spl_level);
 		return KERN_TERMINATED;
 	}
+
 
 	if (thread != THREAD_NULL) {
 		if (semaphore->count < 0) {
@@ -369,6 +406,7 @@ semaphore_signal_internal(
 	semaphore_unlock(semaphore);
 	splx(spl_level);
 	return KERN_NOT_WAITING;
+#endif
 }
 
 /*
@@ -615,6 +653,41 @@ semaphore_wait_internal(
 	int				option,
 	void 			(*caller_cont)(kern_return_t))
 {
+#if defined (__DARLING__)
+        kern_return_t       kr  = KERN_ALREADY_WAITING;
+
+        if (!wait_semaphore->active) {
+                kr = KERN_TERMINATED;
+        }
+
+        /* WC - unwind a bit */
+
+        unsigned long   jiffies     = LINUX_MAX_SCHEDULE_TIMEOUT;
+        if (deadline != 0ULL) {
+                uint64_t        nsecs;  // initially used as abstime
+
+                nsecs       = deadline - mach_absolute_time ();
+                absolutetime_to_nanoseconds (nsecs, &nsecs);
+
+                jiffies     = nsecs_to_jiffies (nsecs);
+        }
+
+        printk (KERN_NOTICE "- to semwait %ld jiffies\n", jiffies);
+
+        int     downret = down_interruptible_timeout (&wait_semaphore->lsem, jiffies);
+        printk (KERN_NOTICE "- tdownret: 0x%x\n", downret);
+
+        if (downret == -LINUX_ETIME) {
+                printk (KERN_NOTICE "- LINUX_ETIME: Timer expired\n");
+                kr = KERN_OPERATION_TIMED_OUT;
+        }
+
+        /* WC - todo: signal here */
+
+        if (kr != KERN_ALREADY_WAITING)     return kr;
+
+        return KERN_SUCCESS;
+#else
 	int					wait_result;
 	spl_t				spl_level;
 	kern_return_t		kr = KERN_ALREADY_WAITING;
@@ -677,7 +750,6 @@ semaphore_wait_internal(
 			 * return the KERN_TERMINATED status.
 			 */
 			thread_t self = current_thread();
-
 			clear_wait(self, THREAD_INTERRUPTED);
 			kr = semaphore_convert_wait_result(self->wait_result);
 			if (kr == KERN_ABORTED)
@@ -712,6 +784,7 @@ semaphore_wait_internal(
 	}
 
 	return (semaphore_convert_wait_result(wait_result));
+#endif
 }
 
 
@@ -1081,7 +1154,10 @@ semaphore_dereference(
 			}
 		}
 		if (ref_count == 0) {
+#if defined (__DARLING__)
+#else
 			assert(wait_queue_empty(&semaphore->wait_queue));
+#endif
 			zfree(semaphore_zone, semaphore);
 		}
 	}

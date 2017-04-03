@@ -70,6 +70,11 @@
  *	Exported kernel calls.  See mach/mach_port.defs.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_debug.h>
 #include <mach_rt.h>
 
@@ -100,6 +105,10 @@
 #include <security/mac_mach_internal.h>
 
 #include <mach/security_server.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  * Forward declarations

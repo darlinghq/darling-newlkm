@@ -63,6 +63,11 @@
  *	Entry hash table operations.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/boolean.h>
 #include <mach/port.h>
 #include <kern/lock.h>

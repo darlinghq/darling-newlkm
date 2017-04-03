@@ -163,12 +163,20 @@ extern void		consider_zone_gc(boolean_t);
 /* Steal memory for zone module */
 extern void		zone_steal_memory(void);
 
+#if defined (__DARLING__)
+/* Bootstrap zone module (create zone zone) */
+extern void		zone_bootstrap(void);
+/* Init zone module */
+extern void		zone_init(
+					vm_size_t	map_size);
+#else
 /* Bootstrap zone module (create zone zone) */
 extern void		zone_bootstrap(void) __attribute__((section("__TEXT, initcode")));
 
 /* Init zone module */
 extern void		zone_init(
 					vm_size_t	map_size) __attribute__((section("__TEXT, initcode")));
+#endif
 
 /* Handle per-task zone info */
 extern void		zinfo_task_init(task_t task);
@@ -311,7 +319,11 @@ extern int get_zleak_state(void);
 #endif	/* CONFIG_ZLEAKS */
 
 /* These functions used for leak detection both in zalloc.c and mbuf.c */
+#if defined (__DARLING__)
+extern uint32_t fastbacktrace(uintptr_t* bt, uint32_t max_frames);
+#else
 extern uint32_t fastbacktrace(uintptr_t* bt, uint32_t max_frames) __attribute__((noinline));
+#endif
 extern uintptr_t hash_mix(uintptr_t);
 extern uint32_t hashbacktrace(uintptr_t *, uint32_t, uint32_t);
 extern uint32_t hashaddr(uintptr_t, uint32_t);

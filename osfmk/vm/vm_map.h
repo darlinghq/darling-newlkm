@@ -335,6 +335,10 @@ struct _vm_map {
 	void			*default_freezer_handle;
 #endif
  	boolean_t		jit_entry_exists;
+
+#if defined (__DARLING__)
+    struct mm_struct      * linux_mm;
+#endif
 } ;
 
 #define vm_map_to_entry(map)	((struct vm_map_entry *) &(map)->hdr.links)
@@ -403,15 +407,31 @@ struct vm_map_copy {
 #define VM_MAP_COPY_ENTRY_LIST		1
 #define VM_MAP_COPY_OBJECT		2
 #define VM_MAP_COPY_KERNEL_BUFFER	3
+#if defined (__DARLING__)
+#define VM_MAP_COPY_LINUX_VMA_LIST  13
+        // vm_map_t    map;
+#endif
 	vm_object_offset_t	offset;
 	vm_map_size_t		size;
+
 	union {
+#if defined (__DARLING__)
+#else
 	    struct vm_map_header	hdr;	/* ENTRY_LIST */
 	    vm_object_t			object; /* OBJECT */
 	    struct {				
 		void			*kdata;	      /* KERNEL_BUFFER */
 		vm_size_t		kalloc_size;  /* size of this copy_t */
 	    } c_k;
+#endif
+
+#if defined (__DARLING__)
+        struct {
+                struct page      ** pages;
+                vm_size_t           page_count;
+                atomic_t            mapping_refcount;
+        } c_p;
+#endif
 	} c_u;
 };
 
@@ -464,9 +484,14 @@ struct vm_map_copy {
  */
 
 /* Initialize the module */
+#if defined (__DARLING__)
+// extern void      vm_map_init(void);
+// extern void      vm_kernel_reserved_entry_init(void);
+#else
 extern void		vm_map_init(void) __attribute__((section("__TEXT, initcode")));
 
 extern void		vm_kernel_reserved_entry_init(void) __attribute__((section("__TEXT, initcode")));
+#endif
 
 /* Allocate a range in the specified virtual address map and
  * return the entry allocated for that range. */

@@ -82,6 +82,8 @@
 #include <ipc/ipc_types.h>
 #include <libkern/OSAtomic.h>
 
+#include <kern/assert.h>
+
 typedef natural_t ipc_object_refs_t;	/* for ipc/ipc_object.h		*/
 typedef natural_t ipc_object_bits_t;
 typedef natural_t ipc_object_type_t;

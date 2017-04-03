@@ -70,6 +70,15 @@ typedef struct wait_queue {
 					:0;				/* force to long boundary */
     hw_lock_data_t	wq_interlock;	/* interlock */
     queue_head_t	wq_queue;		/* queue of elements */
+
+#if defined (__DARLING__)
+        // struct mutex            mutex_lock;
+        wait_queue_head_t       linux_waitqh;
+        void                  * fdctx;
+#endif
+
+#if defined (__DARLING__)
+#endif
 } WaitQueue;
 
 /*
@@ -150,6 +159,20 @@ typedef struct _wait_queue_link {
 
 #define wait_queue_empty(wq)	(queue_empty(&(wq)->wq_queue))
 
+#if defined (__DARLING__)
+// #define wait_queue_held(wq)         spin_is_locked ((spinlock_t *) &(wq)->linux_waitqh.lock)
+// #define wait_queue_lock_try(wq)     spin_trylock ((spinlock_t *) &(wq)->linux_waitqh.lock)
+//
+// #define wait_queue_lock(wq)         spin_lock ((spinlock_t *) &(wq)->linux_waitqh.lock)
+// #define wait_queue_unlock(wq)       spin_unlock ((spinlock_t *) &(wq)->linux_waitqh.lock)
+
+#define wait_queue_held(wq)         spin_is_locked ((spinlock_t *) &(wq)->wq_interlock)
+#define wait_queue_lock_try(wq)     spin_trylock ((spinlock_t *) &(wq)->wq_interlock)
+
+#define wait_queue_lock(wq)         spin_lock ((spinlock_t *) &(wq)->wq_interlock)
+#define wait_queue_unlock(wq)       spin_unlock ((spinlock_t *) &(wq)->wq_interlock)
+
+#else
 #define wait_queue_held(wq)		(hw_lock_held(&(wq)->wq_interlock))
 #define wait_queue_lock_try(wq) (hw_lock_try(&(wq)->wq_interlock))
 
@@ -190,6 +213,7 @@ static inline void wait_queue_unlock(wait_queue_t wq) {
 	assert(wait_queue_held(wq));
 	hw_lock_unlock(&(wq)->wq_interlock);
 }
+#endif
 
 #define wqs_lock(wqs)		wait_queue_lock(&(wqs)->wqs_wait_queue)
 #define wqs_unlock(wqs)		wait_queue_unlock(&(wqs)->wqs_wait_queue)
@@ -203,12 +227,12 @@ static inline void wait_queue_unlock(wait_queue_t wq) {
 			((thread)->wait_queue == WAIT_QUEUE_NULL)
 
 /* bootstrap interface - can allocate/link wait_queues and sets after calling this */
-__private_extern__ void wait_queue_bootstrap(void);
+/* __private_extern__ */ extern void wait_queue_bootstrap(void);
 
 /******** Decomposed interfaces (to build higher level constructs) ***********/
 
 /* assert intent to wait on a locked wait queue */
-__private_extern__ wait_result_t wait_queue_assert_wait64_locked(
+/* __private_extern__ */ extern wait_result_t wait_queue_assert_wait64_locked(
 			wait_queue_t wait_queue,
 			event64_t wait_event,
 			wait_interrupt_t interruptible,
@@ -216,42 +240,42 @@ __private_extern__ wait_result_t wait_queue_assert_wait64_locked(
 			thread_t thread);
 
 /* pull a thread from its wait queue */
-__private_extern__ void wait_queue_pull_thread_locked(
+/* __private_extern__ */ extern void wait_queue_pull_thread_locked(
 			wait_queue_t wait_queue,
 			thread_t thread,
 			boolean_t unlock);
 
 /* wakeup all threads waiting for a particular event on locked queue */
-__private_extern__ kern_return_t wait_queue_wakeup64_all_locked(
+/* __private_extern__ */ extern kern_return_t wait_queue_wakeup64_all_locked(
 			wait_queue_t wait_queue,
 			event64_t wake_event,
 			wait_result_t result,
 			boolean_t unlock);
 
 /* wakeup one thread waiting for a particular event on locked queue */
-__private_extern__ kern_return_t wait_queue_wakeup64_one_locked(
+/* __private_extern__ */ extern kern_return_t wait_queue_wakeup64_one_locked(
 			wait_queue_t wait_queue,
 			event64_t wake_event,
 			wait_result_t result,
 			boolean_t unlock);
 
 /* return identity of a thread awakened for a particular <wait_queue,event> */
-__private_extern__ thread_t wait_queue_wakeup64_identity_locked(
+/* __private_extern__ */ extern thread_t wait_queue_wakeup64_identity_locked(
 			wait_queue_t wait_queue,
 			event64_t wake_event,
 			wait_result_t result,
 			boolean_t unlock);
 
 /* wakeup thread iff its still waiting for a particular event on locked queue */
-__private_extern__ kern_return_t wait_queue_wakeup64_thread_locked(
+/* __private_extern__ */ extern kern_return_t wait_queue_wakeup64_thread_locked(
 			wait_queue_t wait_queue,
 			event64_t wake_event,
 			thread_t thread,
 			wait_result_t result,
 			boolean_t unlock);
 
-__private_extern__ uint32_t num_wait_queues;
-__private_extern__ struct wait_queue *wait_queues;
+/* __private_extern__ */ extern uint32_t num_wait_queues;
+/* __private_extern__ */ extern struct wait_queue *wait_queues;
 /* The Jenkins "one at a time" hash.
  * TBD: There may be some value to unrolling here,
  * depending on the architecture.

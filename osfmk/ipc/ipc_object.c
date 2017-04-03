@@ -70,6 +70,11 @@
  *	Functions to manipulate IPC objects.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_rt.h>
 
 #include <mach/mach_types.h>
@@ -95,6 +100,10 @@
 #include <ipc/ipc_labelh.h>
 
 #include <security/mac_mach_internal.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 zone_t ipc_object_zones[IOT_NUMBER];
 
@@ -906,7 +915,7 @@ ipc_object_copyout_name(
  *		Translates/consumes the destination right of a message.
  *		This is unlike normal copyout because the right is consumed
  *		in a funny way instead of being given to the receiving space.
- *		The receiver gets his name for the port, if he has receive
+ *		The receiver gets his name for the port, if they have receive
  *		rights, otherwise MACH_PORT_NULL.
  *	Conditions:
  *		The object is locked and active.  Nothing else locked.

@@ -63,6 +63,11 @@
  *	Functions to manipulate IPC port sets.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/port.h>
 #include <mach/kern_return.h>
 #include <mach/message.h>
@@ -77,6 +82,11 @@
 #include <kern/spl.h>
 
 #include <vm/vm_map.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
 
 /*
  *	Routine:	ipc_pset_alloc
@@ -313,6 +323,9 @@ ipc_pset_destroy(
 
 }
 
+#if defined (__DARLING__)
+#else
+
 /* Kqueue EVFILT_MACHPORT support */
 
 #include <sys/errno.h>
@@ -546,3 +559,5 @@ filt_machportpeek(struct knote *kn)
 
 	return (ipc_mqueue_peek(set_mq));
 }
+
+#endif

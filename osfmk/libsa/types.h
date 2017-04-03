@@ -58,6 +58,10 @@ typedef unsigned long	size_t;
  * Common type definitions that lots of old files seem to want.
  */
 
+#if defined (__DARLING__)
+#define daddr_t         xnu_daddr_t
+#endif
+
 typedef	unsigned char	u_char;		/* unsigned char */
 typedef	unsigned short	u_short;	/* unsigned short */
 typedef	unsigned int	u_int;		/* unsigned int */

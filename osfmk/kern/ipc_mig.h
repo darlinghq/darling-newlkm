@@ -168,7 +168,11 @@ __END_DECLS
 extern void mach_msg_receive_continue(void);
 
 /* Initialize kernel server dispatch table */
+#if defined (__KERNEL__)
+extern void		mig_init(void);
+#else
 extern void		mig_init(void) __attribute__((section("__TEXT, initcode")));
+#endif
 
 /*
  * Kernel implementation of the MIG object base class

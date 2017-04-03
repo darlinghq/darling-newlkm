@@ -63,7 +63,11 @@
 #include <kern/kern_types.h>
 
 /* Initialize IPC host services */
+#if defined (__DARLING__)
+extern void ipc_host_init(void);
+#else
 extern void ipc_host_init(void) __attribute__((section("__TEXT, initcode")));
+#endif
 
 /* Initialize ipc access to processor by allocating a port */
 extern void ipc_processor_init(

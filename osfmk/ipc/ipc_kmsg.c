@@ -70,6 +70,11 @@
  *	Operations on kernel messages.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <norma_vm.h>
 
 #include <mach/mach_types.h>
@@ -120,6 +125,10 @@
 #ifdef ppc
 #include <ppc/Firmware.h>
 #include <ppc/low_trace.h>
+#endif
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
 #endif
 
 #if DEBUG
@@ -206,6 +215,8 @@ mm_copy_options_string64(
 
 void db_print_msg_uid64(mach_msg_header_t *);
 
+#if defined (__DARLING__)
+#else
 static void
 ipc_msg_body_print64(void *body, int size)
 {
@@ -226,7 +237,7 @@ ipc_msg_body_print64(void *body, int size)
 		kprintf("\n    %p: ", word);
 	}
 }
-
+#endif
 
 const char *
 ipc_type_name64(
@@ -371,11 +382,14 @@ ipc_msg_print64(
 		msgh->msgh_id,
 		msgh->msgh_size);
 
+#if defined (__DARLING__)
+#else
 	if (mbits & MACH_MSGH_BITS_COMPLEX) {	
 		ipc_msg_print_untyped64((mach_msg_body_t *) (msgh + 1));
 	}
 
 	ipc_msg_body_print64((void *)(msgh + 1), msgh->msgh_size);
+#endif
 }
 
 
@@ -615,6 +629,8 @@ ipc_kmsg_alloc(
 		max_expanded_size = IKM_SAVED_MSG_SIZE; 	/* round up for ikm_cache */
 
 	if (max_expanded_size == IKM_SAVED_MSG_SIZE) {
+#if defined (__DARLING__)
+#else
 		struct ikm_cache	*cache;
 		unsigned int		i;
 
@@ -630,6 +646,7 @@ ipc_kmsg_alloc(
 			return (kmsg);
 		}
 		enable_preemption();
+#endif
 		kmsg = (ipc_kmsg_t)zalloc(ipc_kmsg_zone);
 	} else {
 		kmsg = (ipc_kmsg_t)kalloc(ikm_plus_overhead(max_expanded_size));
@@ -692,6 +709,8 @@ ipc_kmsg_free(
 	 * Peek and see if it has to go back in the cache.
 	 */
 	if (kmsg->ikm_size == IKM_SAVED_MSG_SIZE) {
+#if defined (__DARLING__)
+#else
 		struct ikm_cache	*cache;
 		unsigned int		i;
 
@@ -704,6 +723,7 @@ ipc_kmsg_free(
 			return;
 		}
 		enable_preemption();
+#endif
 		zfree(ipc_kmsg_zone, kmsg);
 		return;
 	}
@@ -1168,6 +1188,17 @@ ipc_kmsg_get(
 	kmsg->ikm_header->msgh_reserved		= legacy_base.header.msgh_reserved;
 	kmsg->ikm_header->msgh_id			= legacy_base.header.msgh_id;
 
+#if defined (__DARLING__)
+    printk ( KERN_NOTICE "- ikm_header->msgh_size: %d, bits: 0x%x rport: 0x%p, lport: 0x%p, reserved: 0x%x, id: %d\n",
+             kmsg->ikm_header->msgh_size,
+             kmsg->ikm_header->msgh_bits,
+             kmsg->ikm_header->msgh_remote_port,
+             kmsg->ikm_header->msgh_local_port,
+             kmsg->ikm_header->msgh_reserved,
+             kmsg->ikm_header->msgh_id );
+#endif
+
+
 	DEBUG_KPRINT_SYSCALL_IPC("ipc_kmsg_get header:\n"
 							 "  size:		0x%.8x\n"
 							 "  bits:		0x%.8x\n"
@@ -1189,7 +1220,7 @@ ipc_kmsg_get(
 
 	if (DEBUG_KPRINT_SYSCALL_PREDICATE(DEBUG_KPRINT_SYSCALL_IPC_MASK))
 	{
-		kprintf("body: size: %lu\n", (size - sizeof(mach_msg_header_t)));
+		kprintf("body: size: %lu\n", (unsigned long) (size - sizeof(mach_msg_header_t)));
 		uint32_t i;
 		for(i=0;i*4 < (size - sizeof(mach_msg_header_t));i++)
 		{
@@ -1467,7 +1498,6 @@ ipc_kmsg_put(
 	mach_msg_return_t mr;
 
 	DEBUG_IPC_KMSG_PRINT(kmsg, "ipc_kmsg_put()");
-
 
 	DEBUG_KPRINT_SYSCALL_IPC("ipc_kmsg_put header:\n"
 							 "  size:		0x%.8x\n"
@@ -2326,7 +2356,11 @@ ipc_kmsg_copyin_body(
     mach_msg_descriptor_t	*daddr, *naddr;
     mach_msg_descriptor_t	*user_addr, *kern_addr;
     mach_msg_type_number_t	dsc_count;
+#if defined (__DARLING__)
+    boolean_t 			is_task_64bit = FALSE;
+#else
     boolean_t 			is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
+#endif
     boolean_t 			complex = FALSE;
     vm_size_t			space_needed = 0;
     vm_offset_t			paddr = 0;
@@ -2533,7 +2567,17 @@ ipc_kmsg_copyin(
     mr = ipc_kmsg_copyin_header(kmsg->ikm_header, space, notify);
     if (mr != MACH_MSG_SUCCESS)
 	return mr;
-    
+
+#if defined (__DARLING__)
+    printk ( KERN_NOTICE "- copyin_header->msgh_size: %d, bits: 0x%x rport: 0x%p, lport: 0x%p, reserved: 0x%x, id: %d\n",
+             kmsg->ikm_header->msgh_size,
+             kmsg->ikm_header->msgh_bits,
+             kmsg->ikm_header->msgh_remote_port,
+             kmsg->ikm_header->msgh_local_port,
+             kmsg->ikm_header->msgh_reserved,
+             kmsg->ikm_header->msgh_id );
+#endif
+
 	DEBUG_KPRINT_SYSCALL_IPC("ipc_kmsg_copyin header:\n%.8x\n%.8x\n%p\n%p\n%.8x\n%.8x\n",
 							 kmsg->ikm_header->msgh_size,
 							 kmsg->ikm_header->msgh_bits,
@@ -3520,7 +3564,12 @@ ipc_kmsg_copyout_body(
     mach_msg_type_number_t	dsc_count, sdsc_count;
     int i;
     mach_msg_return_t 		mr = MACH_MSG_SUCCESS;
+
+#if defined (__DARLING__)
+        boolean_t       is_task_64bit  = FALSE;
+#else
     boolean_t 			is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
+#endif
 
     body = (mach_msg_body_t *) (kmsg->ikm_header + 1);
     dsc_count = body->msgh_descriptor_count;
@@ -3594,7 +3643,11 @@ ipc_kmsg_copyout_size(
 
     send_size = kmsg->ikm_header->msgh_size;
 
+#if defined (__DARLING__)
+        boolean_t       is_task_64bit   = FALSE;
+#else
     boolean_t is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
+#endif
 
 #if defined(__LP64__)
 	send_size -= LEGACY_HEADER_SIZE_DELTA;

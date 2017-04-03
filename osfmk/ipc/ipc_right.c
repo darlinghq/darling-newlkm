@@ -70,6 +70,11 @@
  *	Functions to manipulate IPC capabilities.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 #include <mach/port.h>
@@ -87,6 +92,10 @@
 #include <ipc/ipc_notify.h>
 #include <ipc/ipc_table.h>
 #include <security/mac_mach_internal.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	ipc_right_lookup_write

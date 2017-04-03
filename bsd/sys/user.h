@@ -108,10 +108,28 @@ struct label;		/* MAC label dummy struct */
 /*
  *	Per-thread U area.
  */
- 
+#if defined (__DARLING__)
+struct compat_uthread
+{
+        int                               uu_rval[2];
+        int                               uu_flag;
+        int                               uu_wakeup;    // PC: custom arg
+
+        thread_t                          uu_thread;
+        sigset_t                          uu_sigmask;  /* signal mask for the thread */
+        struct ksyn_waitq_element         uu_kwe;      /* user for pthread synch */
+};
+
+typedef struct compat_uthread * compat_uthread_t;
+
+#else
 struct uthread {
 	/* syscall parameters, results and catches */
+#ifndef __arm__
 	u_int64_t uu_arg[8]; /* arguments to current system call */
+#else
+    u_int32_t uu_arg[8]; /* ARM uses a 32-bit syscall ABI */
+#endif
 	int	*uu_ap;			/* pointer to arglist */
     int uu_rval[2];
 
@@ -246,7 +264,7 @@ struct uthread {
 };
 
 typedef struct uthread * uthread_t;
-
+#endif
 /* Definition of uu_flag */
 #define	UT_SAS_OLDMASK	0x00000001	/* need to restore mask before pause */
 #define	UT_NO_SIGMASK	0x00000002	/* exited thread; invalid sigmask */

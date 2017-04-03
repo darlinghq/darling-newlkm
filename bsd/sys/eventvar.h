@@ -63,6 +63,22 @@
 #define KQ_NEVENTS	16		/* minimize copy{in,out} calls */
 #define KQEXTENT	256		/* linear growth by this amount */
 
+#if defined (__DARLING__)
+struct compat_kqueue {
+        struct list_head        link;
+        // struct file           * file;
+
+        struct mutex            mutex;
+
+        struct list_head        knote_links;
+        // struct list_head        disabled_knote_links;
+
+        int                     epollfd;
+        // struct rb_root          timers;
+        // struct task_struct    * proc_waitd_task;
+};
+#endif
+
 struct kqueue {
 	wait_queue_set_t kq_wqs;	/* private wait queue set */
 	decl_lck_spin_data( ,kq_lock)	/* kqueue lock */

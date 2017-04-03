@@ -56,6 +56,11 @@
 /*
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/boolean.h>
 #include <mach/port.h>
 #include <mach/mig.h>
@@ -83,6 +88,10 @@
 #include <vm/vm_map.h>
 
 #include <libkern/OSAtomic.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	mach_msg_send_from_kernel

@@ -111,6 +111,9 @@ typedef natural_t ipc_space_refs_t;
 #define IS_GROWING	0x20000000	/* space is growing */
 
 struct ipc_space {
+#if defined (__DARLING__)
+        struct mutex        is_mutex_lock;
+#endif
 	lck_spin_t	is_lock_data;
 	ipc_space_refs_t is_bits;	/* holds refs, active, growing */
 	ipc_entry_num_t is_table_size;	/* current size of table */
@@ -165,23 +168,32 @@ extern ipc_space_t default_pager_space;
 extern lck_grp_t 	ipc_lck_grp;
 extern lck_attr_t 	ipc_lck_attr;
 
+
 #define	is_lock_init(is)	lck_spin_init(&(is)->is_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define	is_lock_destroy(is)	lck_spin_destroy(&(is)->is_lock_data, &ipc_lck_grp)
 
 #define	is_read_lock(is)	lck_spin_lock(&(is)->is_lock_data)
 #define is_read_unlock(is)	lck_spin_unlock(&(is)->is_lock_data)
+#if defined (__DARLING__)
+#define is_read_sleep(is)   printk (KERN_NOTICE "- BUG: is_read_sleep () called\n")
+#else
 #define is_read_sleep(is)	lck_spin_sleep(&(is)->is_lock_data,	\
 							LCK_SLEEP_DEFAULT,					\
 							(event_t)(is),						\
 							THREAD_UNINT)
+#endif
 
 #define	is_write_lock(is)	lck_spin_lock(&(is)->is_lock_data)
 #define	is_write_lock_try(is)	lck_spin_try_lock(&(is)->is_lock_data)
 #define is_write_unlock(is)	lck_spin_unlock(&(is)->is_lock_data)
+#if defined (__DARLING__)
+#define is_write_sleep(is)  printk (KERN_NOTICE "- BUG: is_write_sleep () called\n")
+#else
 #define is_write_sleep(is)	lck_spin_sleep(&(is)->is_lock_data,	\
 							LCK_SLEEP_DEFAULT,					\
 							(event_t)(is),						\
 							THREAD_UNINT)
+#endif
 
 #define is_refs(is)		((is)->is_bits & IS_REFS_MAX)
 
@@ -200,6 +212,9 @@ is_release(ipc_space_t is) {
         /* If we just removed the last reference count */
 	if ( 1 == (OSDecrementAtomic(&(is->is_bits)) & IS_REFS_MAX)) {
 		is_lock_destroy(is);
+#if defined (__DARLING__)
+        mutex_destroy (& is->is_mutex_lock);
+#endif
 		is_free(is);
 	}
 }

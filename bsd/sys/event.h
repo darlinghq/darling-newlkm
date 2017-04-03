@@ -352,6 +352,37 @@ MALLOC_DECLARE(M_KQUEUE);
 
 TAILQ_HEAD(kqtailq, knote);	/* a list of "queued" events */
 
+#if defined (__DARLING__) && ! defined (__cplusplus)
+struct compat_knote {
+        struct list_head            link;
+        struct compat_kqueue      * kqueue;
+        struct compat_filterops   * filtops;
+
+        union {
+                struct {
+                        nlink_t     nlink;  /* Used by vnode */
+                        int         size;   /* Used by vnode */
+                } vnode;
+        } data;
+
+        int                         kevfd;
+        union {
+                // int                 timerfd;
+                int                 inotifyfd;
+                int                 signalfd;
+        } kdata;
+
+        int                         attached;
+
+        int                         saved_fflags;
+        int32_t                     saved_data;
+
+        struct kevent               kevent;
+
+        int                         triggered;
+};
+#endif
+
 struct knote {
 	int		kn_inuse;	/* inuse count */
 	struct kqtailq	*kn_tq;		/* pointer to tail queue */
@@ -409,7 +440,11 @@ struct proc;
 struct wait_queue;
 
 SLIST_HEAD(klist, knote);
+#if defined (__DARLING__)
+extern void	knote_init(void);
+#else
 extern void	knote_init(void) __attribute__((section("__TEXT, initcode")));
+#endif
 extern void	klist_init(struct klist *list);
 
 #define KNOTE(list, hint)	knote(list, hint)

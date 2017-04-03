@@ -70,6 +70,11 @@
  *	Functions to initialize the IPC system.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_debug.h>
 #include <mach_rt.h>
 
@@ -103,6 +108,10 @@
 
 #include <mach/machine/ndr_def.h>   /* NDR_record */
 #include <ipc/ipc_labelh.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 vm_map_t ipc_kernel_map;
 vm_size_t ipc_kernel_map_size = 1024 * 1024;
@@ -216,6 +225,7 @@ ipc_bootstrap(void)
 	ipc_port_debug_init();
 #endif
 	mig_init();
+
 	ipc_table_init();
 
 	semaphore_init();
@@ -239,6 +249,20 @@ vm_size_t msg_ool_size_small;
 void
 ipc_init(void)
 {
+#if defined (__DARLING__)
+    /*
+     * As an optimization, 'small' out of line data regions using a
+     * physical copy strategy are copied into kalloc'ed buffers.
+     * The value of 'small' is determined here.  Requests kalloc()
+     * with sizes greater or equal to kalloc_max_prerounded may fail.
+     */
+    // if (kalloc_max_prerounded <=  MSG_OOL_SIZE_SMALL_MAX) {
+    //     msg_ool_size_small = kalloc_max_prerounded;
+    // }
+    // else {
+        msg_ool_size_small = MSG_OOL_SIZE_SMALL_MAX;
+    // }
+#else
 	kern_return_t retval;
 	vm_offset_t min;
 
@@ -269,6 +293,7 @@ ipc_init(void)
 	else {
 		msg_ool_size_small = MSG_OOL_SIZE_SMALL_MAX;
 	}
+#endif
 
 	ipc_host_init();
 }

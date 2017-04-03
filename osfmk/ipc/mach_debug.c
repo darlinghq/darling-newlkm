@@ -62,6 +62,12 @@
  *
  *	Exported IPC debug calls.
  */
+
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_ipc_debug.h>
 
 #include <mach/vm_param.h>
@@ -85,6 +91,12 @@
 #include <ipc/ipc_table.h>
 #include <ipc/ipc_right.h>
 #endif
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
+
 
 /*
  *	Routine:	mach_port_get_srights [kernel call]

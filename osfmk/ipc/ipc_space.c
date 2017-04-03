@@ -69,6 +69,11 @@
  *	Functions to manipulate IPC capability spaces.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 #include <mach/port.h>
@@ -84,6 +89,10 @@
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_right.h>
 #include <string.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 zone_t ipc_space_zone;
 ipc_space_t ipc_space_kernel;
@@ -162,6 +171,10 @@ ipc_space_create(
 	table[new_size-1].ie_next = 0;
 
 	is_lock_init(space);
+#if defined (__DARLING__)
+    mutex_init (& space->is_mutex_lock);
+#endif
+
 	space->is_bits = 2; /* 2 refs, active, not growing */
 	space->is_table_size = new_size;
 	space->is_table = table;
@@ -200,6 +213,10 @@ ipc_space_create_special(
 		return KERN_RESOURCE_SHORTAGE;
 
 	is_lock_init(space);
+#if defined (__DARLING__)
+    mutex_init (& space->is_mutex_lock);
+#endif
+
 	space->is_bits = IS_INACTIVE | 1; /* 1 ref, not active, not growing */
 	*spacep = space;
 	return KERN_SUCCESS;

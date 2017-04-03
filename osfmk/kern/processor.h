@@ -236,13 +236,20 @@ MACRO_BEGIN												\
 	(ps)->low_count = (p);								\
 MACRO_END
 
-
+#if defined (__DARLING__)
+extern void		processor_bootstrap(void);
+extern void		processor_init(
+					processor_t		processor,
+					int				cpu_id,
+					processor_set_t	processor_set);
+#else
 extern void		processor_bootstrap(void) __attribute__((section("__TEXT, initcode")));
 
 extern void		processor_init(
 					processor_t		processor,
 					int				cpu_id,
 					processor_set_t	processor_set) __attribute__((section("__TEXT, initcode")));
+#endif
 
 extern void		processor_meta_init(
 					processor_t		processor,
@@ -262,9 +269,15 @@ extern pset_node_t		pset_node_root(void);
 extern processor_set_t	pset_create(
 							pset_node_t		node);
 
+#if defined (__DARLING__)
+extern void		pset_init(
+					processor_set_t		pset,
+					pset_node_t			node);
+#else
 extern void		pset_init(
 					processor_set_t		pset,
 					pset_node_t			node) __attribute__((section("__TEXT, initcode")));
+#endif
 
 extern kern_return_t	processor_info_count(
 							processor_flavor_t		flavor,

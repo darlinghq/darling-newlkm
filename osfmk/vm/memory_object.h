@@ -68,27 +68,34 @@
 
 extern memory_object_default_t memory_manager_default;
 
-__private_extern__
+/* __private_extern__ */ extern
 memory_object_default_t	memory_manager_default_reference(void);
 
-__private_extern__
+/* __private_extern__ */ extern
 kern_return_t		memory_manager_default_check(void);
 
-__private_extern__
+#if defined (__DARLING__)
+/* __private_extern__ */ extern
+void			memory_manager_default_init(void);
+/* __private_extern__ */ extern
+void			memory_object_control_bootstrap(void);
+#else
+/* __private_extern__ */ extern
 void			memory_manager_default_init(void) __attribute__((section("__TEXT, initcode")));
-
-__private_extern__
+/* __private_extern__ */ extern
 void			memory_object_control_bootstrap(void) __attribute__((section("__TEXT, initcode")));
-__private_extern__
+#endif
+
+/* __private_extern__ */ extern
 memory_object_control_t memory_object_control_allocate(
 				vm_object_t		object);
 
-__private_extern__
+/* __private_extern__ */ extern
 void			memory_object_control_collapse(
 				memory_object_control_t control,
 				vm_object_t		object);
 
-__private_extern__
+/* __private_extern__ */ extern
 vm_object_t 		memory_object_control_to_vm_object(
 				memory_object_control_t control);
 
@@ -116,7 +123,7 @@ extern upl_t convert_port_to_upl(
 
 extern ipc_port_t convert_upl_to_port( upl_t );
 
-__private_extern__ void upl_no_senders(ipc_port_t, mach_port_mscount_t);
+/* __private_extern__ */ extern void upl_no_senders(ipc_port_t, mach_port_mscount_t);
 
 extern kern_return_t	memory_object_free_from_cache(
 	host_t				host,

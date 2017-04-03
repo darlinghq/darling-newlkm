@@ -469,8 +469,10 @@ boolean_t vfs_iskernelmount(mount_t);
 int  throttle_get_io_policy(struct uthread **ut);
 int  throttle_io_will_be_throttled(int lowpri_window_msecs, mount_t mp);
 void throttle_info_update_by_mount(mount_t mp);
+#if defined (__DARLING__)
+#else
 void unthrottle_thread(uthread_t);
-
+#endif
 /* throttled I/O helper function */
 /* convert the lowest bit to a device index */
 extern int num_trailing_0(uint64_t n);

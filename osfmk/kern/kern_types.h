@@ -96,6 +96,9 @@ typedef int wait_interrupt_t;
 #ifdef	MACH_KERNEL_PRIVATE
 
 #include <kern/misc_protos.h>
+#if defined (__DARLING__)
+#define clock_t         xnu_clock_t
+#endif
 typedef  struct clock			*clock_t;
 
 typedef struct mig_object		*mig_object_t;

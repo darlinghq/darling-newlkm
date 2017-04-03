@@ -70,6 +70,11 @@
  *	Exported message traps.  See mach/message.h.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/kern_return.h>
 #include <mach/port.h>
@@ -109,6 +114,10 @@
 #include <security/mac_mach_internal.h>
 
 #include <sys/kdebug.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 
 #ifndef offsetof
@@ -405,7 +414,7 @@ mach_msg_overwrite_trap(
 	mach_vm_address_t	rcv_msg_addr = args->rcv_msg;
         mach_msg_size_t		scatter_list_size = 0; /* NOT INITIALIZED - but not used in pactice */
 	__unused mach_port_seqno_t temp_seqno = 0;
-
+    
 	mach_msg_return_t  mr = MACH_MSG_SUCCESS;
 	vm_map_t map = current_map();
 	
@@ -414,7 +423,7 @@ mach_msg_overwrite_trap(
 		ipc_kmsg_t kmsg;
 
 		mr = ipc_kmsg_get(msg_addr, send_size, &kmsg);
-
+        
 		if (mr != MACH_MSG_SUCCESS)
 			return mr;
 
@@ -431,7 +440,6 @@ mach_msg_overwrite_trap(
 			(void) ipc_kmsg_put(msg_addr, kmsg, kmsg->ikm_header->msgh_size);
 			return mr;
 		}
-
 	}
 
 	if (option & MACH_RCV_MSG) {

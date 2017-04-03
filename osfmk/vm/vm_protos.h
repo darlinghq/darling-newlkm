@@ -336,18 +336,18 @@ extern kern_return_t default_pager_memory_object_create(
 extern unsigned int default_pager_swap_pages_free(void);
 struct default_freezer_handle;
 struct vm_page;
-__private_extern__ void	default_freezer_init(void);
-__private_extern__ struct default_freezer_handle* default_freezer_handle_allocate(void);
-__private_extern__ kern_return_t
+/* __private_extern__ */ extern void	default_freezer_init(void);
+/* __private_extern__ */ extern struct default_freezer_handle* default_freezer_handle_allocate(void);
+/* __private_extern__ */ extern kern_return_t
 default_freezer_handle_init(
 	struct  default_freezer_handle *df_handle);
-__private_extern__ void
+/* __private_extern__ */ extern void
 default_freezer_handle_deallocate(
 	struct default_freezer_handle *df_handle);
-__private_extern__ void
+/* __private_extern__ */ extern void
 default_freezer_pageout(
 	struct default_freezer_handle *df_handle);
-__private_extern__ kern_return_t
+/* __private_extern__ */ extern kern_return_t
 default_freezer_pack(
 	unsigned int		*purgeable_count,
 	unsigned int		*wired_count,
@@ -357,10 +357,10 @@ default_freezer_pack(
 	boolean_t		*shared,
 	vm_object_t		src_object,
 	struct default_freezer_handle *df_handle);
-__private_extern__ void
+/* __private_extern__ */ extern void
 default_freezer_unpack(
 	struct default_freezer_handle *df_handle);	
-__private_extern__ void
+/* __private_extern__ */ extern void
 default_freezer_pack_page(
 	struct vm_page* p,
 	struct default_freezer_handle *df_handle);
@@ -409,7 +409,12 @@ extern memory_object_t device_pager_setup(
 	uintptr_t,
 	vm_size_t,
 	int);
+
+#if defined (__DARLING__)
+extern void device_pager_bootstrap(void);
+#else
 extern void device_pager_bootstrap(void) __attribute__((section("__TEXT, initcode")));
+#endif
 
 extern kern_return_t memory_object_create_named(
 	memory_object_t	pager,

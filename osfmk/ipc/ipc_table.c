@@ -63,6 +63,11 @@
  *	Functions to manipulate tables of IPC capabilities.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/kern_return.h>
 #include <mach/vm_param.h>
 #include <ipc/ipc_table.h>
@@ -70,6 +75,10 @@
 #include <ipc/ipc_entry.h>
 #include <kern/kalloc.h>
 #include <vm/vm_kern.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  * Forward declarations
@@ -176,6 +185,9 @@ void *
 ipc_table_alloc(
 	vm_size_t	size)
 {
+#if defined (__DARLING__)
+    return vzalloc (size);
+#else
 	vm_offset_t table;
 
 	if (size < PAGE_SIZE)
@@ -185,6 +197,7 @@ ipc_table_alloc(
 		table = 0;
 
 	return (void *)table;
+#endif
 }
 
 
@@ -202,8 +215,12 @@ ipc_table_free(
 	vm_size_t	size,
 	void *		table)
 {
+#if defined (__DARLING__)
+    vfree (table);
+#else
 	if (size < PAGE_SIZE)
 		kfree(table, size);
-	else
+    else
 		kmem_free(kalloc_map, (vm_offset_t)table, size);
+#endif
 }

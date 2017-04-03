@@ -139,11 +139,13 @@
  * the compiler from warning about it if not used.
  */
 #define __unused	__attribute__((unused))
-
+#if defined (__DARLING__)
+#else
 /* __used forces variables and functions to be included even if it appears
  * to the compiler that they are not used (and would thust be discarded).
  */
 #define __used		__attribute__((used))
+#endif
 
 /* __deprecated causes the compiler to produce a warning when encountering
  * code using the deprecated functionality.  This may require turning on
@@ -157,9 +159,12 @@
 #define __unavailable	__attribute__((unavailable))
 
 /* Delete pseudo-keywords wherever they are not available or needed. */
+#if defined (__DARLING__)
+#else
 #ifndef __dead
 #define	__dead
 #define	__pure
+#endif
 #endif
 
 /*

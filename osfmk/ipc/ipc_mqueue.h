@@ -116,6 +116,15 @@ typedef struct ipc_mqueue {
 #define imq_local_name		data.pset.local_name
 #define imq_is_set(mq)		wait_queue_is_set(&(mq)->imq_set_queue)
 
+// #if defined (__DARLING__)
+// #define imq_lock(mq)        spin_lock((spinlock_t *) &(mq)->imq_wait_queue.linux_waitqh.lock)
+// #define imq_lock_try(mq)    spin_trylock((spinlock_t *) &(mq)->imq_wait_queue.linux_waitqh.lock)
+// #define imq_unlock(mq)      spin_unlock((spinlock_t *) &(mq)->imq_wait_queue.linux_waitqh.lock)
+// #define imq_held(mq)        spin_is_locked((spinlock_t *) &(mq)->imq_wait_queue.linux_waitqh.lock)
+// #define    imq_lock_irqsave(mq, flags)         wait_queue_lock_irqsave(&(mq)->imq_wait_queue, flags)
+// #define    imq_unlock_irqrestore(mq, flags)    wait_queue_unlock_irqrestore(&(mq)->imq_wait_queue, flags)
+// #endif
+
 #define	imq_lock(mq)		wait_queue_lock(&(mq)->imq_wait_queue)
 #define	imq_lock_try(mq)	wait_queue_lock_try(&(mq)->imq_wait_queue)
 #define	imq_unlock(mq)		wait_queue_unlock(&(mq)->imq_wait_queue)
