@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -65,9 +65,6 @@
  *
  */
 
-#include <cputypes.h>
-#include <platforms.h>
-
 #include <kern/ast.h>
 #include <kern/counters.h>
 #include <kern/cpu_number.h>
@@ -77,8 +74,13 @@
 #include <kern/thread.h>
 #include <kern/processor.h>
 #include <kern/spl.h>
-#include <kern/wait_queue.h>
+#include <kern/sfi.h>
+#if CONFIG_TELEMETRY
+#include <kern/telemetry.h>
+#endif
+#include <kern/waitq.h>
 #include <kern/ledger.h>
+#include <kperf/kperf_kpc.h>
 #include <mach/policy.h>
 #include <machine/trap.h> // for CHUD AST hook
 #include <machine/pal_routines.h>
@@ -92,7 +94,9 @@ ast_init(void)
 {
 }
 
-extern void chudxnu_thread_ast(thread_t); // XXX this should probably be in a header...
+#ifdef CONFIG_DTRACE
+extern void dtrace_ast(void);
+#endif
 
 /*
  * Called at splsched.
@@ -134,11 +138,11 @@ ast_taken(
 		 * Check for urgent preemption.
 		 */
 		if (	(reasons & AST_URGENT)				&&
-				wait_queue_assert_possible(thread)		) {
+				waitq_wait_possible(thread)		) {
 			if (reasons & AST_PREEMPT) {
 				counter(c_ast_taken_block++);
 				thread_block_reason(THREAD_CONTINUE_NULL, NULL,
-										AST_PREEMPT | AST_URGENT);
+										reasons & AST_PREEMPTION);
 			}
 
 			reasons &= ~AST_PREEMPTION;
@@ -150,6 +154,12 @@ ast_taken(
 		 */
 		if (!preempt_trap) {
 			ml_set_interrupts_enabled(enable);
+
+#if CONFIG_DTRACE
+			if (reasons & AST_DTRACE) {
+				dtrace_ast();
+			}
+#endif
 
 #ifdef	MACH_BSD
 			/*
@@ -172,8 +182,15 @@ ast_taken(
 			/* 
 			 * Thread APC hook.
 			 */
-			if (reasons & AST_APC)
-				act_execute_returnhandlers();
+			if (reasons & AST_APC) {
+				thread_ast_clear(thread, AST_APC);
+				thread_apc_ast(thread);
+			}
+
+			if (reasons & AST_GUARD) {
+				thread_ast_clear(thread, AST_GUARD);
+				guard_ast(thread);
+			}
 
 			if (reasons & AST_LEDGER) {
 				thread_ast_clear(thread, AST_LEDGER);
@@ -183,24 +200,45 @@ ast_taken(
 			/*
 			 * Kernel Profiling Hook
 			 */
-			if (reasons & AST_KPERF)
-			{
+			if (reasons & AST_KPERF) {
 				thread_ast_clear(thread, AST_KPERF);
-				chudxnu_thread_ast(thread);
+				kperf_kpc_thread_ast(thread);
 			}
+
+#if CONFIG_TELEMETRY
+			if (reasons & AST_TELEMETRY_ALL) {
+				boolean_t interrupted_userspace = FALSE;
+				boolean_t io_telemetry = FALSE;
+
+				assert((reasons & AST_TELEMETRY_ALL) != AST_TELEMETRY_ALL); /* only one is valid at a time */
+				interrupted_userspace = (reasons & AST_TELEMETRY_USER) ? TRUE : FALSE;
+				io_telemetry = ((reasons & AST_TELEMETRY_IO) ? TRUE : FALSE);
+				thread_ast_clear(thread, AST_TELEMETRY_ALL);
+				telemetry_ast(thread, interrupted_userspace, io_telemetry);
+			}
+#endif
 
 			ml_set_interrupts_enabled(FALSE);
 
-			/* 
-			 * Check for preemption.
-			 */
-			if (reasons & AST_PREEMPT)
-				reasons = csw_check(current_processor());
+#if CONFIG_SCHED_SFI
+			if (reasons & AST_SFI) {
+				sfi_ast(thread);
+			}
+#endif
 
-			if (	(reasons & AST_PREEMPT)				&&
-					wait_queue_assert_possible(thread)		) {		
+			/*
+			 * Check for preemption. Conditions may have changed from when the AST_PREEMPT was originally set.
+			 */
+			thread_lock(thread);
+			if (reasons & AST_PREEMPT)
+				reasons = csw_check(current_processor(), reasons & AST_QUANTUM);
+			thread_unlock(thread);
+
+			assert(waitq_wait_possible(thread));
+
+			if (reasons & AST_PREEMPT) {
 				counter(c_ast_taken_block++);
-				thread_block_reason((thread_continue_t)thread_exception_return, NULL, AST_PREEMPT);
+				thread_block_reason((thread_continue_t)thread_exception_return, NULL, reasons & AST_PREEMPTION);
 			}
 		}
 	}
@@ -213,15 +251,13 @@ ast_taken(
  */
 void
 ast_check(
-	processor_t		processor)
+	processor_t processor)
 {
-	thread_t			thread = processor->active_thread;
+	thread_t thread = processor->active_thread;
 
-	processor->current_pri = thread->sched_pri;
-	processor->current_thmode = thread->sched_mode;
-	if (	processor->state == PROCESSOR_RUNNING		||
-			processor->state == PROCESSOR_SHUTDOWN		) {
-		ast_t			preempt;
+	if (processor->state == PROCESSOR_RUNNING ||
+	    processor->state == PROCESSOR_SHUTDOWN) {
+		ast_t preempt;
 
 		/*
 		 *	Propagate thread ast to processor.
@@ -233,7 +269,58 @@ ast_check(
 		/*
 		 *	Context switch check.
 		 */
-		if ((preempt = csw_check(processor)) != AST_NONE)
+		thread_lock(thread);
+
+		processor->current_pri = thread->sched_pri;
+		processor->current_thmode = thread->sched_mode;
+		processor->current_sfi_class = thread->sfi_class = sfi_thread_classify(thread);
+
+		if ((preempt = csw_check(processor, AST_NONE)) != AST_NONE)
 			ast_on(preempt);
+
+		thread_unlock(thread);
 	}
 }
+
+/*
+ * Set AST flags on current processor
+ * Called at splsched
+ */
+void
+ast_on(ast_t reasons)
+{
+	ast_t *pending_ast = ast_pending();
+
+	*pending_ast |= reasons;
+}
+
+/*
+ * Clear AST flags on current processor
+ * Called at splsched
+ */
+void
+ast_off(ast_t reasons)
+{
+	ast_t *pending_ast = ast_pending();
+
+	*pending_ast &= ~reasons;
+}
+
+/*
+ * Re-set current processor's per-thread AST flags to those set on thread
+ * Called at splsched
+ */
+void
+ast_context(thread_t thread)
+{
+	ast_t *pending_ast = ast_pending();
+
+	*pending_ast = ((*pending_ast & ~AST_PER_THREAD) | thread->ast);
+}
+
+void
+ast_dtrace_on(void)
+{
+	ast_on(AST_DTRACE);
+}
+

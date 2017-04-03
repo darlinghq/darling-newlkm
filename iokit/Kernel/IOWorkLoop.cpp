@@ -31,6 +31,7 @@
 #include <IOKit/IOEventSource.h>
 #include <IOKit/IOInterruptEventSource.h>
 #include <IOKit/IOCommandGate.h>
+#include <IOKit/IOCommandPool.h>
 #include <IOKit/IOTimeStamp.h>
 #include <IOKit/IOKitDebug.h>
 #include <libkern/OSDebug.h>
@@ -84,11 +85,12 @@ do { \
 #define IOStatisticsOpenGate() \
 do { \
 	IOStatistics::countWorkLoopOpenGate(reserved->counter); \
+        if (reserved->lockInterval) lockTime();                 \
 } while(0)
-
 #define IOStatisticsCloseGate() \
 do { \
-	IOStatistics::countWorkLoopCloseGate(reserved->counter); \
+	IOStatistics::countWorkLoopCloseGate(reserved->counter);                    \
+        if (reserved->lockInterval) reserved->lockTime = mach_absolute_time();      \
 } while(0)
 
 #define IOStatisticsAttachEventSource() \
@@ -127,11 +129,7 @@ bool IOWorkLoop::init()
 		
 		bzero(reserved,sizeof(ExpansionData));
 	}
-	
-#if DEBUG
-	OSBacktrace ( reserved->allocationBacktrace, sizeof ( reserved->allocationBacktrace ) / sizeof ( reserved->allocationBacktrace[0] ) );
-#endif
-	
+
     if ( gateLock == NULL ) {
         if ( !( gateLock = IORecursiveLockAlloc()) )
             return false;
@@ -144,11 +142,6 @@ bool IOWorkLoop::init()
         workToDo = false;
     }
 
-    if (!reserved) {
-        reserved = IONew(ExpansionData, 1);
-        reserved->options = 0;
-    }
-	
     IOStatisticsRegisterCounter();
 
     if ( controlG == NULL ) {
@@ -260,6 +253,7 @@ void IOWorkLoop::free()
 	// Either way clean up all of our resources and return.
 	
 	if (controlG) {
+	    controlG->workLoop = 0;
 	    controlG->release();
 	    controlG = 0;
 	}
@@ -287,6 +281,13 @@ void IOWorkLoop::free()
 
 IOReturn IOWorkLoop::addEventSource(IOEventSource *newEvent)
 {
+    if ((workThread)
+      && !thread_has_thread_name(workThread)
+      && (newEvent->owner)
+      && !OSDynamicCast(IOCommandPool, newEvent->owner)) {
+        thread_set_thread_name(workThread, newEvent->owner->getMetaClass()->getClassName());
+    }
+
     return controlG->runCommand((void *) mAddEvent, (void *) newEvent);
 }
     
@@ -564,10 +565,10 @@ IOReturn IOWorkLoop::_maintRequest(void *inC, void *inD, void *, void *)
 				if (eventChain == inEvent)
 					eventChain = inEvent->getNext();
 				else {
-					IOEventSource *event, *next;
+					IOEventSource *event, *next = 0;
 		
 					event = eventChain;
-					while ((next = event->getNext()) && next != inEvent)
+					if (event) while ((next = event->getNext()) && (next != inEvent))
 						event = next;
 		
 					if (!next) {
@@ -581,10 +582,10 @@ IOReturn IOWorkLoop::_maintRequest(void *inC, void *inD, void *, void *)
 				if (passiveEventChain == inEvent)
 					passiveEventChain = inEvent->getNext();
 				else {
-					IOEventSource *event, *next;
+					IOEventSource *event, *next = 0;
 		
 					event = passiveEventChain;
-					while ((next = event->getNext()) && next != inEvent)
+					if (event) while ((next = event->getNext()) && (next != inEvent))
 						event = next;
 		
 					if (!next) {
@@ -644,4 +645,26 @@ IOWorkLoop::eventSourcePerformsWork(IOEventSource *inEventSource)
 	}
 	
     return result;
+}
+
+void
+IOWorkLoop::lockTime(void)
+{
+    uint64_t time;
+    time = mach_absolute_time() - reserved->lockTime;
+    if (time > reserved->lockInterval)
+    {
+        absolutetime_to_nanoseconds(time, &time);
+        if (kTimeLockPanics & reserved->options) panic("IOWorkLoop %p lock time %qd us", this, time / 1000ULL);
+        else                     OSReportWithBacktrace("IOWorkLoop %p lock time %qd us", this, time / 1000ULL);
+    }
+}
+
+void
+IOWorkLoop::setMaximumLockTime(uint64_t interval, uint32_t options)
+{
+    IORecursiveLockLock(gateLock);
+    reserved->lockInterval = interval;
+    reserved->options = (reserved->options & ~kTimeLockPanics) | (options & kTimeLockPanics);
+    IORecursiveLockUnlock(gateLock);
 }

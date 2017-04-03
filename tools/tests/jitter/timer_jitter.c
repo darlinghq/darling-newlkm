@@ -29,7 +29,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <sys/wait.h>
-#include <sys/syscall.h>
+#include <sys/kdebug.h>
 #include <sys/types.h>
 #include <sys/ptrace.h>
 #include <semaphore.h>
@@ -46,6 +46,8 @@
 #include <mach/mach.h>
 #include <mach/task.h>
 #include <mach/semaphore.h>
+
+#include <libproc_internal.h>
 
 typedef enum my_policy_type { MY_POLICY_REALTIME, MY_POLICY_TIMESHARE, MY_POLICY_FIXEDPRI } my_policy_type_t;
 
@@ -354,6 +356,18 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
+	/*
+	 * Disable the wake monitor.  If we are
+	 * performing a large number of
+	 * iterations, the wake monitor may
+	 * cause this process to get suspended,
+	 * thus causing a large jitter value.
+	 */
+	if (proc_disable_wakemon(getpid()) != KERN_SUCCESS) {
+		printf("Couldn't disable wake monitor.\n");
+		/* For now, do not exit; this call could be locked down */
+	}
+
 	/* 
 	 * Repeatedly pick a random timer length and 
 	 * try to sleep exactly that long 
@@ -371,7 +385,7 @@ main(int argc, char **argv)
 		
 		/* Too much: cut a tracepoint for a debugger */
 		if (jitter_arr[i] >= too_much) {
-			syscall(SYS_kdebug_trace, 0xeeeeeeee, 0, 0, 0, 0);
+			kdebug_trace(0xeeeee0 | DBG_FUNC_NONE, 0, 0, 0, 0);
 		}
 
 		if (wakeup_second_thread) {
@@ -466,7 +480,7 @@ second_thread(void *args)
 		
 		/* Too much: cut a tracepoint for a debugger */
 		if (secargs->wakeup_second_jitter_arr[i] >= secargs->too_much) {
-			syscall(SYS_kdebug_trace, 0xeeeeeeef, 0, 0, 0, 0);
+			kdebug_trace(0xeeeee4 | DBG_FUNC_NONE, 0, 0, 0, 0);
 		}
 
 		kret = semaphore_signal(secargs->return_semaphore);

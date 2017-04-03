@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -74,10 +74,10 @@
 #ifdef	MACH_KERNEL_PRIVATE
 
 #include <zone_debug.h>
-#include <kern/lock.h>
 #include <kern/locks.h>
 #include <kern/queue.h>
 #include <kern/thread_call.h>
+#include <kern/btlog.h>
 
 #if	CONFIG_GZALLOC
 typedef struct gzalloc_data {
@@ -94,56 +94,63 @@ typedef struct gzalloc_data {
  *
  */
 
+struct zone_free_element;
+struct zone_page_metadata;
+
 struct zone {
+	struct zone_free_element *free_elements;	/* free elements directly linked */
+	struct {
+		queue_head_t			any_free_foreign;	/* foreign pages crammed into zone */
+		queue_head_t			all_free;
+		queue_head_t			intermediate;
+		queue_head_t			all_used;
+	} pages;		/* list of zone_page_metadata structs, which maintain per-page free element lists */
 	int		count;		/* Number of elements used now */
-	vm_offset_t	free_elements;
+	int		countfree;	/* Number of free elements */
+	int 	count_all_free_pages;  /* Number of pages collectable by GC */
+	lck_attr_t      lock_attr;	/* zone lock attribute */
 	decl_lck_mtx_data(,lock)	/* zone lock */
 	lck_mtx_ext_t   lock_ext;	/* placeholder for indirect mutex */
-	lck_attr_t      lock_attr;	/* zone lock attribute */
-	lck_grp_t       lock_grp;	/* zone lock group */
-	lck_grp_attr_t  lock_grp_attr;	/* zone lock group attribute */
 	vm_size_t	cur_size;	/* current memory utilization */
 	vm_size_t	max_size;	/* how large can this zone grow */
 	vm_size_t	elem_size;	/* size of an element */
 	vm_size_t	alloc_size;	/* size used for more memory */
+	uint64_t	page_count __attribute__((aligned(8)));   /* number of pages used by this zone */
 	uint64_t	sum_count;	/* count of allocs (life of zone) */
-	unsigned int
-	/* boolean_t */ exhaustible :1,	/* (F) merely return if empty? */
-	/* boolean_t */	collectable :1,	/* (F) garbage collect empty pages */
-	/* boolean_t */	expandable :1,	/* (T) expand zone (with message)? */
-	/* boolean_t */ allows_foreign :1,/* (F) allow non-zalloc space */
-	/* boolean_t */	doing_alloc :1,	/* is zone expanding now? */
-	/* boolean_t */	waiting :1,	/* is thread waiting for expansion? */
-	/* boolean_t */	async_pending :1,	/* asynchronous allocation pending? */
-#if CONFIG_ZLEAKS
-	/* boolean_t */ zleak_on :1,	/* Are we collecting allocation information? */
-#endif	/* CONFIG_ZLEAKS */
-	/* boolean_t */	caller_acct: 1, /* do we account allocation/free to the caller? */  
-	/* boolean_t */	doing_gc :1,	/* garbage collect in progress? */
-	/* boolean_t */ noencrypt :1,
-	/* boolean_t */	no_callout:1,
-	/* boolean_t */	async_prio_refill:1,
-	/* boolean_t */	gzalloc_exempt:1,
-	/* boolean_t */	alignment_required:1;
+	uint32_t
+	/* boolean_t */ exhaustible        :1,	/* (F) merely return if empty? */
+	/* boolean_t */	collectable        :1,	/* (F) garbage collect empty pages */
+	/* boolean_t */	expandable         :1,	/* (T) expand zone (with message)? */
+	/* boolean_t */ allows_foreign     :1,  /* (F) allow non-zalloc space */
+	/* boolean_t */	doing_alloc_without_vm_priv:1,	/* is zone expanding now via a non-vm_privileged thread? */
+	/* boolean_t */ doing_alloc_with_vm_priv:1, /* is zone expanding now via a vm_privileged thread? */
+	/* boolean_t */	waiting            :1,	/* is thread waiting for expansion? */
+	/* boolean_t */	async_pending      :1,	/* asynchronous allocation pending? */
+	/* boolean_t */ zleak_on           :1,	/* Are we collecting allocation information? */
+	/* boolean_t */	caller_acct        :1,  /* do we account allocation/free to the caller? */  
+	/* boolean_t */ noencrypt          :1,
+	/* boolean_t */	no_callout         :1,
+	/* boolean_t */	async_prio_refill  :1,
+	/* boolean_t */	gzalloc_exempt     :1,
+	/* boolean_t */	alignment_required :1,
+	/* boolean_t */ zone_logging	   :1,	/* Enable zone logging for this zone. */
+	/* boolean_t */ zone_replenishing  :1,
+	/* future    */ _reserved          :15;
+
 	int		index;		/* index into zone_info arrays for this zone */
-	struct zone *	next_zone;	/* Link for all-zones list */
-	thread_call_data_t call_async_alloc;	/* callout for asynchronous alloc */
 	const char	*zone_name;	/* a name for the zone */
-#if	ZONE_DEBUG
-	queue_head_t	active_zones;	/* active elements */
-#endif	/* ZONE_DEBUG */
 
 #if CONFIG_ZLEAKS
-	uint32_t num_allocs;		/* alloc stats for zleak benchmarks */
-	uint32_t num_frees;		/* free stats for zleak benchmarks */
 	uint32_t zleak_capture;		/* per-zone counter for capturing every N allocations */
 #endif /* CONFIG_ZLEAKS */
-	uint32_t free_check_count;	/* counter for poisoning/checking every N frees */
+	uint32_t zp_count;              /* counter for poisoning every N frees */
 	vm_size_t	prio_refill_watermark;
 	thread_t	zone_replenish_thread;
 #if	CONFIG_GZALLOC
 	gzalloc_data_t	gz;
 #endif /* CONFIG_GZALLOC */
+
+	btlog_t		*zlog_btlog;		/* zone logging structure to hold stacks and element references to those stacks. */
 };
 
 /*
@@ -155,25 +162,16 @@ typedef struct zinfo_usage_store_t {
 	uint64_t	alloc __attribute__((aligned(8)));		/* allocation counter */
 	uint64_t	free __attribute__((aligned(8)));		/* free counter */
 } zinfo_usage_store_t;
-typedef zinfo_usage_store_t *zinfo_usage_t;
 
-extern void		zone_gc(boolean_t);
-extern void		consider_zone_gc(boolean_t);
-
-/* Steal memory for zone module */
-extern void		zone_steal_memory(void);
+extern void		zone_gc(void);
+extern void		consider_zone_gc(void);
 
 /* Bootstrap zone module (create zone zone) */
-extern void		zone_bootstrap(void) __attribute__((section("__TEXT, initcode")));
+extern void		zone_bootstrap(void);
 
 /* Init zone module */
 extern void		zone_init(
-					vm_size_t	map_size) __attribute__((section("__TEXT, initcode")));
-
-/* Handle per-task zone info */
-extern void		zinfo_task_init(task_t task);
-extern void		zinfo_task_free(task_t task);
-
+					vm_size_t	map_size);
 
 /* Stack use statistics */
 extern void		stack_fake_zone_init(int zone_index);
@@ -201,11 +199,18 @@ extern void		zone_debug_disable(
 #define ZONE_DEBUG_OFFSET	ROUNDUP(sizeof(queue_chain_t),16)
 #endif	/* ZONE_DEBUG */
 
+extern unsigned int            num_zones;
+extern struct zone             zone_array[];
+
 #endif	/* MACH_KERNEL_PRIVATE */
 
 __BEGIN_DECLS
 
 #ifdef	XNU_KERNEL_PRIVATE
+
+extern vm_offset_t     zone_map_min_address;
+extern vm_offset_t     zone_map_max_address;
+
 
 /* Allocate from zone */
 extern void *	zalloc(
@@ -224,11 +229,15 @@ extern zone_t	zinit(
 					const char	*name);		/* a name for the zone */
 
 
+/* Non-waiting for memory version of zalloc */
+extern void *	zalloc_nopagewait(
+					zone_t		zone);
+
 /* Non-blocking version of zalloc */
 extern void *	zalloc_noblock(
 					zone_t		zone);
 
-/* direct (non-wrappered) interface */
+/* selective version of zalloc */
 extern void *	zalloc_canblock(
 					zone_t		zone,
 					boolean_t	canblock);
@@ -266,6 +275,7 @@ extern void		zone_prio_refill_configure(zone_t, vm_size_t);
 				 */
 #define Z_ALIGNMENT_REQUIRED 8
 #define Z_GZALLOC_EXEMPT 9	/* Not tracked in guard allocation mode */
+
 /* Preallocate space for zone from zone map */
 extern void		zprealloc(
 					zone_t		zone,
@@ -273,6 +283,10 @@ extern void		zprealloc(
 
 extern integer_t	zone_free_count(
 						zone_t		zone);
+
+extern vm_size_t 	zone_element_size(
+						void 		*addr,
+						zone_t 		*z);
 
 /*
  * MAX_ZTRACE_DEPTH configures how deep of a stack trace is taken on each zalloc in the zone of interest.  15
@@ -311,7 +325,6 @@ extern int get_zleak_state(void);
 #endif	/* CONFIG_ZLEAKS */
 
 /* These functions used for leak detection both in zalloc.c and mbuf.c */
-extern uint32_t fastbacktrace(uintptr_t* bt, uint32_t max_frames) __attribute__((noinline));
 extern uintptr_t hash_mix(uintptr_t);
 extern uint32_t hashbacktrace(uintptr_t *, uint32_t, uint32_t);
 extern uint32_t hashaddr(uintptr_t, uint32_t);
@@ -335,7 +348,12 @@ boolean_t gzalloc_enabled(void);
 
 vm_offset_t gzalloc_alloc(zone_t, boolean_t);
 boolean_t gzalloc_free(zone_t, void *);
+boolean_t gzalloc_element_size(void *, zone_t *, vm_size_t *);
 #endif /* CONFIG_GZALLOC */
+
+/* Callbacks for btlog lock/unlock */
+void zlog_btlog_lock(__unused void *);
+void zlog_btlog_unlock(__unused void *);
 
 #endif	/* XNU_KERNEL_PRIVATE */
 

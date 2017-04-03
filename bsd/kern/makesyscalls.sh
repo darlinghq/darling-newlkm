@@ -34,6 +34,9 @@ output_sysprotofile=0
 output_syshdrfile=0
 output_syscalltablefile=0
 output_auditevfile=0
+output_tracecodes=0
+
+use_stdout=0
 
 # output files:
 syscallnamesfile="syscalls.c"
@@ -46,6 +49,7 @@ auditevfile="audit_kevents.c"
 syscallprefix="SYS_"
 switchname="sysent"
 namesname="syscallnames"
+tracecodename="syscall.codes"
 
 # tmp files:
 syslegal="sysent.syslegal.$$"
@@ -56,14 +60,15 @@ sysprotoend="sysprotoend.$$"
 syscallnamestempfile="syscallnamesfile.$$"
 syshdrtempfile="syshdrtempfile.$$"
 audittempfile="audittempfile.$$"
+tracecodetempfile="tracecodetempfile.$$"
 
-trap "rm $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile" 0
+trap "rm $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile $tracecodetempfile" 0
 
-touch $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile
+touch $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile $tracecodetempfile
 
 case $# in
     0)
-	echo "usage: $0 input-file [<names|proto|header|table|audit> [<config-file>]]" 1>&2
+	echo "usage: $0 input-file [<names|proto|header|table|audit|trace> [<config-file>]]" 1>&2
 	exit 1
 	;;
 esac
@@ -88,6 +93,10 @@ if [ -n "$1" ]; then
 	audit)
 	    output_auditevfile=1
 	    ;;
+	trace)
+	    output_tracecodes=1
+	    use_stdout=1
+	    ;;
     esac
     shift;
 else
@@ -96,6 +105,7 @@ else
     output_syshdrfile=1
     output_syscalltablefile=1
     output_auditevfile=1
+    output_tracecodes=1
 fi
 
 if [ -n "$1" -a -f "$1" ]; then
@@ -132,6 +142,7 @@ s/\$//g
 		syshdrfile = \"$syshdrfile\"
 		syshdrtempfile = \"$syshdrtempfile\"
 		audittempfile = \"$audittempfile\"
+		tracecodetempfile = \"$tracecodetempfile\"
 		syscallprefix = \"$syscallprefix\"
 		switchname = \"$switchname\"
 		namesname = \"$namesname\"
@@ -195,7 +206,7 @@ s/\$//g
 		printf " * argument structures with elements large enough for any of them.\n" > sysarg
 		printf "*/\n" > sysarg
 		printf "\n" > sysarg
-		printf "#ifndef __arm__\n" > sysarg
+		printf "#if CONFIG_REQUIRES_U32_MUNGING\n" > sysarg
 		printf "#define\tPAD_(t)\t(sizeof(uint64_t) <= sizeof(t) \\\n " > sysarg
 		printf "\t\t? 0 : sizeof(uint64_t) - sizeof(t))\n" > sysarg
 		printf "#else\n" > sysarg
@@ -210,81 +221,7 @@ s/\$//g
 		printf "#define\tPADR_(t)\t0\n" > sysarg
 		printf "#endif\n" > sysarg
 		printf "\n__BEGIN_DECLS\n" > sysarg
-		printf "#if !defined(__arm__)\n" > sysarg
-		printf "void munge_w(const void *, void *);  \n" > sysarg
-		printf "void munge_ww(const void *, void *);  \n" > sysarg
-		printf "void munge_www(const void *, void *);  \n" > sysarg
-		printf "void munge_wwww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwwww(const void *, void *);  \n" > sysarg
-		printf "void munge_wl(const void *, void *);  \n" > sysarg
-		printf "void munge_wlw(const void *, void *);  \n" > sysarg
-		printf "void munge_wlwwwll(const void *, void *);  \n" > sysarg
-		printf "void munge_wlwwwllw(const void *, void *);  \n" > sysarg
-		printf "void munge_wlwwlwlw(const void *, void *);  \n" > sysarg
-		printf "void munge_wllwwll(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwl(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwlw(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwlww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwlwww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwlw(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwl(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwl(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwlww(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwllw(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwlll(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwwll(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwwl(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwwwwlw(const void *, void *);  \n" > sysarg
-		printf "void munge_wsw(const void *, void *);  \n" > sysarg
-		printf "void munge_wws(const void *, void *);  \n" > sysarg
-		printf "void munge_wwwsw(const void *, void *);  \n" > sysarg
-		printf "void munge_llllll(const void *, void *); \n" > sysarg
-		printf "#else \n" > sysarg
-		printf "/* ARM does not need mungers for BSD system calls. */\n" > sysarg
-		printf "#define munge_w  NULL \n" > sysarg
-		printf "#define munge_ww  NULL \n" > sysarg
-		printf "#define munge_www  NULL \n" > sysarg
-		printf "#define munge_wwww  NULL \n" > sysarg
-		printf "#define munge_wwwww  NULL \n" > sysarg
-		printf "#define munge_wwwwww  NULL \n" > sysarg
-		printf "#define munge_wwwwwww  NULL \n" > sysarg
-		printf "#define munge_wwwwwwww  NULL \n" > sysarg
-		printf "#define munge_wl  NULL \n" > sysarg
-		printf "#define munge_wlw  NULL \n" > sysarg
-		printf "#define munge_wlwwwll  NULL \n" > sysarg
-		printf "#define munge_wlwwwllw  NULL \n" > sysarg
-		printf "#define munge_wlwwlwlw  NULL \n" > sysarg
-		printf "#define munge_wllwwll  NULL \n" > sysarg
-		printf "#define munge_wwwl  NULL \n" > sysarg
-		printf "#define munge_wwwlw  NULL \n" > sysarg
-		printf "#define munge_wwwlww  NULL\n" > sysarg
-		printf "#define munge_wwlwww  NULL \n" > sysarg
-		printf "#define munge_wwwwl  NULL \n" > sysarg
-		printf "#define munge_wwwwlw  NULL \n" > sysarg
-		printf "#define munge_wwwwwl  NULL \n" > sysarg
-		printf "#define munge_wwwwwlww  NULL \n" > sysarg
-		printf "#define munge_wwwwwllw  NULL \n" > sysarg
-		printf "#define munge_wwwwwlll  NULL \n" > sysarg
-		printf "#define munge_wwwwwwl  NULL \n" > sysarg
-		printf "#define munge_wwwwwwlw  NULL \n" > sysarg
-		printf "#define munge_wsw  NULL \n" > sysarg
-		printf "#define munge_wws  NULL \n" > sysarg
-		printf "#define munge_wwwsw  NULL \n" > sysarg
-		printf "#define munge_llllll  NULL \n" > sysarg
-		printf "#endif /* __arm__ */\n" > sysarg
-		printf "\n" > sysarg
-		printf "/* Active 64-bit user ABIs do not need munging */\n" > sysarg
-		printf "#define munge_d  NULL \n" > sysarg
-		printf "#define munge_dd  NULL \n" > sysarg
-		printf "#define munge_ddd  NULL \n" > sysarg
-		printf "#define munge_dddd  NULL \n" > sysarg
-		printf "#define munge_ddddd  NULL \n" > sysarg
-		printf "#define munge_dddddd  NULL \n" > sysarg
-		printf "#define munge_ddddddd  NULL \n" > sysarg
-		printf "#define munge_dddddddd  NULL \n" > sysarg
+		printf "#include <sys/munge.h>\n" > sysarg
 		
 		printf "\n" > sysarg
 
@@ -364,6 +301,7 @@ s/\$//g
 		argc = 0
 		argssize = "0"
 		additional_comments = " "
+		obs_comments = "_"
 
 		# find start and end of call name and arguments
 		if ($current_field != "{")
@@ -421,8 +359,14 @@ s/\$//g
 			current_field = comments_start + 1
 			while (current_field < comments_end) {
 				additional_comments = additional_comments $current_field " "
+				obs_comments = obs_comments $current_field "_"
 				current_field++
 			}
+		}
+		sub(/old/, "obs", obs_comments)
+		obs_comments = substr(obs_comments, 1, length(obs_comments)-1)
+		if (obs_comments == "_") {
+			obs_comments = ""
 		}
 
 		# get function return type
@@ -482,13 +426,9 @@ s/\$//g
 		add_sysnames_entry = 1
 		add_sysheader_entry = 1
 		add_sysproto_entry = 1
-		add_64bit_unsafe = 0
-		add_64bit_fakesafe = 0
-		add_resv = "0"
-		my_flags = "0"
 
 
-		if ($3 != "ALL" && $3 != "UALL") {
+		if ($3 != "ALL") {
 			files_keyword_OK = 0
 			add_sysent_entry = 0
 			add_sysnames_entry = 0
@@ -511,20 +451,11 @@ s/\$//g
 				add_sysproto_entry = 1
 				files_keyword_OK = 1
 			}
-			if (match($3, "[U]") != 0) {
-				add_64bit_unsafe = 1
-			}
-			if (match($3, "[F]") != 0) {
-				add_64bit_fakesafe = 1
-			}
 			
 			if (files_keyword_OK == 0) {
 				printf "%s: line %d: unrecognized keyword %s\n", infile, NR, $2
 				exit 1
 			}
-		}
-		else if ($3 == "UALL") {
-			add_64bit_unsafe = 1;
 		}
 		
 		
@@ -533,7 +464,6 @@ s/\$//g
 		# output function argument structures to sysproto.h and build the
 		# name of the appropriate argument mungers
 		munge32 = "NULL"
-		munge64 = "NULL"
 		size32 = 0
 
 		if ((funcname != "nosys" && funcname != "enosys") || (syscall_num == 0 && funcname == "nosys")) {
@@ -542,58 +472,45 @@ s/\$//g
 					printf("struct %s {\n", argalias) > sysarg
 				}
 				munge32 = "munge_"
-				munge64 = "munge_"
 				for (i = 1; i <= argc; i++) {
 					# Build name of argument munger.
 					# We account for all sys call argument types here.
 					# This is where you add any new types.  With LP64 support
 					# each argument consumes 64-bits.  
-					# see .../xnu/bsd/dev/ppc/munge.s for munge argument types.
+					# see .../xnu/bsd/dev/munge.c for munge argument types.
 					if (argtype[i] == "long") {
-						if (add_64bit_unsafe == 0)
-							ext_argtype[i] = "user_long_t";
+						ext_argtype[i] = "user_long_t";
 						munge32 = munge32 "s"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "u_long") {
-						if (add_64bit_unsafe == 0)
-							ext_argtype[i] = "user_ulong_t";
+						ext_argtype[i] = "user_ulong_t";
 						munge32 = munge32 "w"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "size_t") {
-						if (add_64bit_unsafe == 0)
-							ext_argtype[i] = "user_size_t";
+						ext_argtype[i] = "user_size_t";
 						munge32 = munge32 "w"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "ssize_t") {
-						if (add_64bit_unsafe == 0)
-							ext_argtype[i] = "user_ssize_t";
+						ext_argtype[i] = "user_ssize_t";
 						munge32 = munge32 "s"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "user_ssize_t" || argtype[i] == "user_long_t") {
 						munge32 = munge32 "s"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "user_addr_t" || argtype[i] == "user_size_t" ||
 						argtype[i] == "user_ulong_t") {
 						munge32 = munge32 "w"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "caddr_t" || argtype[i] == "semun_t" ||
-  						match(argtype[i], "[\*]") != 0) {
-						if (add_64bit_unsafe == 0)
-							ext_argtype[i] = "user_addr_t";
+  						argtype[i] == "uuid_t" || match(argtype[i], "[\*]") != 0) {
+						ext_argtype[i] = "user_addr_t";
 						munge32 = munge32 "w"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "int" || argtype[i] == "u_int" ||
@@ -602,14 +519,13 @@ s/\$//g
 							 argtype[i] == "socklen_t" || argtype[i] == "uint32_t" || argtype[i] == "int32_t" ||
 							 argtype[i] == "sigset_t" || argtype[i] == "gid_t" || argtype[i] == "unsigned int" ||
 							 argtype[i] == "mode_t" || argtype[i] == "key_t" ||
-							 argtype[i] == "mach_port_name_t" || argtype[i] == "au_asid_t") {
+							 argtype[i] == "mach_port_name_t" || argtype[i] == "au_asid_t" ||
+							 argtype[i] == "sae_associd_t" || argtype[i] == "sae_connid_t") {
 						munge32 = munge32 "w"
-						munge64 = munge64 "d"
 						size32 += 4
 					}
 					else if (argtype[i] == "off_t" || argtype[i] == "int64_t" || argtype[i] == "uint64_t") {
 						munge32 = munge32 "l"
-						munge64 = munge64 "d"
 						size32 += 8
 					}
 					else {
@@ -641,7 +557,6 @@ s/\$//g
 		if (add_sysent_entry == 0) {
 			argssize = "0"
 			munge32 = "NULL"
-			munge64 = "NULL"
 			munge_ret = "_SYSCALL_RET_NONE"
 			if (tempname != "enosys") {
 				tempname = "nosys"
@@ -685,15 +600,17 @@ s/\$//g
 			}
 		}
 
-		if (add_64bit_unsafe == 1  && add_64bit_fakesafe == 0)
-			my_flags = "UNSAFE_64BIT";
-
-		printf("\t{%s, %s, %s, \(sy_call_t *\)%s, %s, %s, %s, %s},", 
-				argssize, add_resv, my_flags, tempname, munge32, munge64, munge_ret, size32) > sysent
-		linesize = length(argssize) + length(add_resv) + length(my_flags) + length(tempname) + \
-				length(munge32) + length(munge64) + length(munge_ret) + 28
+		printf("#if CONFIG_REQUIRES_U32_MUNGING || (__arm__ && (__BIGGEST_ALIGNMENT__ > 4))\n") > sysent
+		printf("\t{ \(sy_call_t *\)%s, %s, %s, %s, %s},", 
+				tempname, munge32, munge_ret, argssize, size32) > sysent
+		linesize = length(tempname) + length(munge32) + \
+			length(munge_ret) + length(argssize) + length(size32) + 28
 		align_comment(linesize, 88, sysent)
 		printf("/* %d = %s%s*/\n", syscall_num, funcname, additional_comments) > sysent
+		printf("#else\n") > sysent
+		printf("\t{ \(sy_call_t *\)%s, %s, %s, %s},\n", 
+				tempname, munge_ret, argssize, size32) > sysent
+		printf("#endif\n") > sysent
 		
 		# output to syscalls.c
 		if (add_sysnames_entry == 1) {
@@ -726,13 +643,6 @@ s/\$//g
 				linesize = length(syscallprefix) + length(tempname) + 12
 				align_comment(linesize, 30, syshdrtempfile)
 				printf("%d\n", syscall_num) > syshdrtempfile
-				# special case for gettimeofday on ppc - cctools project uses old name
-				if (tempname == "ppc_gettimeofday") {
-					printf("#define\t%s%s", syscallprefix, "gettimeofday") > syshdrtempfile
-					linesize = length(syscallprefix) + length(tempname) + 12
-					align_comment(linesize, 30, syshdrtempfile)
-					printf("%d\n", syscall_num) > syshdrtempfile
-				}
 			}
 			else if (skip_for_header == 0) {
 				printf("\t\t\t/* %d %s*/\n", syscall_num, additional_comments) > syshdrtempfile
@@ -754,7 +664,21 @@ s/\$//g
 		# output to audit_kevents.c
 		printf("\t%s,\t\t", auditev) > audittempfile
 		printf("/* %d = %s%s*/\n", syscall_num, tempname, additional_comments) > audittempfile 
-		
+
+		tempname = funcname
+		if (skip_for_header == 0) {
+			if (tempname == "nosys" || tempname == "enosys") {
+				if (obs_comments == "") {
+					printf("0x40c%04x\tBSC_#%d%s\n", (syscall_num*4), syscall_num, obs_comments) > tracecodetempfile 
+				} else {
+					printf("0x40c%04x\tBSC%s\n", (syscall_num*4), obs_comments) > tracecodetempfile 
+				}
+			} else {	
+				sub(/^_+/, "", tempname)
+				printf("0x40c%04x\tBSC_%s\n", (syscall_num*4), tempname) > tracecodetempfile 
+			}
+		}
+
 		syscall_num++
 		next
 	}
@@ -772,12 +696,12 @@ s/\$//g
 		printf("\n#endif /* !%s */\n", sysproto_h) > sysprotoend
 
 		printf("};\n") > sysent
-		printf("int	nsysent = sizeof(sysent) / sizeof(sysent[0]);\n") > sysent
-		printf("/* Verify that NUM_SYSENT reflects the latest syscall count */\n") > sysent
-		printf("int	nsysent_size_check[((sizeof(sysent) / sizeof(sysent[0])) == NUM_SYSENT) ? 1 : -1] __unused;\n") > sysent
+		printf("unsigned int	nsysent = sizeof(sysent) / sizeof(sysent[0]);\n") > sysent
 
 		printf("};\n") > syscallnamestempfile
 		printf("#define\t%sMAXSYSCALL\t%d\n", syscallprefix, syscall_num) \
+		    > syshdrtempfile
+		printf("#define\t%sinvalid\t%d\n", syscallprefix, 63) \
 		    > syshdrtempfile
 		printf("\n#endif /* __APPLE_API_PRIVATE */\n") > syshdrtempfile
 		printf("#endif /* !%s */\n", syscall_h) > syshdrtempfile
@@ -807,4 +731,12 @@ fi
 
 if [ $output_auditevfile -eq 1 ]; then
     cat $syslegal $audittempfile > $auditevfile
+fi
+
+if [ $output_tracecodes -eq 1 ]; then
+	if [ $use_stdout -eq 1 ]; then
+		cat $tracecodetempfile
+	else
+		cat $tracecodetempfile > $tracecodename
+	fi
 fi

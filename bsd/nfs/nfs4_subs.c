@@ -236,7 +236,7 @@ nfs4_setclientid(struct nfsmount *nmp)
 	// SETCLIENTID
 	numops = 1;
 	nfsm_chain_build_alloc_init(error, &nmreq, 14 * NFSX_UNSIGNED + nmp->nm_longid->nci_idlen);
-	nfsm_chain_add_compound_header(error, &nmreq, "setclid", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "setclid", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_SETCLIENTID);
 	/* nfs_client_id4  client; */
@@ -300,7 +300,7 @@ nfs4_setclientid(struct nfsmount *nmp)
 	// SETCLIENTID_CONFIRM
 	numops = 1;
 	nfsm_chain_build_alloc_init(error, &nmreq, 15 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "setclid_conf", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "setclid_conf", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_SETCLIENTID_CONFIRM);
 	nfsm_chain_add_64(error, &nmreq, nmp->nm_clientid);
@@ -325,7 +325,7 @@ nfs4_setclientid(struct nfsmount *nmp)
 	// PUTFH, GETATTR(FS)
 	numops = 2;
 	nfsm_chain_build_alloc_init(error, &nmreq, 23 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "setclid_attr", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "setclid_attr", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_PUTFH);
 	nfsm_chain_add_fh(error, &nmreq, nmp->nm_vers, nmp->nm_dnp->n_fhp, nmp->nm_dnp->n_fhsize);
@@ -377,7 +377,7 @@ nfs4_renew(struct nfsmount *nmp, int rpcflag)
 	// RENEW
 	numops = 1;
 	nfsm_chain_build_alloc_init(error, &nmreq, 8 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "renew", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "renew", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_RENEW);
 	nfsm_chain_add_64(error, &nmreq, nmp->nm_clientid);
@@ -459,7 +459,7 @@ nfs4_secinfo_rpc(struct nfsmount *nmp, struct nfsreq_secinfo_args *siap, kauth_c
 	struct nfsm_chain nmreq, nmrep;
 
 	*seccountp = 0;
-	if (!nmp)
+	if (nfs_mount_gone(nmp))
 		return (ENXIO);
 	nfsvers = nmp->nm_vers;
 	np = siap->rsia_np;
@@ -533,7 +533,7 @@ gotargs:
 	numops = 2;
 	nfsm_chain_build_alloc_init(error, &nmreq,
 		4 * NFSX_UNSIGNED + NFSX_FH(nfsvers) + nfsm_rndup(namelen));
-	nfsm_chain_add_compound_header(error, &nmreq, "secinfo", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "secinfo", nmp->nm_minor_vers, numops);
 	numops--;
 	if (fhp) {
 		nfsm_chain_add_32(error, &nmreq, NFS_OP_PUTFH);
@@ -596,14 +596,14 @@ nfsm_chain_get_secinfo(struct nfsm_chain *nmc, uint32_t *sec, int *seccountp)
 			/* we only recognize KRB5, KRB5I, KRB5P */
 			nfsm_chain_get_32(error, nmc, val); /* OID length */
 			nfsmout_if(error);
-			if (val != sizeof(krb5_mech)) {
+			if (val != sizeof(krb5_mech_oid)) {
 				nfsm_chain_adv(error, nmc, val);
 				nfsm_chain_adv(error, nmc, 2*NFSX_UNSIGNED);
 				break;
 			}
 			nfsm_chain_get_opaque(error, nmc, val, oid); /* OID bytes */
 			nfsmout_if(error);
-			if (bcmp(oid, krb5_mech, sizeof(krb5_mech))) {
+			if (bcmp(oid, krb5_mech_oid, sizeof(krb5_mech_oid))) {
 				nfsm_chain_adv(error, nmc, 2*NFSX_UNSIGNED);
 				break;
 			}
@@ -665,7 +665,7 @@ nfs4_get_fs_locations(
 	NFSREQ_SECINFO_SET(&si, NULL, fhp, fhsize, name, 0);
 	numops = 3;
 	nfsm_chain_build_alloc_init(error, &nmreq, 18 * NFSX_UNSIGNED);
-	nfsm_chain_add_compound_header(error, &nmreq, "fs_locations", numops);
+	nfsm_chain_add_compound_header(error, &nmreq, "fs_locations", nmp->nm_minor_vers, numops);
 	numops--;
 	nfsm_chain_add_32(error, &nmreq, NFS_OP_PUTFH);
 	nfsm_chain_add_fh(error, &nmreq, NFS_VER4, fhp, fhsize);
@@ -1024,7 +1024,7 @@ nfs4_id2guid(/*const*/ char *id, guid_t *guidp, int isgroup)
 	guid_t guid1, guid2, *gp;
 	ntsid_t sid;
 	long num, unknown;
-	const char *p, *at;
+	char *p, *at, *new_id = NULL;
 
 	*guidp = kauth_null_guid;
 	compare = ((nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE) &&
@@ -1052,9 +1052,55 @@ nfs4_id2guid(/*const*/ char *id, guid_t *guidp, int isgroup)
 		/* must be numeric ID (or empty) */
 		num = *id ? strtol(id, NULL, 10) : unknown;
 		gp = guidp;
+		/* Since we are not initilizing guid1 and guid2, skip compare */
+		compare = 0;
 		goto gotnumid;
 	}
 
+	/* Handle nfs4 domain first */
+	if (at && at[1]) {
+		/* Try mapping nfs4 domain */
+		char *dsnode, *nfs4domain = at + 1;
+		size_t otw_domain_len = strnlen(nfs4domain, MAXPATHLEN);
+		int otw_id_2_at_len = at - id + 1;
+
+		MALLOC(dsnode, char*, MAXPATHLEN, M_NAMEI, M_WAITOK);
+		if (dsnode) {
+			/* first try to map nfs4 domain to dsnode for scoped lookups */
+			memset(dsnode, 0, MAXPATHLEN);
+			error = kauth_cred_nfs4domain2dsnode(nfs4domain, dsnode);
+			if (!error) {
+				/* Success! Make new id be id@dsnode */
+				int dsnode_len = strnlen(dsnode, MAXPATHLEN);
+				int new_id_len = otw_id_2_at_len + dsnode_len + 1;
+
+				MALLOC(new_id, char*, new_id_len, M_NAMEI, M_WAITOK);
+				if (new_id) {
+					(void)strlcpy(new_id, id, otw_id_2_at_len + 1);
+					(void)strlcpy(new_id + otw_id_2_at_len, dsnode, dsnode_len + 1);
+					id = new_id;
+					at = id;
+					while (*at++ != '@');
+					at--;
+				}
+			} else {
+				/* Bummer:-( See if default nfs4 set for unscoped lookup */
+				size_t default_domain_len = strnlen(nfs4_domain, MAXPATHLEN);
+
+				if ((otw_domain_len == default_domain_len) && (strncmp(nfs4domain, nfs4_domain, otw_domain_len) == 0)) {
+					/* Woohoo! We have matching domains, do unscoped lookups */
+					*at = '\0';
+				}
+			}
+			FREE(dsnode, M_NAMEI);
+		}
+
+		if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS) {
+			printf("nfs4_id2guid: after domain mapping id is %s\n", id);
+		}
+	}
+
+	/* Now try to do actual id mapping */
 	if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_USE_IDMAP_SERVICE) {
 		/*
 		 * Ask the ID mapping service to map the ID string to a GUID.
@@ -1223,6 +1269,14 @@ gotnumid:
 		}
 	}
 
+	/* restore @ symbol in case we clobered for unscoped lookup */
+	if (at && *at == '\0')
+		*at = '@';
+
+	/* free mapped domain id string */
+	if (id == new_id)
+		FREE(id, M_NAMEI);
+
 	return (error);
 }
 
@@ -1236,7 +1290,7 @@ nfs4_guid2id(guid_t *guidp, char *id, int *idlen, int isgroup)
 {
 	int error1 = 0, error = 0, compare;
 	int id1len, id2len, len;
-	char *id1buf, *id1;
+	char *id1buf, *id1, *at;
 	char numbuf[32];
 	const char *id2 = NULL;
 
@@ -1268,6 +1322,7 @@ nfs4_guid2id(guid_t *guidp, char *id, int *idlen, int isgroup)
 			id1len = *idlen;
 		}
 
+		memset(id1, 0, id1len);
 		if (isgroup)
 			error = kauth_cred_guid2grnam(guidp, id1);
 		else
@@ -1457,11 +1512,55 @@ nfs4_guid2id(guid_t *guidp, char *id, int *idlen, int isgroup)
 					id, isgroup ? "G" : " ", error1, error);
 		}
 	}
+
+	at = id;
+	while (at && at[0] != '@' && at[0] != '\0' && at++);
+	if (at && at[0] == '@' && at[1] != '\0') {
+		char *dsnode = at + 1;
+		int id_2_at_len = at - id + 1;
+		char *nfs4domain, *new_id;
+		MALLOC(nfs4domain, char*, MAXPATHLEN, M_NAMEI, M_WAITOK);
+		if (nfs4domain) {
+			int domain_len;
+			char *mapped_domain;
+			memset(nfs4domain, 0, MAXPATHLEN);
+			error = kauth_cred_dsnode2nfs4domain(dsnode, nfs4domain);
+			if (!error) {
+				domain_len = strnlen(nfs4domain, MAXPATHLEN);
+				mapped_domain = nfs4domain;
+			} else {
+				domain_len = strnlen(nfs4_domain, MAXPATHLEN);
+				mapped_domain = nfs4_domain;
+			}
+			if (domain_len) {
+				MALLOC(new_id, char*, MAXPATHLEN, M_NAMEI, M_WAITOK);
+				if (new_id) {
+					strlcpy(new_id, id, id_2_at_len + 1);
+					strlcpy(new_id + id_2_at_len, mapped_domain, domain_len + 1);
+					strlcpy(id, new_id, strnlen(new_id, MAXPATHLEN) + 1);
+					*idlen = strnlen(id, MAXPATHLEN);
+					FREE(new_id, M_NAMEI);
+				}
+			}
+			FREE(nfs4domain, M_NAMEI);
+		}
+	} else if (at && at[0] == '\0') {
+		int default_domain_len = strnlen(nfs4_domain, MAXPATHLEN);
+
+		if (default_domain_len && MAXPATHLEN - *idlen > default_domain_len) {
+			at[0] = '@';
+			strlcpy(at + 1, nfs4_domain, default_domain_len + 1);
+			*idlen = strnlen(id, MAXPATHLEN);
+		}
+	}
+
+	if (nfs_idmap_ctrl & NFS_IDMAP_CTRL_LOG_SUCCESSFUL_MAPPINGS)
+		printf("nfs4_guid2id: id after nfs4 domain map: %s[%d].\n", id, *idlen);
+
 	if (id1buf)
 		FREE_ZONE(id1buf, MAXPATHLEN, M_NAMEI);
 	return (error);
 }
-
 
 /*
  * Set a vnode attr's supported bits according to the given bitmap
@@ -2458,7 +2557,7 @@ restart:
 			break;
 		if (!(nmp->nm_sockflags & NMSOCK_READY))
 			error = EPIPE;
-		if (nmp->nm_state & NFSSTA_FORCE)
+		if (nmp->nm_state & (NFSSTA_FORCE|NFSSTA_DEAD))
 			error = ENXIO;
 		if (nmp->nm_sockflags & NMSOCK_UNMOUNT)
 			error = ENXIO;
@@ -2480,7 +2579,7 @@ restart:
 	if (now.tv_sec == nmp->nm_recover_start) {
 		printf("nfs recovery throttled for %s, 0x%x\n", vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid);
 		lck_mtx_unlock(&nmp->nm_lock);
-		tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", hz);
+		tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 		goto restart;
 	}
 	nmp->nm_recover_start = now.tv_sec;
@@ -2570,7 +2669,7 @@ restart:
 				if ((error == ETIMEDOUT) || nfs_mount_state_error_should_restart(error)) {
 					if (error == ETIMEDOUT)
 						nfs_need_reconnect(nmp);
-					tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", 0);
+					tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 					printf("nfs recovery restarting for %s, 0x%x, error %d\n",
 						vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid, error);
 					goto restart;
@@ -2626,7 +2725,7 @@ reclaim_locks:
 					if ((error == ETIMEDOUT) || nfs_mount_state_error_should_restart(error)) {
 						if (error == ETIMEDOUT)
 							nfs_need_reconnect(nmp);
-						tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", 0);
+						tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 						printf("nfs recovery restarting for %s, 0x%x, error %d\n",
 							vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid, error);
 						goto restart;
@@ -2651,7 +2750,7 @@ reclaim_locks:
 				nfs4_delegation_return(nofp->nof_np, R_RECOVER, thd, noop->noo_cred);
 				if (!(nmp->nm_sockflags & NMSOCK_READY)) {
 					/* looks like we need a reconnect */
-					tsleep(&lbolt, (PZERO-1), "nfsrecoverrestart", 0);
+					tsleep(nfs_recover, (PZERO-1), "nfsrecoverrestart", hz);
 					printf("nfs recovery restarting for %s, 0x%x, error %d\n",
 						vfs_statfs(nmp->nm_mountp)->f_mntfromname, nmp->nm_stategenid, error);
 					goto restart;

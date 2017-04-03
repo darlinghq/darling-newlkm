@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2000 Apple Computer, Inc.  All rights reserved.
+ * Copyright (c) 1999-2016 Apple Inc.  All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -25,16 +25,11 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-/*
- * Copyright (c) 1999-2000 Apple Computer, Inc.  All rights reserved.
- *
- *  DRI: Josh de Cesare
- *
- */
 
 extern "C" {
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
+#include <kern/cpu_number.h>
 }
 
 #include <machine/machine_routines.h>
@@ -46,9 +41,13 @@ extern "C" {
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOKitKeysPrivate.h>
 #include <IOKit/IOCPU.h>
+#include "IOKitKernelInternal.h"
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include <kern/queue.h>
+
+extern "C" void console_suspend();
+extern "C" void console_resume();
 
 typedef kern_return_t (*iocpu_platform_action_t)(void * refcon0, void * refcon1, uint32_t priority,
 						 void * param1, void * param2, void * param3,
@@ -66,78 +65,35 @@ struct iocpu_platform_action_entry
 };
 typedef struct iocpu_platform_action_entry iocpu_platform_action_entry_t;
 
-queue_head_t * 
-iocpu_get_platform_quiesce_queue(void);
-
-queue_head_t * 
-iocpu_get_platform_active_queue(void);
-
-void
-iocpu_platform_cpu_action_init(queue_head_t * quiesce_queue, queue_head_t * init_queue);
-
-void
-iocpu_add_platform_action(queue_head_t * queue, iocpu_platform_action_entry_t * entry);
-
-void
-iocpu_remove_platform_action(iocpu_platform_action_entry_t * entry);
-
-kern_return_t
-iocpu_run_platform_actions(queue_head_t * queue, uint32_t first_priority, uint32_t last_priority,
-					void * param1, void * param2, void * param3);
-
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #define kBootCPUNumber  0
 
-static iocpu_platform_action_entry_t * gIOAllActionsQueue;
-static queue_head_t gIOSleepActionQueue;
-static queue_head_t gIOWakeActionQueue;
+enum
+{
+    kQueueSleep       = 0,
+    kQueueWake        = 1,
+    kQueueQuiesce     = 2,
+    kQueueActive      = 3,
+    kQueueHaltRestart = 4,
+    kQueuePanic       = 5,
+    kQueueCount       = 6
+};
 
-static queue_head_t iocpu_quiesce_queue;
-static queue_head_t iocpu_active_queue;
+const OSSymbol *		gIOPlatformSleepActionKey;
+const OSSymbol *		gIOPlatformWakeActionKey;
+const OSSymbol *		gIOPlatformQuiesceActionKey;
+const OSSymbol *		gIOPlatformActiveActionKey;
+const OSSymbol *		gIOPlatformHaltRestartActionKey;
+const OSSymbol *		gIOPlatformPanicActionKey;
+
+static queue_head_t     	gActionQueues[kQueueCount];
+static const OSSymbol *		gActionSymbols[kQueueCount];
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-void 
-iocpu_platform_cpu_action_init(queue_head_t * quiesce_queue, __unused queue_head_t * init_queue)
-{
-#if 0
-    enum { kNumQuiesceActions = 2 };
-    static iocpu_platform_action_entry_t quiesce_actions[kNumQuiesceActions] = 
-    {
-	{ { NULL, NULL }, (iocpu_platform_action_t) &clean_mmu_dcache, 97000, 0, 0, NULL },    
-	{ { NULL, NULL }, (iocpu_platform_action_t) &arm_sleep, 99000, 0, 0, NULL },    
-    };
-    unsigned int idx;
-
-    for (idx = 0; idx < kNumQuiesceActions; idx++)
-	iocpu_add_platform_action(quiesce_queue, &quiesce_actions[idx]);
-#endif
-}
-
-queue_head_t * iocpu_get_platform_quiesce_queue(void)
-{
-    if (!iocpu_quiesce_queue.next)
-    {
-	queue_init(&iocpu_quiesce_queue);
-	queue_init(&iocpu_active_queue);
-	iocpu_platform_cpu_action_init(&iocpu_quiesce_queue, &iocpu_active_queue);
-    }
-    return (&iocpu_quiesce_queue);
-}
-
-queue_head_t * iocpu_get_platform_active_queue(void)
-{
-    if (!iocpu_active_queue.next)
-    {
-	queue_init(&iocpu_quiesce_queue);
-	queue_init(&iocpu_active_queue);
-	iocpu_platform_cpu_action_init(&iocpu_quiesce_queue, &iocpu_active_queue);
-    }
-    return (&iocpu_active_queue);
-}
-
-void iocpu_add_platform_action(queue_head_t * queue, iocpu_platform_action_entry_t * entry)
+static void
+iocpu_add_platform_action(queue_head_t * queue, iocpu_platform_action_entry_t * entry)
 {
     iocpu_platform_action_entry_t * next;
 
@@ -152,12 +108,13 @@ void iocpu_add_platform_action(queue_head_t * queue, iocpu_platform_action_entry
     queue_enter(queue, entry, iocpu_platform_action_entry_t *, link);	// at tail
 }
 
-void iocpu_remove_platform_action(iocpu_platform_action_entry_t * entry)
+static void
+iocpu_remove_platform_action(iocpu_platform_action_entry_t * entry)
 {
     remque(&entry->link);
 }
 
-kern_return_t
+static kern_return_t
 iocpu_run_platform_actions(queue_head_t * queue, uint32_t first_priority, uint32_t last_priority,
 					void * param1, void * param2, void * param3)
 {
@@ -184,16 +141,34 @@ iocpu_run_platform_actions(queue_head_t * queue, uint32_t first_priority, uint32
 extern "C" kern_return_t 
 IOCPURunPlatformQuiesceActions(void)
 {
-    return (iocpu_run_platform_actions(iocpu_get_platform_quiesce_queue(), 0, 0U-1,
+    return (iocpu_run_platform_actions(&gActionQueues[kQueueQuiesce], 0, 0U-1,
 				    NULL, NULL, NULL));
 }
 
 extern "C" kern_return_t 
 IOCPURunPlatformActiveActions(void)
 {
-    return (iocpu_run_platform_actions(iocpu_get_platform_active_queue(), 0, 0U-1,
+    return (iocpu_run_platform_actions(&gActionQueues[kQueueActive], 0, 0U-1,
 				    NULL, NULL, NULL));
 }
+
+extern "C" kern_return_t 
+IOCPURunPlatformHaltRestartActions(uint32_t message)
+{
+    if (!gActionQueues[kQueueHaltRestart].next) return (kIOReturnNotReady);
+    return (iocpu_run_platform_actions(&gActionQueues[kQueueHaltRestart], 0, 0U-1,
+				     (void *)(uintptr_t) message, NULL, NULL));
+}
+
+extern "C" kern_return_t 
+IOCPURunPlatformPanicActions(uint32_t message)
+{
+    if (!gActionQueues[kQueuePanic].next) return (kIOReturnNotReady);
+    return (iocpu_run_platform_actions(&gActionQueues[kQueuePanic], 0, 0U-1,
+				     (void *)(uintptr_t) message, NULL, NULL));
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 static kern_return_t 
 IOServicePlatformAction(void * refcon0, void * refcon1, uint32_t priority,
@@ -207,23 +182,45 @@ IOServicePlatformAction(void * refcon0, void * refcon1, uint32_t priority,
     kprintf("%s -> %s\n", function->getCStringNoCopy(), service_name);
 
     ret = service->callPlatformFunction(function, false, 
-					 (void *) priority, param1, param2, param3);
+					 (void *)(uintptr_t) priority, param1, param2, param3);
 
     return (ret);
 }
 
 static void
-IOInstallServicePlatformAction(IOService * service, 
-				const OSSymbol * key, queue_head_t * queue,
-				bool reverse)
+IOInstallServicePlatformAction(IOService * service, uint32_t qidx)
 {
-    OSNumber * num;
     iocpu_platform_action_entry_t * entry;
-    uint32_t priority;
+    OSNumber *       num;
+    uint32_t         priority;
+    const OSSymbol * key = gActionSymbols[qidx]; 
+    queue_head_t *   queue = &gActionQueues[qidx];
+    bool             reverse;
+    bool             uniq;
 
     num = OSDynamicCast(OSNumber, service->getProperty(key));
-    if (!num)
-	return;
+    if (!num) return;
+
+    reverse = false;
+    uniq    = false;
+    switch (qidx)
+    {
+	case kQueueWake:
+	case kQueueActive:
+	    reverse = true;
+	    break;
+	case kQueueHaltRestart:
+	case kQueuePanic:
+	    uniq = true;
+	    break;
+    }
+    if (uniq)
+    {
+	queue_iterate(queue, entry, iocpu_platform_action_entry_t *, link)
+	{
+	    if (service == entry->refcon0) return;
+	}
+    }
 
     entry = IONew(iocpu_platform_action_entry_t, 1);
     entry->action = &IOServicePlatformAction;
@@ -237,9 +234,65 @@ IOInstallServicePlatformAction(IOService * service,
     entry->refcon1 = (void *) key;
 
     iocpu_add_platform_action(queue, entry);
-    entry->alloc_list = gIOAllActionsQueue;
-    gIOAllActionsQueue = entry;
 }
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+void
+IOCPUInitialize(void)
+{
+    for (uint32_t qidx = kQueueSleep; qidx < kQueueCount; qidx++)
+    {
+	queue_init(&gActionQueues[qidx]);
+    }
+
+    gIOPlatformSleepActionKey	     = gActionSymbols[kQueueSleep]
+    	= OSSymbol::withCStringNoCopy(kIOPlatformSleepActionKey);
+    gIOPlatformWakeActionKey	     = gActionSymbols[kQueueWake]
+    	= OSSymbol::withCStringNoCopy(kIOPlatformWakeActionKey);
+    gIOPlatformQuiesceActionKey	     = gActionSymbols[kQueueQuiesce]
+    	= OSSymbol::withCStringNoCopy(kIOPlatformQuiesceActionKey);
+    gIOPlatformActiveActionKey	     = gActionSymbols[kQueueActive]
+    	= OSSymbol::withCStringNoCopy(kIOPlatformActiveActionKey);
+    gIOPlatformHaltRestartActionKey  = gActionSymbols[kQueueHaltRestart]
+    	= OSSymbol::withCStringNoCopy(kIOPlatformHaltRestartActionKey);
+    gIOPlatformPanicActionKey = gActionSymbols[kQueuePanic]
+    	= OSSymbol::withCStringNoCopy(kIOPlatformPanicActionKey);
+}
+
+IOReturn
+IOInstallServicePlatformActions(IOService * service)
+{
+    IOInstallServicePlatformAction(service, kQueueHaltRestart);
+    IOInstallServicePlatformAction(service, kQueuePanic);
+
+    return (kIOReturnSuccess);
+}
+
+IOReturn
+IORemoveServicePlatformActions(IOService * service)
+{
+    iocpu_platform_action_entry_t * entry;
+    iocpu_platform_action_entry_t * next;
+
+    for (uint32_t qidx = kQueueSleep; qidx < kQueueCount; qidx++)
+    {
+	next = (typeof(entry)) queue_first(&gActionQueues[qidx]);
+	while (!queue_end(&gActionQueues[qidx], &next->link))
+	{
+	    entry = next;
+	    next = (typeof(entry)) queue_next(&entry->link);
+	    if (service == entry->refcon0)
+	    {
+		iocpu_remove_platform_action(entry);
+		IODelete(entry, iocpu_platform_action_entry_t, 1);
+	    }
+	}
+    }
+
+    return (kIOReturnSuccess);
+}
+
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -265,6 +318,22 @@ void PE_cpu_signal(cpu_id_t source, cpu_id_t target)
   IOCPU *targetCPU = OSDynamicCast(IOCPU, (OSObject *)target);
   
   if (sourceCPU && targetCPU) sourceCPU->signalCPU(targetCPU);
+}
+
+void PE_cpu_signal_deferred(cpu_id_t source, cpu_id_t target)
+{
+  IOCPU *sourceCPU = OSDynamicCast(IOCPU, (OSObject *)source);
+  IOCPU *targetCPU = OSDynamicCast(IOCPU, (OSObject *)target);
+
+  if (sourceCPU && targetCPU) sourceCPU->signalCPUDeferred(targetCPU);
+}
+
+void PE_cpu_signal_cancel(cpu_id_t source, cpu_id_t target)
+{
+  IOCPU *sourceCPU = OSDynamicCast(IOCPU, (OSObject *)source);
+  IOCPU *targetCPU = OSDynamicCast(IOCPU, (OSObject *)target);
+
+  if (sourceCPU && targetCPU) sourceCPU->signalCPUCancel(targetCPU);
 }
 
 void PE_cpu_machine_init(cpu_id_t target, boolean_t bootb)
@@ -317,9 +386,6 @@ void IOCPUSleepKernel(void)
 
     rootDomain->tracePoint( kIOPMTracePointSleepPlatformActions );
 
-    queue_init(&gIOSleepActionQueue);
-    queue_init(&gIOWakeActionQueue);
-
     iter = IORegistryIterator::iterateOver( gIOServicePlane,
 					    kIORegistryIterateRecursively );
     if( iter)
@@ -338,17 +404,17 @@ void IOCPUSleepKernel(void)
 	{
 	    while((service = (IOService *) all->getFirstObject()))
 	    {
-		IOInstallServicePlatformAction(service, gIOPlatformSleepActionKey,   &gIOSleepActionQueue,		 false);
-		IOInstallServicePlatformAction(service, gIOPlatformWakeActionKey,    &gIOWakeActionQueue,		 true);
-		IOInstallServicePlatformAction(service, gIOPlatformQuiesceActionKey, iocpu_get_platform_quiesce_queue(), false);
-		IOInstallServicePlatformAction(service, gIOPlatformActiveActionKey,  iocpu_get_platform_active_queue(),  true);
+		for (uint32_t qidx = kQueueSleep; qidx <= kQueueActive; qidx++)
+		{
+		    IOInstallServicePlatformAction(service, qidx);
+		}
 		all->removeObject(service);
 	    }
 	    all->release();
 	}	
     }
 
-    iocpu_run_platform_actions(&gIOSleepActionQueue, 0, 0U-1,
+    iocpu_run_platform_actions(&gActionQueues[kQueueSleep], 0, 0U-1,
 				NULL, NULL, NULL);
 
     rootDomain->tracePoint( kIOPMTracePointSleepCPUs );
@@ -366,36 +432,40 @@ void IOCPUSleepKernel(void)
         if (target->getCPUNumber() == kBootCPUNumber) 
         {
             bootCPU = target;
-        } else if (target->getCPUState() == kIOCPUStateRunning) 
+        } else if (target->getCPUState() == kIOCPUStateRunning)
         {
-            target->haltCPU();
+	  target->haltCPU();
         }
     }
+
+    assert(bootCPU != NULL);
+    assert(cpu_number() == 0);
+
+    console_suspend();
 
     rootDomain->tracePoint( kIOPMTracePointSleepPlatformDriver );
 
     // Now sleep the boot CPU.
-    if (bootCPU)
-        bootCPU->haltCPU();
+    bootCPU->haltCPU();
 
     rootDomain->tracePoint( kIOPMTracePointWakePlatformActions );
 
-    iocpu_run_platform_actions(&gIOWakeActionQueue, 0, 0U-1,
+    console_resume();
+
+    iocpu_run_platform_actions(&gActionQueues[kQueueWake], 0, 0U-1,
 				    NULL, NULL, NULL);
 
     iocpu_platform_action_entry_t * entry;
-    while ((entry = gIOAllActionsQueue))
+    for (uint32_t qidx = kQueueSleep; qidx <= kQueueActive; qidx++)
     {
-	gIOAllActionsQueue = entry->alloc_list;
-	iocpu_remove_platform_action(entry);
-	IODelete(entry, iocpu_platform_action_entry_t, 1);
+	while (!(queue_empty(&gActionQueues[qidx])))
+	{
+	    entry = (typeof(entry)) queue_first(&gActionQueues[qidx]);
+	    iocpu_remove_platform_action(entry);
+	    IODelete(entry, iocpu_platform_action_entry_t, 1);
+	}
     }
 
-    if (!queue_empty(&gIOSleepActionQueue))
-	panic("gIOSleepActionQueue");
-    if (!queue_empty(&gIOWakeActionQueue))
-	panic("gIOWakeActionQueue");
-  
     rootDomain->tracePoint( kIOPMTracePointWakeCPUs );
 
     // Wake the other CPUs.
@@ -464,7 +534,7 @@ bool IOCPU::start(IOService *provider)
   provider->setProperty("timebase-frequency", timebaseFrequency);
   timebaseFrequency->release();
   
-  super::setProperty("IOCPUID", (uintptr_t)this, sizeof(uintptr_t)*8);
+  super::setProperty("IOCPUID", getRegistryEntryID(), sizeof(uint64_t)*8);
   
   setCPUNumber(0);
   setCPUState(kIOCPUStateUnregistered);
@@ -481,31 +551,10 @@ OSObject *IOCPU::getProperty(const OSSymbol *aKey) const
 
 bool IOCPU::setProperty(const OSSymbol *aKey, OSObject *anObject)
 {
-  OSString *stateStr;
-  
   if (aKey == gIOCPUStateKey) {
-    stateStr = OSDynamicCast(OSString, anObject);
-    if (stateStr == 0) return false;
-    
-    if (_cpuNumber == 0) return false;
-    
-    if (stateStr->isEqualTo("running")) {
-      if (_cpuState == kIOCPUStateStopped) {
-	processor_start(machProcessor);
-      } else if (_cpuState != kIOCPUStateRunning) {
-	return false;
-      }
-    } else if (stateStr->isEqualTo("stopped")) {
-      if (_cpuState == kIOCPUStateRunning) {
-        haltCPU();
-      } else if (_cpuState != kIOCPUStateStopped) {
-        return false;
-      }
-    } else return false;
-    
-    return true;
+    return false;
   }
-  
+
   return super::setProperty(aKey, anObject);
 }
 
@@ -513,6 +562,7 @@ bool IOCPU::serializeProperties(OSSerialize *serialize) const
 {
 	bool result;
 	OSDictionary *dict = dictionaryWithProperties();
+	if (!dict) return false;
 	dict->setObject(gIOCPUStateKey, gIOCPUStateNames[_cpuState]);
 	result = dict->serialize(serialize);
 	dict->release();  
@@ -542,6 +592,20 @@ IOReturn IOCPU::setProperties(OSObject *properties)
 
 void IOCPU::signalCPU(IOCPU */*target*/)
 {
+}
+
+void IOCPU::signalCPUDeferred(IOCPU *target)
+{
+  // Our CPU may not support deferred IPIs,
+  // so send a regular IPI by default
+  signalCPU(target);
+}
+
+void IOCPU::signalCPUCancel(IOCPU */*target*/)
+{
+  // Meant to cancel signals sent by
+  // signalCPUDeferred; unsupported
+  // by default
 }
 
 void IOCPU::enableCPUTimeBase(bool /*enable*/)
@@ -687,10 +751,14 @@ void IOCPUInterruptController::enableCPUInterrupt(IOCPU *cpu)
 		IOInterruptHandler, this, &IOCPUInterruptController::handleInterrupt);
 
 	ml_install_interrupt_handler(cpu, cpu->getCPUNumber(), this, handler, 0);
-  
-	enabledCPUs++;
-  
-  if (enabledCPUs == numCPUs) thread_wakeup(this);
+
+	// Ensure that the increment is seen by all processors
+	OSIncrementAtomic(&enabledCPUs);
+
+	if (enabledCPUs == numCPUs) {
+    IOService::cpusRunning();
+    thread_wakeup(this);
+  }
 }
 
 IOReturn IOCPUInterruptController::registerInterrupt(IOService *nub,

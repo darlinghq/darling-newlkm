@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -138,6 +138,12 @@ struct ip6_hdr {
 #define IP6TOS_CE		0x01	/* congestion experienced */
 #define IP6TOS_ECT		0x02	/* ECN-capable transport */
 #endif
+
+/*
+ * To access the 6 bits of the DSCP value in the 32 bits ip6_flow field
+ */
+#define	IP6FLOW_DSCP_MASK	0x0fc00000
+#define	IP6FLOW_DSCP_SHIFT	22
 
 /*
  * Extension Headers
@@ -284,14 +290,14 @@ struct ip6_frag {
  */
 #define IPV6_MAXHLIM	255	/* maximum hoplimit */
 #define IPV6_DEFHLIM	64	/* default hlim */
-#define IPV6_FRAGTTL	120	/* ttl for fragment packets, in slowtimo tick */
+#define IPV6_FRAGTTL	60	/* ttl for fragment packets (seconds) */
 #define IPV6_HLIMDEC	1	/* subtracted when forwarding */
 
 #define IPV6_MMTU	1280	/* minimal MTU and reassembly. 1024 + 256 */
 #define IPV6_MAXPACKET	65535	/* ip6 max packet size without Jumbo payload*/
 #define IPV6_MAXOPTHDR	2048	/* max option header size, 256 64-bit words */
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 /*
  * IP6_EXTHDR_CHECK ensures that region between the IP6 header and the
  * target header (including IPv6 itself, extension headers and
@@ -313,12 +319,14 @@ do {									\
 		if ((m)->m_len < (off) + (hlen)) {			\
 			ip6stat.ip6s_exthdrtoolong++;			\
 			m_freem(m);					\
+			(m) = NULL;					\
 			action;						\
 		}							\
 	} else {							\
 		if ((m)->m_len < (off) + (hlen)) {			\
 			ip6stat.ip6s_exthdrtoolong++;			\
 			m_freem(m);					\
+			(m) = NULL;					\
 			action;						\
 		}							\
 	}								\
@@ -327,6 +335,7 @@ do {									\
 		ip6stat.ip6s_tooshort++;				\
 		in6_ifstat_inc(m->m_pkthdr.rcvif, ifs6_in_truncated);	\
 		m_freem(m);						\
+		(m) = NULL;						\
 		action;							\
 	}								\
     }									\
@@ -346,5 +355,5 @@ do {									\
 #define IP6_EXTHDR_GET0(val, typ, m, off, len)				\
 	M_STRUCT_GET0(val, typ, m, off, len)
 
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 #endif /* !_NETINET_IP6_H_ */

@@ -66,11 +66,17 @@
  *	its kernel stack.  Some architectures may need
  *	to save more state in the pcb for these traps.
  */
-typedef	void	mach_munge_t(const void *, void *);
+#if CONFIG_REQUIRES_U32_MUNGING
+typedef	void	mach_munge_t(void *);
+#endif
 
 typedef struct {
-	int			mach_trap_arg_count;
+	int			mach_trap_arg_count; /* Number of trap arguments (Arch independant) */
 	kern_return_t		(*mach_trap_function)(void *);
+#if CONFIG_REQUIRES_U32_MUNGING || (__arm__ && (__BIGGEST_ALIGNMENT__ > 4))
+	mach_munge_t		*mach_trap_arg_munge32; /* system call argument munger routine for 32-bit */
+#endif
+	int			mach_trap_u32_words; /* number of 32-bit words to copyin for U32 */
 #if	MACH_ASSERT
 	const char*		mach_trap_name;
 #endif /* MACH_ASSERT */
@@ -82,16 +88,27 @@ typedef struct {
 extern const mach_trap_t	mach_trap_table[];
 extern int			mach_trap_count;
 
-#if defined(__i386__) || defined(__x86_64__)
+#if CONFIG_REQUIRES_U32_MUNGING || (__arm__ && (__BIGGEST_ALIGNMENT__ > 4))
+
 #if	!MACH_ASSERT
-#define	MACH_TRAP(name, arg_count, munge32, munge64)	\
-	{ (arg_count), (kern_return_t (*)(void *)) (name)  }
-#else
-#define MACH_TRAP(name, arg_count, munge32, munge64)		\
-	{ (arg_count), (kern_return_t (*)(void *)) (name), #name }
+#define	MACH_TRAP(name, arg_count, u32_arg_words, munge32)	\
+	{ (arg_count), (kern_return_t (*)(void *)) (name), munge32, (u32_arg_words)  }
+#else /* !MACH_ASSERT */
+#define	MACH_TRAP(name, arg_count, u32_arg_words, munge32)	\
+	{ (arg_count), (kern_return_t (*)(void *)) (name), munge32, (u32_arg_words), #name  }
 #endif /* !MACH_ASSERT */
-#else  /* !defined(__i386__) && !defined(__x86_64__) && !defined(__arm__) */
-#error Unsupported architecture
-#endif /* !defined(__i386__) && !defined(__x86_64__) && !defined(__arm__) */
+
+
+#else /* !CONFIG_REQUIRES_U32_MUNGING || (__arm__ && (__BIGGEST_ALIGNMENT__ > 4)) */
+
+#if	!MACH_ASSERT
+#define	MACH_TRAP(name, arg_count, u32_arg_words, munge32)	\
+	{ (arg_count), (kern_return_t (*)(void *)) (name), (u32_arg_words)  }
+#else /* !MACH_ASSERT */
+#define	MACH_TRAP(name, arg_count, u32_arg_words, munge32)	\
+	{ (arg_count), (kern_return_t (*)(void *)) (name), (u32_arg_words), #name  }
+#endif /* !MACH_ASSERT */
+
+#endif /* !CONFIG_REQUIRES_U32_MUNGING */
 
 #endif	/* _KERN_SYSCALL_SW_H_ */

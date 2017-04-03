@@ -83,8 +83,11 @@
 #include <kern/sched_prim.h>
 #include <kern/host.h>
 #include <kern/misc_protos.h>
+#include <security/mac_mach_internal.h>
 #include <string.h>
 #include <pexpert/pexpert.h>
+
+extern int panic_on_exception_triage;
 
 unsigned long c_thr_exc_raise = 0;
 unsigned long c_thr_exc_raise_state = 0;
@@ -101,6 +104,12 @@ kern_return_t exception_deliver(
 	mach_msg_type_number_t  codeCnt,
 	struct exception_action *excp,
 	lck_mtx_t			*mutex);
+
+static kern_return_t
+check_exc_receiver_dependency(
+	exception_type_t exception, 
+	struct exception_action *excp, 
+	lck_mtx_t *mutex);
 
 #ifdef MACH_BSD
 kern_return_t bsd_exception(
@@ -136,13 +145,29 @@ exception_deliver(
 	int			behavior;
 	int			flavor;
 	kern_return_t		kr;
+	int use_fast_retrieve = TRUE;
+	task_t task;
+	ipc_port_t thread_port = NULL, task_port = NULL;
 
 	/*
 	 *  Save work if we are terminating.
 	 *  Just go back to our AST handler.
 	 */
-	if (!thread->active)
+	if (!thread->active && !thread->inspection)
 		return KERN_SUCCESS;
+
+	/*
+	 * If there are no exception actions defined for this entity,
+	 * we can't deliver here.
+	 */
+	if (excp == NULL)
+		return KERN_FAILURE;
+
+	assert(exception < EXC_TYPES_COUNT);
+	if (exception >= EXC_TYPES_COUNT)
+		return KERN_FAILURE;
+
+	excp = &excp[exception];
 
 	/*
 	 * Snapshot the exception action data under lock for consistency.
@@ -179,6 +204,32 @@ exception_deliver(
 		small_code[1] = CAST_DOWN_EXPLICIT(exception_data_type_t, code[1]);
 	}
 
+	task = thread->task;
+
+#if CONFIG_MACF
+	/* Now is a reasonably good time to check if the exception action is
+	 * permitted for this process, because after this point we will send
+	 * the message out almost certainly.
+	 * As with other failures, exception_triage_thread will go on
+	 * to the next level.
+	 */
+	if (mac_exc_action_check_exception_send(task, excp) != 0) {
+		return KERN_FAILURE;
+	}
+#endif
+
+	if ((thread != current_thread() || exception == EXC_CORPSE_NOTIFY)
+			&& behavior != EXCEPTION_STATE) {
+		use_fast_retrieve = FALSE;
+
+		task_reference(task);
+		task_port = convert_task_to_port(task);
+		/* task ref consumed */
+		thread_reference(thread);
+		thread_port = convert_thread_to_port(thread);
+		/* thread ref consumed */
+
+	}
 
 	switch (behavior) {
 	case EXCEPTION_STATE: {
@@ -207,7 +258,7 @@ exception_deliver(
 						state, state_cnt,
 						state, &state_cnt);
 			}
-			if (kr == MACH_MSG_SUCCESS)
+			if (kr == MACH_MSG_SUCCESS && exception != EXC_CORPSE_NOTIFY)
 				kr = thread_setstatus(thread, flavor, 
 						(thread_state_t)state,
 						state_cnt);
@@ -220,15 +271,19 @@ exception_deliver(
 		c_thr_exc_raise++;
 		if (code64) {
 			kr = mach_exception_raise(exc_port,
-					retrieve_thread_self_fast(thread),
-					retrieve_task_self_fast(thread->task),
+					use_fast_retrieve ? retrieve_thread_self_fast(thread) :
+						thread_port,
+					use_fast_retrieve ? retrieve_task_self_fast(thread->task) :
+						task_port,
 					exception,
 					code, 
 					codeCnt);
 		} else {
 			kr = exception_raise(exc_port,
-					retrieve_thread_self_fast(thread),
-					retrieve_task_self_fast(thread->task),
+					use_fast_retrieve ? retrieve_thread_self_fast(thread) :
+						thread_port,
+					use_fast_retrieve ? retrieve_task_self_fast(thread->task) :
+						task_port,
 					exception,
 					small_code, 
 					codeCnt);
@@ -249,8 +304,10 @@ exception_deliver(
 			if (code64) {
 				kr = mach_exception_raise_state_identity(
 						exc_port,
-						retrieve_thread_self_fast(thread),
-						retrieve_task_self_fast(thread->task),
+						use_fast_retrieve ? retrieve_thread_self_fast(thread) :
+							thread_port,
+						use_fast_retrieve ? retrieve_task_self_fast(thread->task) :
+							task_port,
 						exception,
 						code, 
 						codeCnt,
@@ -259,8 +316,10 @@ exception_deliver(
 						state, &state_cnt);
 			} else {
 				kr = exception_raise_state_identity(exc_port,
-						retrieve_thread_self_fast(thread),
-						retrieve_task_self_fast(thread->task),
+						use_fast_retrieve ? retrieve_thread_self_fast(thread) :
+							thread_port,
+						use_fast_retrieve ? retrieve_task_self_fast(thread->task) :
+							task_port,
 						exception,
 						small_code, 
 						codeCnt,
@@ -268,7 +327,7 @@ exception_deliver(
 						state, state_cnt,
 						state, &state_cnt);
 			}
-			if (kr == MACH_MSG_SUCCESS)
+			if (kr == MACH_MSG_SUCCESS && exception != EXC_CORPSE_NOTIFY)
 				kr = thread_setstatus(thread, flavor,
 						(thread_state_t)state,
 						state_cnt);
@@ -284,7 +343,126 @@ exception_deliver(
 }
 
 /*
- *	Routine:	exception
+ * Routine: check_exc_receiver_dependency
+ * Purpose:
+ *      Verify that the port destined for receiving this exception is not
+ *      on the current task. This would cause hang in kernel for
+ *      EXC_CRASH primarily. Note: If port is transferred
+ *      between check and delivery then deadlock may happen.
+ *
+ * Conditions:
+ *		Nothing locked and no resources held.
+ *		Called from an exception context.
+ * Returns:
+ *      KERN_SUCCESS if its ok to send exception message.
+ */
+kern_return_t
+check_exc_receiver_dependency(
+	exception_type_t exception,
+	struct exception_action *excp,
+	lck_mtx_t *mutex)
+{
+	kern_return_t retval = KERN_SUCCESS;
+
+	if (excp == NULL || exception != EXC_CRASH)
+		return retval;
+
+	task_t task = current_task();
+	lck_mtx_lock(mutex);
+	ipc_port_t xport = excp[exception].port;
+	if ( IP_VALID(xport)
+		     && ip_active(xport)
+		     && task->itk_space == xport->ip_receiver)
+		retval = KERN_FAILURE;
+	lck_mtx_unlock(mutex);
+	return retval;
+}
+
+
+/*
+ *	Routine:	exception_triage_thread
+ *	Purpose:
+ *		The thread caught an exception.
+ *		We make an up-call to the thread's exception server.
+ *	Conditions:
+ *		Nothing locked and no resources held.
+ *		Called from an exception context, so
+ *		thread_exception_return and thread_kdb_return
+ *		are possible.
+ *	Returns:
+ *		KERN_SUCCESS if exception is handled by any of the handlers.
+ */
+kern_return_t
+exception_triage_thread(
+	exception_type_t	exception,
+	mach_exception_data_t	code,
+	mach_msg_type_number_t  codeCnt,
+	thread_t 		thread)
+{
+	task_t			task;
+	host_priv_t		host_priv;
+	lck_mtx_t		*mutex;
+	kern_return_t	kr = KERN_FAILURE;
+
+	assert(exception != EXC_RPC_ALERT);
+
+	/*
+	 * If this behavior has been requested by the the kernel
+	 * (due to the boot environment), we should panic if we
+	 * enter this function.  This is intended as a debugging
+	 * aid; it should allow us to debug why we caught an
+	 * exception in environments where debugging is especially
+	 * difficult.
+	 */
+	if (panic_on_exception_triage) {
+		panic("called exception_triage when it was forbidden by the boot environment");
+	}
+
+	/*
+	 * Try to raise the exception at the activation level.
+	 */
+	mutex = &thread->mutex;
+	if (KERN_SUCCESS == check_exc_receiver_dependency(exception, thread->exc_actions, mutex))
+	{
+		kr = exception_deliver(thread, exception, code, codeCnt, thread->exc_actions, mutex);
+		if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
+			goto out;
+	}
+
+	/*
+	 * Maybe the task level will handle it.
+	 */
+	task = thread->task;
+	mutex = &task->itk_lock_data;
+	if (KERN_SUCCESS == check_exc_receiver_dependency(exception, task->exc_actions, mutex))
+	{
+		kr = exception_deliver(thread, exception, code, codeCnt, task->exc_actions, mutex);
+		if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
+			goto out;
+	}
+
+	/*
+	 * How about at the host level?
+	 */
+	host_priv = host_priv_self();
+	mutex = &host_priv->lock;
+	
+	if (KERN_SUCCESS == check_exc_receiver_dependency(exception, host_priv->exc_actions, mutex))
+	{
+		kr = exception_deliver(thread, exception, code, codeCnt, host_priv->exc_actions, mutex);
+		if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
+			goto out;
+	}
+
+out:
+	if ((exception != EXC_CRASH) && (exception != EXC_RESOURCE) &&
+	    (exception != EXC_GUARD) && (exception != EXC_CORPSE_NOTIFY))
+		thread_exception_return();
+	return kr;
+}
+
+/*
+ *	Routine:	exception_triage
  *	Purpose:
  *		The current thread caught an exception.
  *		We make an up-call to the thread's exception server.
@@ -294,64 +472,16 @@ exception_deliver(
  *		thread_exception_return and thread_kdb_return
  *		are possible.
  *	Returns:
- *		Doesn't return.
+ *		KERN_SUCCESS if exception is handled by any of the handlers.
  */
-void
+kern_return_t
 exception_triage(
 	exception_type_t	exception,
 	mach_exception_data_t	code,
 	mach_msg_type_number_t  codeCnt)
 {
-	thread_t		thread;
-	task_t			task;
-	host_priv_t		host_priv;
-	struct exception_action *excp;
-	lck_mtx_t			*mutex;
-	kern_return_t		kr;
-
-	assert(exception != EXC_RPC_ALERT);
-
-	thread = current_thread();
-
-	/*
-	 * Try to raise the exception at the activation level.
-	 */
-	mutex = &thread->mutex;
-	excp = &thread->exc_actions[exception];
-	kr = exception_deliver(thread, exception, code, codeCnt, excp, mutex);
-	if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
-		goto out;
-
-	/*
-	 * Maybe the task level will handle it.
-	 */
-	task = current_task();
-	mutex = &task->lock;
-	excp = &task->exc_actions[exception];
-	kr = exception_deliver(thread, exception, code, codeCnt, excp, mutex);
-	if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
-		goto out;
-
-	/*
-	 * How about at the host level?
-	 */
-	host_priv = host_priv_self();
-	mutex = &host_priv->lock;
-	excp = &host_priv->exc_actions[exception];
-	kr = exception_deliver(thread, exception, code, codeCnt, excp, mutex);
-	if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
-		goto out;
-
-	/*
-	 * Nobody handled it, terminate the task.
-	 */
-
-	(void) task_terminate(task);
-
-out:
-	if ((exception != EXC_CRASH) && (exception != EXC_RESOURCE))
-		thread_exception_return();
-	return;
+	thread_t thread = current_thread();
+	return exception_triage_thread(exception, code, codeCnt, thread);
 }
 
 kern_return_t
@@ -361,7 +491,6 @@ bsd_exception(
 	mach_msg_type_number_t  codeCnt)
 {
 	task_t			task;
-	struct exception_action *excp;
 	lck_mtx_t		*mutex;
 	thread_t		self = current_thread();
 	kern_return_t		kr;
@@ -370,10 +499,9 @@ bsd_exception(
 	 * Maybe the task level will handle it.
 	 */
 	task = current_task();
-	mutex = &task->lock;
-	excp = &task->exc_actions[exception];
+	mutex = &task->itk_lock_data;
 
-	kr = exception_deliver(self, exception, code, codeCnt, excp, mutex);
+	kr = exception_deliver(self, exception, code, codeCnt, task->exc_actions, mutex);
 
 	if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
 		return(KERN_SUCCESS);
@@ -390,14 +518,15 @@ kern_return_t task_exception_notify(exception_type_t exception,
 {
 	mach_exception_data_type_t	code[EXCEPTION_CODE_MAX];
 	wait_interrupt_t		wsave;
+	kern_return_t kr = KERN_SUCCESS;
 
 	code[0] = exccode;
 	code[1] = excsubcode;
 
 	wsave = thread_interrupt_level(THREAD_UNINT);
-	exception_triage(exception, code, EXCEPTION_CODE_MAX);
+	kr = exception_triage(exception, code, EXCEPTION_CODE_MAX);
 	(void) thread_interrupt_level(wsave);
-	return (KERN_SUCCESS);
+	return kr;
 }
 
 
@@ -408,7 +537,6 @@ kern_return_t task_exception_notify(exception_type_t exception,
 kern_return_t sys_perf_notify(thread_t thread, int pid) 
 {
 	host_priv_t		hostp;
-	struct exception_action *excp;
 	ipc_port_t		xport;
 	wait_interrupt_t	wsave;
 	kern_return_t		ret;
@@ -419,8 +547,7 @@ kern_return_t sys_perf_notify(thread_t thread, int pid)
 	code[1] = pid;		/* Pass out the pid */
 
 	struct task *task = thread->task;
-	excp = &hostp->exc_actions[EXC_RPC_ALERT];	
-	xport = excp->port;	
+	xport = hostp->exc_actions[EXC_RPC_ALERT].port;	
 
 	/* Make sure we're not catching our own exception */
 	if (!IP_VALID(xport) ||
@@ -436,7 +563,7 @@ kern_return_t sys_perf_notify(thread_t thread, int pid)
 			EXC_RPC_ALERT, 
 			code, 
 			2, 
-			excp,
+			hostp->exc_actions,
 			&hostp->lock);
 	(void)thread_interrupt_level(wsave);
 

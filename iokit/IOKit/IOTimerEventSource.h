@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2000, 2009 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -93,9 +93,9 @@ protected:
 
 /*! @function free
     @abstract Sub-class implementation of free method, frees calloutEntry */
-    virtual void free();
+    virtual void free() APPLE_KEXT_OVERRIDE;
 
-    virtual void setWorkLoop(IOWorkLoop *workLoop);
+    virtual void setWorkLoop(IOWorkLoop *workLoop) APPLE_KEXT_OVERRIDE;
 
 public:
 
@@ -107,43 +107,41 @@ public:
 
 /*! @function timerEventSource
     @abstract Allocates and returns an initialized timer instance.
-    @param owner
-    @param action */
+    */
     static IOTimerEventSource *
 	timerEventSource(OSObject *owner, Action action = 0);
 
 /*! @function init
     @abstract Initializes the timer with an owner, and a handler to call when the timeout expires.
-    @param owner 
-    @param action */
+    */
     virtual bool init(OSObject *owner, Action action = 0);
 
 /*! @function enable
     @abstract Enables a call to the action.
     @discussion Allows the action function to be called.  If the timer event source was disabled while a call was outstanding and the call wasn't cancelled then it will be rescheduled.  So a disable/enable pair will disable calls from this event source. */
-    virtual void enable();
+    virtual void enable() APPLE_KEXT_OVERRIDE;
 
 /*! @function disable
     @abstract Disable a timed callout.
     @discussion When disable returns the action will not be called until the next time enable(qv) is called. */
-    virtual void disable();
+    virtual void disable() APPLE_KEXT_OVERRIDE;
 
 
 /*! @function setTimeoutTicks
     @abstract Setup a callback at after the delay in scheduler ticks.  See wakeAtTime(AbsoluteTime).
-    @param interval Delay from now to wake up, in scheduler ticks, whatever that may be.
+    @param ticks Delay from now to wake up, in scheduler ticks, whatever that may be.
     @result kIOReturnSuccess if everything is fine, kIOReturnNoResources if action hasn't been declared. */
     virtual IOReturn setTimeoutTicks(UInt32 ticks);
 
 /*! @function setTimeoutMS
     @abstract Setup a callback at after the delay in milliseconds.  See wakeAtTime(AbsoluteTime).
-    @param interval Delay from now to wake up, time in milliseconds.
+    @param ms Delay from now to wake up, time in milliseconds.
     @result kIOReturnSuccess if everything is fine, kIOReturnNoResources if action hasn't been declared. */
     virtual IOReturn setTimeoutMS(UInt32 ms);
 
 /*! @function setTimeoutUS
         @abstract Setup a callback at after the delay in microseconds.	 See wakeAtTime(AbsoluteTime).
-    @param interval Delay from now to wake up, time in microseconds.
+    @param us Delay from now to wake up, time in microseconds.
     @result kIOReturnSuccess if everything is fine, kIOReturnNoResources if action hasn't been declared. */
     virtual IOReturn setTimeoutUS(UInt32 us);
 
@@ -168,19 +166,19 @@ public:
 
 /*! @function wakeAtTimeTicks
     @abstract Setup a callback at this absolute time.  See wakeAtTime(AbsoluteTime).
-    @param abstime Time to wake up in scheduler quantums, whatever that is?
+    @param ticks Time to wake up in scheduler quantums, whatever that is?
     @result kIOReturnSuccess if everything is fine, kIOReturnNoResources if action hasn't been declared. */
     virtual IOReturn wakeAtTimeTicks(UInt32 ticks);
 
 /*! @function wakeAtTimeMS
     @abstract Setup a callback at this absolute time.  See wakeAtTime(AbsoluteTime).
-    @param abstime Time to wake up in milliseconds.
+    @param ms Time to wake up in milliseconds.
     @result kIOReturnSuccess if everything is fine, kIOReturnNoResources if action hasn't been declared. */
     virtual IOReturn wakeAtTimeMS(UInt32 ms);
 
 /*! @function wakeAtTimeUS
     @abstract Setup a callback at this absolute time.  See wakeAtTime(AbsoluteTime).
-    @param abstime Time to wake up in microseconds.
+    @param us Time to wake up in microseconds.
     @result kIOReturnSuccess if everything is fine, kIOReturnNoResources if action hasn't been declared. */
     virtual IOReturn wakeAtTimeUS(UInt32 us);
 

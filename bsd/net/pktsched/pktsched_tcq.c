@@ -70,6 +70,7 @@ static void tcq_updateq(struct tcq_if *, struct tcq_class *, cqev_t);
 static int tcq_throttle(struct tcq_if *, cqrq_throttle_t *);
 static int tcq_resumeq(struct tcq_if *, struct tcq_class *);
 static int tcq_suspendq(struct tcq_if *, struct tcq_class *);
+static int tcq_stat_sc(struct tcq_if *, cqrq_stat_sc_t *);
 static struct mbuf *tcq_dequeue_cl(struct tcq_if *, struct tcq_class *,
     mbuf_svc_class_t, cqdq_op_t);
 static inline struct tcq_class *tcq_clh_to_clp(struct tcq_if *, u_int32_t);
@@ -397,6 +398,10 @@ tcq_class_create(struct tcq_if *tif, int pri, u_int32_t qlimit,
 			if (flags & TQCF_SFB)
 				cl->cl_qflags |= SFBF_FLOWCTL;
 		}
+		if (flags & TQCF_DELAYBASED) {
+			if (flags & TQCF_SFB)
+				cl->cl_qflags |= SFBF_DELAYBASED;
+		}
 		if (flags & TQCF_CLEARDSCP) {
 			if (flags & TQCF_RIO)
 				cl->cl_qflags |= RIOF_CLEARDSCP;
@@ -536,7 +541,11 @@ tcq_enqueue(struct tcq_if *tif, struct tcq_class *cl, struct mbuf *m,
 	VERIFY(cl == NULL || cl->cl_tif == tif);
 
 	if (cl == NULL) {
+#if PF_ALTQ
 		cl = tcq_clh_to_clp(tif, t->pftag_qid);
+#else /* !PF_ALTQ */
+		cl = tcq_clh_to_clp(tif, 0);
+#endif /* !PF_ALTQ */
 		if (cl == NULL) {
 			cl = tif->tif_default;
 			if (cl == NULL) {
@@ -573,6 +582,7 @@ tcq_enqueue(struct tcq_if *tif, struct tcq_class *cl, struct mbuf *m,
 		}
 	}
 	IFCQ_INC_LEN(ifq);
+	IFCQ_INC_BYTES(ifq, len);
 
 	/* successfully queued. */
 	return (ret);
@@ -616,6 +626,7 @@ tcq_dequeue_cl(struct tcq_if *tif, struct tcq_class *cl,
 	m = tcq_getq(cl);
 	if (m != NULL) {
 		IFCQ_DEC_LEN(ifq);
+		IFCQ_DEC_BYTES(ifq, m_pktlen(m));
 		if (qempty(&cl->cl_q))
 			cl->cl_period++;
 		PKTCNTR_ADD(&cl->cl_xmitcnt, 1, m_pktlen(m));
@@ -689,8 +700,10 @@ tcq_addq(struct tcq_class *cl, struct mbuf *m, struct pf_mtag *t)
 		return (CLASSQEQ_DROPPED);
 	}
 
+#if PF_ECN
 	if (cl->cl_flags & TQCF_CLEARDSCP)
 		write_dsfield(m, t, 0);
+#endif /* PF_ECN */
 
 	_addq(&cl->cl_q, m);
 
@@ -856,6 +869,27 @@ tcq_get_class_stats(struct tcq_if *tif, u_int32_t qid,
 	return (0);
 }
 
+static int
+tcq_stat_sc(struct tcq_if *tif, cqrq_stat_sc_t *sr)
+{
+	struct ifclassq *ifq = tif->tif_ifq;
+	struct tcq_class *cl;
+	u_int32_t i;
+
+	IFCQ_LOCK_ASSERT_HELD(ifq);
+
+	VERIFY(sr->sc == MBUF_SC_UNSPEC || MBUF_VALID_SC(sr->sc));
+
+	i = MBUF_SCIDX(sr->sc);
+	VERIFY(i < IFCQ_SC_MAX);
+
+	cl = ifq->ifcq_disc_slots[i].cl;
+	sr->packets = qlen(&cl->cl_q);
+	sr->bytes = qsize(&cl->cl_q);
+
+	return (0);
+}
+
 /* convert a class handle to the corresponding class pointer */
 static inline struct tcq_class *
 tcq_clh_to_clp(struct tcq_if *tif, u_int32_t chandle)
@@ -951,6 +985,10 @@ tcq_request_ifclassq(struct ifclassq *ifq, cqrq_t req, void *arg)
 	case CLASSQRQ_THROTTLE:
 		err = tcq_throttle(tif, (cqrq_throttle_t *)arg);
 		break;
+
+	case CLASSQRQ_STAT_SC:
+		err = tcq_stat_sc(tif, (cqrq_stat_sc_t *)arg);
+		break;
 	}
 	return (err);
 }
@@ -980,6 +1018,8 @@ tcq_setup_ifclassq(struct ifclassq *ifq, u_int32_t flags)
 		qflags |= TQCF_ECN;
 	if (flags & PKTSCHEDF_QALG_FLOWCTL)
 		qflags |= TQCF_FLOWCTL;
+	if (flags & PKTSCHEDF_QALG_DELAYBASED)
+		qflags |= TQCF_DELAYBASED;
 
 	tif = tcq_alloc(ifp, M_WAITOK, FALSE);
 	if (tif == NULL)
@@ -1006,7 +1046,7 @@ tcq_setup_ifclassq(struct ifclassq *ifq, u_int32_t flags)
 
 	err = ifclassq_attach(ifq, PKTSCHEDT_TCQ, tif,
 	    tcq_enqueue_ifclassq, NULL, tcq_dequeue_tc_ifclassq,
-	    tcq_request_ifclassq);
+	    NULL, tcq_request_ifclassq);
 
 	/* cache these for faster lookup */
 	if (err == 0) {
@@ -1093,7 +1133,7 @@ tcq_throttle(struct tcq_if *tif, cqrq_throttle_t *tr)
 {
 	struct ifclassq *ifq = tif->tif_ifq;
 	struct tcq_class *cl;
-	int err;
+	int err = 0;
 
 	IFCQ_LOCK_ASSERT_HELD(ifq);
 	VERIFY(!(tif->tif_flags & TCQIFF_ALTQ));

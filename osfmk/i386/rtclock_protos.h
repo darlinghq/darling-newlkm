@@ -48,8 +48,11 @@ extern void	_rtc_nanotime_adjust(
 		        pal_rtc_nanotime_t	*dst);
 
 extern uint64_t	_rtc_nanotime_read(
-			pal_rtc_nanotime_t	*rntp,
-			int			slow);
+			pal_rtc_nanotime_t	*rntp);
+
+extern uint64_t _rtc_tsc_to_nanoseconds(
+			uint64_t    value,
+			pal_rtc_nanotime_t	*rntp);
 
 extern void	rtclock_intr(x86_saved_state_t *regs);
 
@@ -58,11 +61,14 @@ extern void	rtclock_intr(x86_saved_state_t *regs);
  * Timer control.
  */
 typedef struct {
-	void	 (*config)(void);
-	uint64_t (*set)   (uint64_t, uint64_t);
+	void	 (*rtc_config)(void);
+	uint64_t (*rtc_set)   (uint64_t, uint64_t);
 } rtc_timer_t;
 extern rtc_timer_t	*rtc_timer;
 
 extern void		rtc_timer_init(void);
 
+extern void		rtclock_early_init(void);
+extern void		rtc_nanotime_init(uint64_t);
+extern void		rtc_decrementer_configure(void);
 #endif /* _I386_RTCLOCK_PROTOS_H_ */

@@ -79,7 +79,6 @@
 #include <kern/cpu_data.h>
 #include <kern/ipc_host.h>
 #include <kern/host.h>
-#include <kern/lock.h>
 #include <kern/machine.h>
 #include <kern/misc_protos.h>
 #include <kern/processor.h>
@@ -94,6 +93,10 @@
 #include <IOKit/IOHibernatePrivate.h>
 #endif
 #include <IOKit/IOPlatformExpert.h>
+
+#if CONFIG_DTRACE
+extern void (*dtrace_cpu_state_changed_hook)(int, boolean_t);
+#endif
 
 /*
  *	Exported variables:
@@ -122,10 +125,7 @@ processor_up(
 	init_ast_check(processor);
 	pset = processor->processor_set;
 	pset_lock(pset);
-	if (++pset->online_processor_count == 1) {
-		pset_pri_init_hint(pset, processor);
-		pset_count_init_hint(pset, processor);
-	}
+	++pset->online_processor_count;
 	enqueue_tail(&pset->active_queue, (queue_entry_t)processor);
 	processor->state = PROCESSOR_RUNNING;
 	(void)hw_atomic_add(&processor_avail_count, 1);
@@ -133,7 +133,13 @@ processor_up(
 	pset_unlock(pset);
 	ml_cpu_up();
 	splx(s);
+
+#if CONFIG_DTRACE
+	if (dtrace_cpu_state_changed_hook)
+		(*dtrace_cpu_state_changed_hook)(processor->cpu_id, TRUE);
+#endif
 }
+#include <atm/atm_internal.h>
 
 kern_return_t
 host_reboot(
@@ -145,10 +151,12 @@ host_reboot(
 
 	assert(host_priv == &realhost);
 
+#if DEVELOPMENT || DEBUG
 	if (options & HOST_REBOOT_DEBUGGER) {
 		Debugger("Debugger");
 		return (KERN_SUCCESS);
 	}
+#endif
 
     if (options & HOST_REBOOT_UPSDELAY) {
         // UPS power cutoff path
@@ -204,7 +212,9 @@ processor_shutdown(
 	 */
 	while (processor->state == PROCESSOR_DISPATCHING) {
 		pset_unlock(pset);
+		splx(s);
 		delay(1);
+		s = splsched();
 		pset_lock(pset);
 	}
 
@@ -237,7 +247,7 @@ processor_shutdown(
 }
 
 /*
- * Called at splsched.
+ * Called with interrupts disabled.
  */
 void
 processor_doshutdown(
@@ -245,6 +255,7 @@ processor_doshutdown(
 {
 	thread_t			old_thread, self = current_thread();
 	processor_t			prev;
+	processor_set_t			pset;
 
 	/*
 	 *	Get onto the processor to shutdown
@@ -252,20 +263,43 @@ processor_doshutdown(
 	prev = thread_bind(processor);
 	thread_block(THREAD_CONTINUE_NULL);
 
-#if HIBERNATION
-	if (processor_avail_count < 2)
-		hibernate_vm_lock();
-#endif
-
 	assert(processor->state == PROCESSOR_SHUTDOWN);
 
-#if HIBERNATION
-	if (processor_avail_count < 2)
-		hibernate_vm_unlock();
+#if CONFIG_DTRACE
+	if (dtrace_cpu_state_changed_hook)
+		(*dtrace_cpu_state_changed_hook)(processor->cpu_id, FALSE);
 #endif
 
+	ml_cpu_down();
+
+#if HIBERNATION
+	if (processor_avail_count < 2) {
+		hibernate_vm_lock();
+		hibernate_vm_unlock();
+	}
+#endif
+
+	pset = processor->processor_set;
+	pset_lock(pset);
+	processor->state = PROCESSOR_OFF_LINE;
+	--pset->online_processor_count;
+	(void)hw_atomic_sub(&processor_avail_count, 1);
+	commpage_update_active_cpus();
+	SCHED(processor_queue_shutdown)(processor);
+	/* pset lock dropped */
+
 	/*
-	 *	Continue processor shutdown in shutdown context.
+	 * Continue processor shutdown in shutdown context.
+	 *
+	 * We save the current context in machine_processor_shutdown in such a way
+	 * that when this thread is next invoked it will return from here instead of
+	 * from the machine_switch_context() in thread_invoke like a normal context switch.
+	 *
+	 * As such, 'old_thread' is neither the idle thread nor the current thread - it's whatever
+	 * thread invoked back to this one. (Usually, it's another processor's idle thread.)
+	 *
+	 * TODO: Make this a real thread_run of the idle_thread, so we don't have to keep this in sync
+	 * with thread_invoke.
 	 */
 	thread_bind(prev);
 	old_thread = machine_processor_shutdown(self, processor_offline, processor);
@@ -274,46 +308,53 @@ processor_doshutdown(
 }
 
 /*
- *	Complete the shutdown and place the processor offline.
+ * Complete the shutdown and place the processor offline.
  *
- *	Called at splsched in the shutdown context.
+ * Called at splsched in the shutdown context.
+ * This performs a minimal thread_invoke() to the idle thread,
+ * so it needs to be kept in sync with what thread_invoke() does.
+ *
+ * The onlining half of this is done in load_context().
  */
 void
 processor_offline(
 	processor_t			processor)
 {
-	thread_t			new_thread, old_thread = processor->active_thread;
-	processor_set_t		pset;
+	assert(processor == current_processor());
+	assert(processor->active_thread == current_thread());
 
-	new_thread = processor->idle_thread;
+	thread_t old_thread = processor->active_thread;
+	thread_t new_thread = processor->idle_thread;
+
 	processor->active_thread = new_thread;
 	processor->current_pri = IDLEPRI;
 	processor->current_thmode = TH_MODE_NONE;
+	processor->starting_pri = IDLEPRI;
+	processor->current_sfi_class = SFI_CLASS_KERNEL;
 	processor->deadline = UINT64_MAX;
 	new_thread->last_processor = processor;
 
-	processor->last_dispatch = mach_absolute_time();
-	timer_stop(PROCESSOR_DATA(processor, thread_timer), processor->last_dispatch);
+	uint64_t ctime = mach_absolute_time();
+
+	processor->last_dispatch = ctime;
+	old_thread->last_run_time = ctime;
+
+	/* Update processor->thread_timer and ->kernel_timer to point to the new thread */
+	thread_timer_event(ctime, &new_thread->system_timer);
+	PROCESSOR_DATA(processor, kernel_timer) = &new_thread->system_timer;
+
+	timer_stop(PROCESSOR_DATA(processor, current_state), ctime);
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	                          MACHDBG_CODE(DBG_MACH_SCHED, MACH_SCHED) | DBG_FUNC_NONE,
+	                          old_thread->reason, (uintptr_t)thread_tid(new_thread),
+	                          old_thread->sched_pri, new_thread->sched_pri, 0);
 
 	machine_set_current_thread(new_thread);
 
 	thread_dispatch(old_thread, new_thread);
 
 	PMAP_DEACTIVATE_KERNEL(processor->cpu_id);
-
-	pset = processor->processor_set;
-	pset_lock(pset);
-	processor->state = PROCESSOR_OFF_LINE;
-	if (--pset->online_processor_count == 0) {
-		pset_pri_init_hint(pset, PROCESSOR_NULL);
-		pset_count_init_hint(pset, PROCESSOR_NULL);
-	}
-	(void)hw_atomic_sub(&processor_avail_count, 1);
-	commpage_update_active_cpus();
-	SCHED(processor_queue_shutdown)(processor);
-	/* pset lock dropped */
-
-	ml_cpu_down();
 
 	cpu_sleep();
 	panic("zombie processor");

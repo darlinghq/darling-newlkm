@@ -75,10 +75,10 @@ __private_extern__
 kern_return_t		memory_manager_default_check(void);
 
 __private_extern__
-void			memory_manager_default_init(void) __attribute__((section("__TEXT, initcode")));
+void			memory_manager_default_init(void);
 
 __private_extern__
-void			memory_object_control_bootstrap(void) __attribute__((section("__TEXT, initcode")));
+void			memory_object_control_bootstrap(void);
 __private_extern__
 memory_object_control_t memory_object_control_allocate(
 				vm_object_t		object);
@@ -123,16 +123,6 @@ extern kern_return_t	memory_object_free_from_cache(
 	memory_object_pager_ops_t	pager_ops,
 	int				*count);
 
-extern kern_return_t	memory_object_iopl_request(
-	ipc_port_t		port,
-	memory_object_offset_t	offset,
-	upl_size_t		*upl_size,
-	upl_t			*upl_ptr,
-	upl_page_info_array_t	user_page_list,
-	unsigned int		*page_list_count,
-	int			*flags);
-	
-
 extern kern_return_t	memory_object_pages_resident(
 	memory_object_control_t		control,
 	boolean_t			*		has_pages_resident);
@@ -140,6 +130,9 @@ extern kern_return_t	memory_object_pages_resident(
 extern kern_return_t	memory_object_signed(
 	memory_object_control_t		control,
 	boolean_t			is_signed);
+
+extern boolean_t	memory_object_is_signed(
+	memory_object_control_t	control);
 
 extern boolean_t	memory_object_is_slid(
 	memory_object_control_t		control);
@@ -151,5 +144,13 @@ extern void		memory_object_mark_unused(
 	memory_object_control_t		control,
 	boolean_t			rage);
 
+extern void 		memory_object_mark_io_tracking(
+	memory_object_control_t         control);
+
+#if CONFIG_SECLUDED_MEMORY
+extern void 		memory_object_mark_eligible_for_secluded(
+	memory_object_control_t         control,
+	boolean_t			eligible_for_secluded);
+#endif /* CONFIG_SECLUDED_MEMORY */
 
 #endif	/* _VM_MEMORY_OBJECT_H_ */

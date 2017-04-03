@@ -150,6 +150,7 @@ __END_DECLS
 #define CPU_TYPE_MC98000	((cpu_type_t) 10)
 #define CPU_TYPE_HPPA           ((cpu_type_t) 11)
 #define CPU_TYPE_ARM		((cpu_type_t) 12)
+#define CPU_TYPE_ARM64          (CPU_TYPE_ARM | CPU_ARCH_ABI64)
 #define CPU_TYPE_MC88000	((cpu_type_t) 13)
 #define CPU_TYPE_SPARC		((cpu_type_t) 14)
 #define CPU_TYPE_I860		((cpu_type_t) 15)
@@ -274,6 +275,7 @@ __END_DECLS
 #define CPU_SUBTYPE_X86_ALL		((cpu_subtype_t)3)
 #define CPU_SUBTYPE_X86_64_ALL		((cpu_subtype_t)3)
 #define CPU_SUBTYPE_X86_ARCH1		((cpu_subtype_t)4)
+#define CPU_SUBTYPE_X86_64_H		((cpu_subtype_t)8)	/* Haswell feature subset */
 
 
 #define CPU_THREADTYPE_INTEL_HTT	((cpu_threadtype_t) 1)
@@ -351,7 +353,19 @@ __END_DECLS
 #define CPU_SUBTYPE_ARM_XSCALE		((cpu_subtype_t) 8)
 #define CPU_SUBTYPE_ARM_V7		((cpu_subtype_t) 9)
 #define CPU_SUBTYPE_ARM_V7F		((cpu_subtype_t) 10) /* Cortex A9 */
-#define CPU_SUBTYPE_ARM_V7K		((cpu_subtype_t) 12) /* Kirkwood40 */
+#define CPU_SUBTYPE_ARM_V7S		((cpu_subtype_t) 11) /* Swift */
+#define CPU_SUBTYPE_ARM_V7K		((cpu_subtype_t) 12)
+#define CPU_SUBTYPE_ARM_V6M		((cpu_subtype_t) 14) /* Not meant to be run under xnu */
+#define CPU_SUBTYPE_ARM_V7M		((cpu_subtype_t) 15) /* Not meant to be run under xnu */
+#define CPU_SUBTYPE_ARM_V7EM		((cpu_subtype_t) 16) /* Not meant to be run under xnu */
+
+#define CPU_SUBTYPE_ARM_V8		((cpu_subtype_t) 13)
+
+/*
+ *  ARM64 subtypes
+ */
+#define CPU_SUBTYPE_ARM64_ALL           ((cpu_subtype_t) 0)
+#define CPU_SUBTYPE_ARM64_V8            ((cpu_subtype_t) 1)
 
 #endif /* !__ASSEMBLER__ */
 
@@ -371,27 +385,30 @@ __END_DECLS
 #define CPUFAMILY_POWERPC_G4		0x77c184ae
 #define CPUFAMILY_POWERPC_G5		0xed76d8aa
 #define CPUFAMILY_INTEL_6_13		0xaa33392b
-#define CPUFAMILY_INTEL_YONAH		0x73d67300
-#define CPUFAMILY_INTEL_MEROM		0x426f69ef
 #define CPUFAMILY_INTEL_PENRYN		0x78ea4fbc
 #define CPUFAMILY_INTEL_NEHALEM		0x6b5a4cd2
 #define CPUFAMILY_INTEL_WESTMERE	0x573b5eec
 #define CPUFAMILY_INTEL_SANDYBRIDGE	0x5490b78c
 #define CPUFAMILY_INTEL_IVYBRIDGE	0x1f65e835
+#define CPUFAMILY_INTEL_HASWELL		0x10b282dc
+#define CPUFAMILY_INTEL_BROADWELL	0x582ed09c
+#define CPUFAMILY_INTEL_SKYLAKE		0x37fc219f
 #define CPUFAMILY_ARM_9			0xe73283ae
 #define CPUFAMILY_ARM_11		0x8ff620d8
 #define CPUFAMILY_ARM_XSCALE		0x53b005f5
+#define CPUFAMILY_ARM_12                0xbd1b0ae9
 #define CPUFAMILY_ARM_13		0x0cc90e64
 #define CPUFAMILY_ARM_14		0x96077ef1
+#define CPUFAMILY_ARM_15		0xa8511bca
+#define CPUFAMILY_ARM_SWIFT 		0x1e2d6381
+#define CPUFAMILY_ARM_CYCLONE		0x37a09642
+#define CPUFAMILY_ARM_TYPHOON		0x2c91a47e
+#define CPUFAMILY_ARM_TWISTER		0x92fb37c8
+#define CPUFAMILY_ARM_HURRICANE		0x67ceee93
 
 /* The following synonyms are deprecated: */
-#define CPUFAMILY_INTEL_6_14	CPUFAMILY_INTEL_YONAH
-#define CPUFAMILY_INTEL_6_15	CPUFAMILY_INTEL_MEROM
 #define CPUFAMILY_INTEL_6_23	CPUFAMILY_INTEL_PENRYN
 #define CPUFAMILY_INTEL_6_26	CPUFAMILY_INTEL_NEHALEM
-
-#define CPUFAMILY_INTEL_CORE	CPUFAMILY_INTEL_YONAH
-#define CPUFAMILY_INTEL_CORE2	CPUFAMILY_INTEL_MEROM
 
 
 #endif	/* _MACH_MACHINE_H_ */

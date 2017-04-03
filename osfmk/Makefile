@@ -8,36 +8,14 @@ include $(MakeInc_def)
 
 INSTINC_SUBDIRS = \
 	mach	\
+	atm	\
+	corpses	\
+	bank \
+	voucher \
 	device \
 	default_pager \
 	mach_debug \
 	kern \
-	ipc \
-	machine \
-	UserNotification \
-	gssd \
-	kextd \
-	lockd \
-	vm \
-	libsa \
-	kdp \
-	pmc \
-	kperf
-INSTINC_SUBDIRS_I386 = \
-	mach	\
-	i386
-INSTINC_SUBDIRS_X86_64 = \
-	mach	\
-	i386	\
-	x86_64
-
-EXPINC_SUBDIRS = \
-	mach	\
-	device \
-	default_pager \
-	mach_debug \
-	kern \
-	kdp \
 	ipc \
 	machine \
 	UserNotification \
@@ -48,24 +26,72 @@ EXPINC_SUBDIRS = \
 	libsa \
 	kdp \
 	console \
-	pmc \
-	kperf
+	kperf \
+	prng
 
-EXPINC_SUBDIRS_I386 = \
-	mach	\
-	i386
-EXPINC_SUBDIRS_X86_64 = \
+INSTINC_SUBDIRS_X86_64 = \
 	mach	\
 	i386	\
 	x86_64
 
-SETUP_SUBDIRS =
+INSTINC_SUBDIRS_X86_64H = \
+	mach	\
+	i386	\
+	x86_64
 
-COMP_SUBDIRS = 	\
+INSTINC_SUBDIRS_ARM = \
+	mach	\
+	arm	\
+	arm64
+
+INSTINC_SUBDIRS_ARM64 = \
+	mach	\
+	arm	\
+	arm64
+
+EXPINC_SUBDIRS = \
+	mach	\
+	atm	\
+	corpses	\
+	bank \
+	voucher \
+	device \
+	default_pager \
+	mach_debug \
+	kern \
+	kdp \
+	ipc \
+	machine \
+	UserNotification \
+	gssd \
+	kextd \
+	lockd \
+	vm \
+	libsa \
+	console \
+	kperf \
+	prng
+
+
+EXPINC_SUBDIRS_X86_64 = \
+	mach	\
+	i386	\
+	x86_64
+EXPINC_SUBDIRS_X86_64H = \
+	mach	\
+	i386	\
+	x86_64
+EXPINC_SUBDIRS_ARM = \
+	mach	\
+	arm	\
+	arm64
+EXPINC_SUBDIRS_ARM64 = \
+	mach	\
+	arm	\
+	arm64
+
+COMP_SUBDIRS =	\
 	conf
-
-INST_SUBDIRS =	\
-
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

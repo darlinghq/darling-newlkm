@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -230,14 +230,11 @@ void
 pfi_attach_ifnet(struct ifnet *ifp)
 {
 	struct pfi_kif *kif;
-	char if_name[IFNAMSIZ];
 
 	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	pfi_update++;
-	(void) snprintf(if_name, sizeof (if_name), "%s%d",
-	    ifp->if_name, ifp->if_unit);
-	if ((kif = pfi_kif_get(if_name)) == NULL)
+	if ((kif = pfi_kif_get(if_name(ifp))) == NULL)
 		panic("pfi_kif_get failed");
 
 	ifnet_lock_exclusive(ifp);
@@ -287,7 +284,6 @@ pfi_match_addr(struct pfi_dynaddr *dyn, struct pf_addr *a, sa_family_t af)
 		default:
 			return (pfr_match_addr(dyn->pfid_kt, a, AF_INET));
 		}
-		break;
 #endif /* INET */
 #if INET6
 	case AF_INET6:
@@ -300,7 +296,6 @@ pfi_match_addr(struct pfi_dynaddr *dyn, struct pf_addr *a, sa_family_t af)
 		default:
 			return (pfr_match_addr(dyn->pfid_kt, a, AF_INET6));
 		}
-		break;
 #endif /* INET6 */
 	default:
 		return (0);
@@ -607,24 +602,23 @@ pfi_update_status(const char *name, struct pf_status *pfs)
 	if (p == NULL)
 		return;
 
-	if (pfs) {
+	if (pfs != NULL) {
 		bzero(pfs->pcounters, sizeof (pfs->pcounters));
 		bzero(pfs->bcounters, sizeof (pfs->bcounters));
-	}
-	/* just clear statistics */
-	if (pfs == NULL) {
+		for (i = 0; i < 2; i++)
+			for (j = 0; j < 2; j++)
+				for (k = 0; k < 2; k++) {
+					pfs->pcounters[i][j][k] +=
+						p->pfik_packets[i][j][k];
+					pfs->bcounters[i][j] +=
+						p->pfik_bytes[i][j][k];
+				}
+	} else {
+		/* just clear statistics */
 		bzero(p->pfik_packets, sizeof (p->pfik_packets));
 		bzero(p->pfik_bytes, sizeof (p->pfik_bytes));
 		p->pfik_tzero = pf_calendar_time_second();
 	}
-	for (i = 0; i < 2; i++)
-		for (j = 0; j < 2; j++)
-			for (k = 0; k < 2; k++) {
-				pfs->pcounters[i][j][k] +=
-				    p->pfik_packets[i][j][k];
-				pfs->bcounters[i][j] +=
-				    p->pfik_bytes[i][j][k];
-			}
 }
 
 int

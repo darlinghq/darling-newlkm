@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
@@ -142,8 +142,7 @@ struct net_event_data {
 };
 
 #if defined(__LP64__)
-#define __need_struct_timeval32
-#include <sys/_structs.h>
+#include <sys/_types/_timeval32.h>
 #define IF_DATA_TIMEVAL timeval32
 #else
 #define IF_DATA_TIMEVAL timeval
@@ -249,6 +248,10 @@ struct if_traffic_class {
 
 struct if_data_extended {
 	u_int64_t	ifi_alignerrs;	/* unaligned (32-bit) input pkts */
+	u_int64_t	ifi_dt_bytes;	/* Data threshold counter */
+	u_int64_t	ifi_fpackets;	/* forwarded packets on interface */
+	u_int64_t	ifi_fbytes;	/* forwarded bytes on interface */
+	u_int64_t	reserved[12];	/* for future */
 };
 
 struct if_packet_stats {
@@ -267,6 +270,7 @@ struct if_packet_stats {
 	u_int64_t		ifi_tcp_dospacket;
 	u_int64_t		ifi_tcp_cleanup;
 	u_int64_t		ifi_tcp_synwindow;
+	u_int64_t		reserved[6];
 	/* UDP */
 	u_int64_t		ifi_udp_port_unreach;
 	u_int64_t		ifi_udp_faithprefix;
@@ -276,6 +280,7 @@ struct if_packet_stats {
 	u_int64_t		ifi_udp_badmcast;
 	u_int64_t		ifi_udp_cleanup;
 	u_int64_t		ifi_udp_badipsec;
+	u_int64_t		_reserved[4];
 };
 
 struct if_description {
@@ -287,6 +292,11 @@ struct if_description {
 struct if_bandwidths {
 	u_int64_t	eff_bw;		/* effective bandwidth */
 	u_int64_t	max_bw;		/* maximum theoretical bandwidth */
+};
+
+struct if_latencies {
+	u_int64_t	eff_lt;		/* effective latency */
+	u_int64_t	max_lt;		/* maximum theoretical latency */
 };
 
 struct if_rxpoll_stats {
@@ -312,7 +322,258 @@ struct if_rxpoll_stats {
 	u_int32_t	ifi_poll_bytes_max;	/* largest polled bytes */
 	u_int32_t	ifi_poll_bytes_lowat;	/* bytes low watermark */
 	u_int32_t	ifi_poll_bytes_hiwat;	/* bytes high watermark */
+
+	u_int32_t	ifi_poll_packets_limit;	/* max packets per poll call */
+	u_int64_t	ifi_poll_interval_time;	/* poll interval (nsec) */
 };
+
+struct if_tcp_ecn_perf_stat {
+	u_int64_t total_txpkts;
+	u_int64_t total_rxmitpkts;
+	u_int64_t total_rxpkts;
+	u_int64_t total_oopkts;
+	u_int64_t total_reorderpkts;
+	u_int64_t rtt_avg;
+	u_int64_t rtt_var;
+	u_int64_t sack_episodes;
+	u_int64_t rxmit_drop;
+	u_int64_t rst_drop;
+	u_int64_t oo_percent;
+	u_int64_t reorder_percent;
+	u_int64_t rxmit_percent;
+};
+
+struct if_tcp_ecn_stat {
+	u_int64_t timestamp;
+	u_int64_t ecn_client_setup;
+	u_int64_t ecn_server_setup;
+	u_int64_t ecn_client_success;
+	u_int64_t ecn_server_success;
+	u_int64_t ecn_peer_nosupport;
+	u_int64_t ecn_syn_lost;
+	u_int64_t ecn_synack_lost;
+	u_int64_t ecn_recv_ce;
+	u_int64_t ecn_recv_ece;
+	u_int64_t ecn_conn_recv_ce;
+	u_int64_t ecn_conn_recv_ece;
+	u_int64_t ecn_conn_plnoce;
+	u_int64_t ecn_conn_plce;
+	u_int64_t ecn_conn_noplce;
+	u_int64_t ecn_fallback_synloss;
+	u_int64_t ecn_fallback_reorder;
+	u_int64_t ecn_fallback_ce;
+	u_int64_t ecn_off_conn;
+	u_int64_t ecn_total_conn;
+	u_int64_t ecn_fallback_droprst;
+	u_int64_t ecn_fallback_droprxmt;
+	struct if_tcp_ecn_perf_stat ecn_on;
+	struct if_tcp_ecn_perf_stat ecn_off;
+};
+
+/*
+ * Interface link status report -- includes statistics related to
+ * the link layer technology sent by the driver. The driver will monitor
+ * these statistics over an interval (3-4 secs) and will generate a report
+ * to the network stack. This will give first-hand information about the
+ * status of the first hop of the network path. The version and
+ * length values should be correct for the data to be processed correctly.
+ * The definitions are different for different kind of interfaces like
+ * Wifi, Cellular etc,.
+ */
+#define IF_CELLULAR_STATUS_REPORT_VERSION_1	1
+#define IF_WIFI_STATUS_REPORT_VERSION_1		1
+#define IF_CELLULAR_STATUS_REPORT_CURRENT_VERSION	\
+					IF_CELLULAR_STATUS_REPORT_VERSION_1
+#define IF_WIFI_STATUS_REPORT_CURRENT_VERSION	IF_WIFI_STATUS_REPORT_VERSION_1
+/*
+ * For cellular interface --
+ * There is no way to share common headers between the Baseband and
+ * the kernel. Any changes to this structure will need to be communicated
+ * to the Baseband team. It is better to use reserved space instead of
+ * changing the size or existing fields in the structure.
+ */
+struct if_cellular_status_v1 {
+	u_int32_t valid_bitmask; /* indicates which fields are valid */
+#define IF_CELL_LINK_QUALITY_METRIC_VALID	0x1
+#define IF_CELL_UL_EFFECTIVE_BANDWIDTH_VALID	0x2
+#define IF_CELL_UL_MAX_BANDWIDTH_VALID		0x4
+#define IF_CELL_UL_MIN_LATENCY_VALID		0x8
+#define IF_CELL_UL_EFFECTIVE_LATENCY_VALID	0x10
+#define IF_CELL_UL_MAX_LATENCY_VALID		0x20
+#define IF_CELL_UL_RETXT_LEVEL_VALID		0x40
+#define IF_CELL_UL_BYTES_LOST_VALID		0x80
+#define IF_CELL_UL_MIN_QUEUE_SIZE_VALID		0x100
+#define IF_CELL_UL_AVG_QUEUE_SIZE_VALID		0x200
+#define IF_CELL_UL_MAX_QUEUE_SIZE_VALID		0x400
+#define IF_CELL_DL_EFFECTIVE_BANDWIDTH_VALID	0x800
+#define IF_CELL_DL_MAX_BANDWIDTH_VALID		0x1000
+#define IF_CELL_CONFIG_INACTIVITY_TIME_VALID	0x2000
+#define IF_CELL_CONFIG_BACKOFF_TIME_VALID	0x4000
+#define	IF_CELL_UL_MSS_RECOMMENDED_VALID	0x8000
+
+	u_int32_t link_quality_metric;
+	u_int32_t ul_effective_bandwidth; /* Measured uplink bandwidth based on current activity (bps) */
+	u_int32_t ul_max_bandwidth; /* Maximum supported uplink bandwidth (bps) */
+	u_int32_t ul_min_latency; /* min expected uplink latency for first hop (ms) */
+	u_int32_t ul_effective_latency; /* current expected uplink latency for first hop (ms) */
+	u_int32_t ul_max_latency; /* max expected uplink latency first hop (ms) */
+	u_int32_t ul_retxt_level; /* Retransmission metric */
+#define IF_CELL_UL_RETXT_LEVEL_NONE	1
+#define IF_CELL_UL_RETXT_LEVEL_LOW	2
+#define IF_CELL_UL_RETXT_LEVEL_MEDIUM	3
+#define IF_CELL_UL_RETXT_LEVEL_HIGH	4
+	u_int32_t ul_bytes_lost; /* % of total bytes lost on uplink in Q10 format */
+	u_int32_t ul_min_queue_size; /* minimum bytes in queue */
+	u_int32_t ul_avg_queue_size; /* average bytes in queue */
+	u_int32_t ul_max_queue_size; /* maximum bytes in queue */
+	u_int32_t dl_effective_bandwidth; /* Measured downlink bandwidth based on current activity (bps) */
+	u_int32_t dl_max_bandwidth; /* Maximum supported downlink bandwidth (bps) */
+	u_int32_t config_inactivity_time; /* ms */
+	u_int32_t config_backoff_time; /* new connections backoff time in ms */
+#define	IF_CELL_UL_MSS_RECOMMENDED_NONE	0x0 /* Use default */
+#define	IF_CELL_UL_MSS_RECOMMENDED_MEDIUM 0x1 /* 1200 byte MSS */
+#define	IF_CELL_UL_MSS_RECOMMENDED_LOW	0x2 /* 512 byte MSS */
+	u_int16_t mss_recommended;
+	u_int16_t reserved_1;
+	u_int32_t reserved_2;
+	u_int64_t reserved_3;
+	u_int64_t reserved_4;
+	u_int64_t reserved_5;
+	u_int64_t reserved_6;
+} __attribute__((packed));
+
+struct if_cellular_status {
+	union {
+		struct if_cellular_status_v1 if_status_v1;
+	} if_cell_u;
+};
+
+/*
+ * These statistics will be provided by the Wifi driver periodically.
+ * After sending each report, the driver should start computing again
+ * for the next report duration so that the values represent the link
+ * status for one report duration.
+ */
+
+struct if_wifi_status_v1 {
+	u_int32_t valid_bitmask;
+#define IF_WIFI_LINK_QUALITY_METRIC_VALID	0x1
+#define IF_WIFI_UL_EFFECTIVE_BANDWIDTH_VALID	0x2
+#define IF_WIFI_UL_MAX_BANDWIDTH_VALID		0x4
+#define IF_WIFI_UL_MIN_LATENCY_VALID		0x8
+#define IF_WIFI_UL_EFFECTIVE_LATENCY_VALID	0x10
+#define IF_WIFI_UL_MAX_LATENCY_VALID		0x20
+#define IF_WIFI_UL_RETXT_LEVEL_VALID		0x40
+#define IF_WIFI_UL_ERROR_RATE_VALID		0x80
+#define IF_WIFI_UL_BYTES_LOST_VALID		0x100
+#define IF_WIFI_DL_EFFECTIVE_BANDWIDTH_VALID	0x200
+#define IF_WIFI_DL_MAX_BANDWIDTH_VALID		0x400
+#define IF_WIFI_DL_MIN_LATENCY_VALID		0x800
+#define IF_WIFI_DL_EFFECTIVE_LATENCY_VALID	0x1000
+#define IF_WIFI_DL_MAX_LATENCY_VALID		0x2000
+#define IF_WIFI_DL_ERROR_RATE_VALID		0x4000
+#define IF_WIFI_CONFIG_FREQUENCY_VALID		0x8000
+#define IF_WIFI_CONFIG_MULTICAST_RATE_VALID	0x10000
+#define IF_WIFI_CONFIG_SCAN_COUNT_VALID		0x20000
+#define IF_WIFI_CONFIG_SCAN_DURATION_VALID	0x40000
+	u_int32_t link_quality_metric; /* link quality metric */
+	u_int32_t ul_effective_bandwidth; /* Measured uplink bandwidth based on current activity (bps) */
+	u_int32_t ul_max_bandwidth; /* Maximum supported uplink bandwidth (bps) */
+	u_int32_t ul_min_latency; /* min expected uplink latency for first hop (ms) */
+	u_int32_t ul_effective_latency; /* current expected uplink latency for first hop (ms) */
+	u_int32_t ul_max_latency; /* max expected uplink latency for first hop (ms) */
+	u_int32_t ul_retxt_level; /* Retransmission metric */
+#define IF_WIFI_UL_RETXT_LEVEL_NONE	1
+#define IF_WIFI_UL_RETXT_LEVEL_LOW	2
+#define IF_WIFI_UL_RETXT_LEVEL_MEDIUM	3
+#define IF_WIFI_UL_RETXT_LEVEL_HIGH	4
+	u_int32_t ul_bytes_lost; /* % of total bytes lost on uplink in Q10 format */
+	u_int32_t ul_error_rate; /* % of bytes dropped on uplink after many retransmissions in Q10 format */
+	u_int32_t dl_effective_bandwidth; /* Measured downlink bandwidth based on current activity (bps) */
+	u_int32_t dl_max_bandwidth; /* Maximum supported downlink bandwidth (bps) */
+	/*
+	 * The download latency values indicate the time AP may have to wait for the
+	 * driver to receive the packet. These values give the range of expected latency
+	 * mainly due to co-existence events and channel hopping where the interface
+	 * becomes unavailable.
+	 */
+	u_int32_t dl_min_latency; /* min expected latency for first hop in ms */
+	u_int32_t dl_effective_latency; /* current expected latency for first hop in ms */
+	u_int32_t dl_max_latency; /* max expected latency for first hop in ms */
+	u_int32_t dl_error_rate; /* % of CRC or other errors in Q10 format */
+	u_int32_t config_frequency; /* 2.4 or 5 GHz */
+#define IF_WIFI_CONFIG_FREQUENCY_2_4_GHZ	1
+#define IF_WIFI_CONFIG_FREQUENCY_5_0_GHZ	2
+	u_int32_t config_multicast_rate; /* bps */
+	u_int32_t scan_count; /* scan count during the previous period */
+	u_int32_t scan_duration; /* scan duration in ms */
+	u_int64_t reserved_1;
+	u_int64_t reserved_2;
+	u_int64_t reserved_3;
+	u_int64_t reserved_4;
+} __attribute__((packed));
+
+struct if_wifi_status {
+	union {
+		struct if_wifi_status_v1 if_status_v1;
+	} if_wifi_u;
+};
+
+struct if_link_status {
+	u_int32_t	ifsr_version;	/* version of this report */
+	u_int32_t	ifsr_len;	/* length of the following struct */
+	union {
+		struct if_cellular_status ifsr_cell;
+		struct if_wifi_status ifsr_wifi;
+	} ifsr_u;
+};
+
+struct if_interface_state {
+	/*
+	 * The bitmask tells which of the fields
+	 * to consider:
+	 * - When setting, to control which fields
+	 *   are being modified;
+	 * - When getting, it tells which fields are set.
+	 */
+	u_int8_t valid_bitmask;
+#define	IF_INTERFACE_STATE_RRC_STATE_VALID		0x1
+#define	IF_INTERFACE_STATE_LQM_STATE_VALID		0x2
+#define	IF_INTERFACE_STATE_INTERFACE_AVAILABILITY_VALID	0x4
+
+	/*
+	 * Valid only for cellular interface
+	 */
+	u_int8_t rrc_state;
+#define	IF_INTERFACE_STATE_RRC_STATE_IDLE	0x0
+#define	IF_INTERFACE_STATE_RRC_STATE_CONNECTED	0x1
+
+	/*
+	 * Values normalized to the edge of the following values
+	 * that are defined on <net/if.h>:
+	 *  IFNET_LQM_THRESH_BAD
+	 *  IFNET_LQM_THRESH_POOR
+	 *  IFNET_LQM_THRESH_GOOD
+	 */
+	int8_t lqm_state;
+
+	/*
+	 * Indicate if the underlying link is currently
+	 * available
+	 */
+	u_int8_t interface_availability;
+#define	IF_INTERFACE_STATE_INTERFACE_AVAILABLE		0x0
+#define	IF_INTERFACE_STATE_INTERFACE_UNAVAILABLE	0x1
+};
+
+struct chain_len_stats {
+	uint64_t	cls_one;
+	uint64_t	cls_two;
+	uint64_t	cls_three;
+	uint64_t	cls_four;
+	uint64_t	cls_five_or_more;
+};
+
 #endif /* PRIVATE */
 
 #pragma pack()
@@ -349,7 +610,7 @@ struct if_data_internal {
 	u_int32_t	ifi_mtu;	/* maximum transmission unit */
 	u_int32_t	ifi_metric;	/* routing metric (external only) */
 	u_int32_t	ifi_baudrate;	/* linespeed */
-	u_int32_t	_pad;
+	u_int32_t	ifi_preamblelen;/* length of the packet preamble */
 	/* volatile statistics */
 	u_int64_t	ifi_ipackets;	/* packets received on interface */
 	u_int64_t	ifi_ierrors;	/* input errors on interface */
@@ -365,17 +626,19 @@ struct if_data_internal {
 	u_int32_t	ifi_recvtiming;	/* usec spent receiving when timing */
 	u_int32_t	ifi_xmittiming;	/* usec spent xmitting when timing */
 	u_int64_t	ifi_alignerrs;	/* unaligned (32-bit) input pkts */
-#define IF_LASTCHANGEUPTIME	1	/* lastchange: 1-uptime 0-calendar time */
+	u_int64_t	ifi_dt_bytes;	/* Data threshold counter */
+	u_int64_t	ifi_fpackets;	/* forwarded packets on interface */
+	u_int64_t	ifi_fbytes;	/* forwarded bytes on interface */
 	struct	timeval ifi_lastchange;	/* time of last administrative change */
 	u_int32_t	ifi_hwassist;	/* HW offload capabilities */
 	u_int32_t	ifi_tso_v4_mtu;	/* TCP Segment Offload IPv4 maximum segment size */
 	u_int32_t	ifi_tso_v6_mtu;	/* TCP Segment Offload IPv6 maximum segment size */
 };
 
+#if MEASURE_BW
 /*
  * Fields per interface to measure perceived bandwidth.
  */
-
 struct if_measured_bw {
 	u_int64_t	bw;		/* measured bandwidth in bytes per ms */
 	u_int64_t	bytes;		/* XXX not needed */
@@ -389,7 +652,7 @@ struct if_measured_bw {
 #define IF_MEASURED_BW_INPROGRESS 0x1
 #define IF_MEASURED_BW_CALCULATION 0x2
 };
-
+#endif /* MEASURE_BW */
 #endif /* BSD_KERNEL_PRIVATE */
 
 #ifdef PRIVATE
@@ -399,6 +662,7 @@ struct if_measured_bw {
 #define if_physical	if_data.ifi_physical
 #define	if_addrlen	if_data.ifi_addrlen
 #define	if_hdrlen	if_data.ifi_hdrlen
+#define	if_preamblelen	if_data.ifi_preamblelen
 #define	if_metric	if_data.ifi_metric
 #define	if_baudrate	if_data.ifi_baudrate
 #define	if_hwassist	if_data.ifi_hwassist
@@ -421,6 +685,9 @@ struct if_measured_bw {
 #define	if_tso_v4_mtu	if_data.ifi_tso_v4_mtu
 #define	if_tso_v6_mtu	if_data.ifi_tso_v6_mtu
 #define	if_alignerrs	if_data.ifi_alignerrs
+#define	if_dt_bytes	if_data.ifi_dt_bytes
+#define	if_fpackets	if_data.ifi_fpackets
+#define	if_fbytes	if_data.ifi_fbytes
 #endif /* BSD_KERNEL_PRIVATE */
 
 #ifdef BSD_KERNEL_PRIVATE
@@ -445,7 +712,6 @@ struct pfi_kif;
 /* we use TAILQs so that the order of instantiation is preserved in the list */
 TAILQ_HEAD(ifnethead, ifnet);
 TAILQ_HEAD(ifaddrhead, ifaddr);
-TAILQ_HEAD(ifprefixhead, ifprefix);
 LIST_HEAD(ifmultihead, ifmultiaddr);
 TAILQ_HEAD(tailq_head, tqdummy);
 TAILQ_HEAD(ifnet_filter_head, ifnet_filter);
@@ -470,7 +736,7 @@ TAILQ_HEAD(ddesc_head_name, dlil_demux_desc);
 #define IF_HWASSIST_CSUM_TCPIPV6	0x0020	/* will csum TCPv6, IFNET_CSUM_TCPIPV6 */
 #define IF_HWASSIST_CSUM_UDPIPV6	0x0040	/* will csum UDPv6, IFNET_CSUM_UDP */
 #define IF_HWASSIST_CSUM_FRAGMENT_IPV6	0x0080	/* will do IPv6 fragmentation, IFNET_IPV6_FRAGMENT */
-#define IF_HWASSIST_CSUM_TCP_SUM16	0x1000	/* simple TCP Sum16 computation, IFNET_CSUM_SUM16 */
+#define IF_HWASSIST_CSUM_PARTIAL	0x1000	/* simple Sum16 computation, IFNET_CSUM_PARTIAL */
 #define IF_HWASSIST_CSUM_MASK		0xffff
 #define IF_HWASSIST_CSUM_FLAGS(hwassist)	((hwassist) & IF_HWASSIST_CSUM_MASK)
 
@@ -484,16 +750,24 @@ TAILQ_HEAD(ddesc_head_name, dlil_demux_desc);
 #define IF_HWASSIST_TSO_V6		0x00400000	/* will do TCP Segment offload for IPv6, IFNET_TSO_IPV6 */
 #endif /* PRIVATE */
 
+#ifdef PRIVATE
+#define	IFXNAMSIZ	(IFNAMSIZ + 8)	/* external name (name + unit) */
+#endif
+
 #ifdef BSD_KERNEL_PRIVATE
 /*
  * ifnet is private to BSD portion of kernel
  */
+#include <sys/mcache.h>
 #include <sys/tree.h>
 #include <netinet/in.h>
+#include <net/if_dl.h>
 #include <net/classq/if_classq.h>
+#include <net/if_types.h>
 
 RB_HEAD(ll_reach_tree, if_llreach);	/* define struct ll_reach_tree */
 
+#define	if_name(ifp)	ifp->if_xname
 /*
  * Structure defining a network interface.
  *
@@ -506,18 +780,22 @@ struct ifnet {
 	decl_lck_rw_data(, if_lock);
 	void		*if_softc;	/* pointer to driver state */
 	const char	*if_name;	/* name, e.g. ``en'' or ``lo'' */
+	const char	*if_xname;	/* external name (name + unit) */
 	struct if_description if_desc;	/* extended description */
 	TAILQ_ENTRY(ifnet) if_link;	/* all struct ifnets are chained */
 	TAILQ_ENTRY(ifnet) if_detaching_link; /* list of detaching ifnets */
+	TAILQ_ENTRY(ifnet) if_ordered_link;	/* list of ordered ifnets */
 
 	decl_lck_mtx_data(, if_ref_lock)
-	u_int32_t	if_refflags;
+	u_int32_t	if_refflags;	/* see IFRF flags below */
 	u_int32_t	if_refio;	/* number of io ops to the underlying driver */
 
 #define	if_list		if_link
 	struct ifaddrhead if_addrhead;	/* linked list of addresses per if */
 #define	if_addrlist	if_addrhead
 	struct ifaddr	*if_lladdr;	/* link address (first/permanent) */
+
+	u_int32_t	if_qosmarking_mode;	/* generation to use with NECP clients */
 
 	int		if_pcount;	/* number of promiscuous listeners */
 	struct bpf_if	*if_bpf;	/* packet filter structure */
@@ -526,6 +804,7 @@ struct ifnet {
 	short		if_timer;	/* time 'til if_watchdog called */
 	short		if_flags;	/* up/down, broadcast, etc. */
 	u_int32_t	if_eflags;	/* see <net/if.h> */
+	u_int32_t	if_xflags;	/* see <net/if.h> */
 
 	int		if_capabilities;	/* interface features & capabilities */
 	int		if_capenable;		/* enabled features & capabilities */
@@ -536,11 +815,14 @@ struct ifnet {
 	struct if_data_internal if_data __attribute__((aligned(8)));
 
 	ifnet_family_t		if_family;	/* value assigned by Apple */
+	ifnet_subfamily_t	if_subfamily;	/* value assigned by Apple */
 	uintptr_t		if_family_cookie;
+	ifnet_output_handler_func if_output_handler;
 	ifnet_output_func	if_output;
 	ifnet_pre_enqueue_func	if_pre_enqueue;
 	ifnet_start_func	if_start;
 	ifnet_ctl_func		if_output_ctl;
+	ifnet_input_handler_func if_input_handler;
 	ifnet_input_poll_func	if_input_poll;
 	ifnet_ctl_func		if_input_ctl;
 	ifnet_ioctl_func	if_ioctl;
@@ -548,16 +830,26 @@ struct ifnet {
 	ifnet_detached_func	if_free;
 	ifnet_demux_func	if_demux;
 	ifnet_event_func	if_event;
-	ifnet_framer_func	if_framer;
+	ifnet_framer_func	if_framer_legacy;
+	ifnet_framer_extended_func if_framer;
 	ifnet_add_proto_func	if_add_proto;
 	ifnet_del_proto_func	if_del_proto;
 	ifnet_check_multi	if_check_multi;
 	struct proto_hash_entry	*if_proto_hash;
 	void			*if_kpi_storage;
 
+	u_int32_t		if_flowhash;	/* interface flow control ID */
+
 	decl_lck_mtx_data(, if_start_lock);
+	u_int32_t		if_start_flags;	/* see IFSF flags below */
 	u_int32_t		if_start_req;
-	u_int32_t		if_start_active; /* output is active */
+	u_int16_t		if_start_active; /* output is active */
+	u_int16_t		if_start_delayed;
+	u_int16_t		if_start_delay_qlen;
+	u_int16_t		if_start_delay_idle;
+	u_int64_t		if_start_delay_swin;
+	u_int32_t		if_start_delay_cnt;
+	u_int32_t		if_start_delay_timeout;	/* nanoseconds */
 	struct timespec		if_start_cycle;	 /* restart interval */
 	struct thread		*if_start_thread;
 
@@ -566,6 +858,9 @@ struct ifnet {
 
 	struct if_bandwidths	if_output_bw;
 	struct if_bandwidths	if_input_bw;
+
+	struct if_latencies	if_output_lt;
+	struct if_latencies	if_input_lt;
 
 	decl_lck_mtx_data(, if_flt_lock)
 	u_int32_t		if_flt_busy;
@@ -587,7 +882,6 @@ struct ifnet {
 
 	struct dlil_threading_info *if_inp;
 
-	struct	ifprefixhead	if_prefixhead;	/* list of prefixes per if */
 	struct {
 		u_int32_t	length;
 		union {
@@ -599,7 +893,6 @@ struct ifnet {
 	struct label		*if_label;	/* interface MAC label */
 #endif
 
-	u_int32_t		if_wake_properties;
 #if PF
 	struct pfi_kif		*if_pf_kif;
 #endif /* PF */
@@ -620,6 +913,7 @@ struct ifnet {
 	u_int32_t		if_idle_new_flags; /* temporary idle flags */
 	u_int32_t		if_idle_new_flags_mask; /* temporary mask */
 	u_int32_t		if_route_refcnt; /* idle: route ref count */
+	u_int32_t		if_rt_sendts;	/* last of a real time packet */
 
 	struct if_traffic_class if_tc __attribute__((aligned(8)));
 #if INET
@@ -629,17 +923,77 @@ struct ifnet {
 	struct mld_ifinfo	*if_mli;	/* for MLDv2 */
 #endif /* INET6 */
 
-	int			if_lqm;		/* link quality metric */
+#if MEASURE_BW
 	struct if_measured_bw	if_bw;
+#endif /* MEASURE_BW */
 	struct tcpstat_local	*if_tcp_stat;	/* TCP specific stats */
 	struct udpstat_local	*if_udp_stat;	/* UDP specific stats */
+
+	struct {
+		int32_t		level;		/* cached logging level */
+		u_int32_t	flags;		/* cached logging flags */
+		int32_t		category;	/* cached category */
+		int32_t		subcategory;	/* cached subcategory */
+	} if_log;
+
+	struct {
+		struct ifnet	*ifp;		/* delegated ifp */
+		u_int32_t	type;		/* delegated i/f type */
+		u_int32_t	family;		/* delegated i/f family */
+		u_int32_t	subfamily;	/* delegated i/f sub-family */
+		uint32_t	expensive:1;	/* delegated i/f expensive? */
+	} if_delegated;
+
+	uuid_t			*if_agentids;	/* network agents attached to interface */
+	u_int32_t		if_agentcount;
+
+	u_int32_t		if_generation;	/* generation to use with NECP clients */
+	u_int32_t		if_fg_sendts;	/* last send on a fg socket in seconds */
+
+	u_int64_t		if_data_threshold;
+
+	/* Total bytes in send socket buffer */
+	int64_t			if_sndbyte_total __attribute__ ((aligned(8)));
+	/* Total unsent bytes in send socket buffer */
+	int64_t			if_sndbyte_unsent __attribute__ ((aligned(8)));
+	/* count of times, when there was data to send when sleep is impending */
+	uint32_t		if_unsent_data_cnt;
+
+#if INET
+	decl_lck_rw_data(, if_inetdata_lock);
+	void			*if_inetdata;
+#endif /* INET */
+#if INET6
+	decl_lck_rw_data(, if_inet6data_lock);
+	void			*if_inet6data;
+#endif
+	decl_lck_rw_data(, if_link_status_lock);
+	struct if_link_status	*if_link_status;
+	struct if_interface_state	if_interface_state;
+	struct if_tcp_ecn_stat *if_ipv4_stat;
+	struct if_tcp_ecn_stat *if_ipv6_stat;
 };
 
+#define	IF_TCP_STATINC(_ifp, _s) do {					\
+	if ((_ifp)->if_tcp_stat != NULL)				\
+		atomic_add_64(&(_ifp)->if_tcp_stat->_s, 1);		\
+} while (0);
+
+#define	IF_UDP_STATINC(_ifp, _s) do {					\
+	if ((_ifp)->if_udp_stat != NULL)				\
+		atomic_add_64(&(_ifp)->if_udp_stat->_s, 1);		\
+} while (0);
+
 /*
- * Valid values for if_useflags
+ * Valid values for if_refflags
  */
 #define	IFRF_ATTACHED	0x1	/* ifnet attach is completely done */
 #define	IFRF_DETACHING	0x2	/* detach has been requested */
+
+/*
+ * Valid values for if_start_flags
+ */
+#define	IFSF_FLOW_CONTROLLED	0x1	/* flow controlled */
 
 /*
  * Structure describing a `cloning' interface.
@@ -760,6 +1114,7 @@ struct ifaddr {
 	void (*ifa_detached)(struct ifaddr *); /* callback fn for detaching */
 };
 
+
 /*
  * Valid values for ifa_flags
  */
@@ -809,20 +1164,6 @@ struct ifaddr {
 
 #define	IFA_REMREF_LOCKED(_ifa)						\
 	ifa_remref(_ifa, 1)
-
-/*
- * The prefix structure contains information about one prefix
- * of an interface.  They are maintained by the different address families,
- * are allocated and attached when an prefix or an address is set,
- * and are linked together so all prefixes for an interface can be located.
- */
-struct ifprefix {
-	struct	sockaddr *ifpr_prefix;	/* prefix of interface */
-	struct	ifnet *ifpr_ifp;	/* back-pointer to interface */
-	TAILQ_ENTRY(ifprefix) ifpr_list; /* queue macro glue */
-	u_char	ifpr_plen;		/* prefix length in bits */
-	u_char	ifpr_type;		/* protocol dependent prefix type */
-};
 
 /*
  * Multicast address structure.  This is analogous to the ifaddr
@@ -881,16 +1222,106 @@ struct ifmultiaddr {
 #define	IFMA_REMREF(_ifma)						\
 	ifma_remref(_ifma)
 
-__private_extern__ struct ifnethead ifnet_head;
-__private_extern__ struct ifnet **ifindex2ifnet;
-__private_extern__ u_int32_t if_sndq_maxlen;
-__private_extern__ u_int32_t if_rcvq_maxlen;
-__private_extern__ int if_index;
-__private_extern__ struct ifaddr **ifnet_addrs;
-__private_extern__ lck_attr_t *ifa_mtx_attr;
-__private_extern__ lck_grp_t *ifa_mtx_grp;
-__private_extern__ lck_grp_t *ifnet_lock_group;
-__private_extern__ lck_attr_t *ifnet_lock_attr;
+/*
+ * Indicate whether or not the immediate interface, or the interface delegated
+ * by it, is a cellular interface (IFT_CELLULAR).  Delegated interface type is
+ * set/cleared along with the delegated ifp; we cache the type for performance
+ * to avoid dereferencing delegated ifp each time.
+ *
+ * Note that this is meant to be used only for accounting and policy purposes;
+ * certain places need to explicitly know the immediate interface type, and
+ * this macro should not be used there.
+ *
+ * The test is done against IFT_CELLULAR instead of IFNET_FAMILY_CELLULAR to
+ * handle certain cases where the family isn't set to the latter.
+ */
+#define	IFNET_IS_CELLULAR(_ifp)						\
+	((_ifp)->if_type == IFT_CELLULAR ||				\
+	(_ifp)->if_delegated.type == IFT_CELLULAR)
+
+/*
+ * Indicate whether or not the immediate interface, or the interface delegated
+ * by it, is an ETHERNET interface.
+ */
+#define	IFNET_IS_ETHERNET(_ifp)						\
+	((_ifp)->if_family == IFNET_FAMILY_ETHERNET ||			\
+	(_ifp)->if_delegated.family == IFNET_FAMILY_ETHERNET)
+/*
+ * Indicate whether or not the immediate interface, or the interface delegated
+ * by it, is a Wi-Fi interface (IFNET_SUBFAMILY_WIFI).  Delegated interface
+ * subfamily is set/cleared along with the delegated ifp; we cache the subfamily
+ * for performance to avoid dereferencing delegated ifp each time.
+ *
+ * Note that this is meant to be used only for accounting and policy purposes;
+ * certain places need to explicitly know the immediate interface type, and
+ * this macro should not be used there.
+ *
+ * The test is done against IFNET_SUBFAMILY_WIFI as the family may be set to
+ * IFNET_FAMILY_ETHERNET (as well as type to IFT_ETHER) which is too generic.
+ */
+#define	IFNET_IS_WIFI(_ifp)						\
+	((_ifp)->if_subfamily == IFNET_SUBFAMILY_WIFI ||		\
+	(_ifp)->if_delegated.subfamily == IFNET_SUBFAMILY_WIFI)
+
+/*
+ * Indicate whether or not the immediate interface, or the interface delegated
+ * by it, is a Wired interface (several families).  Delegated interface
+ * family is set/cleared along with the delegated ifp; we cache the family
+ * for performance to avoid dereferencing delegated ifp each time.
+ *
+ * Note that this is meant to be used only for accounting and policy purposes;
+ * certain places need to explicitly know the immediate interface type, and
+ * this macro should not be used there.
+ */
+#define	IFNET_IS_WIRED(_ifp)						\
+	((_ifp)->if_family == IFNET_FAMILY_ETHERNET ||			\
+	(_ifp)->if_delegated.family == IFNET_FAMILY_ETHERNET ||		\
+	(_ifp)->if_family == IFNET_FAMILY_FIREWIRE ||			\
+	(_ifp)->if_delegated.family == IFNET_FAMILY_FIREWIRE)
+
+/*
+ * Indicate whether or not the immediate WiFi interface is on an infrastructure
+ * network
+ */
+#define	IFNET_IS_WIFI_INFRA(_ifp)				\
+	((_ifp)->if_family == IFNET_FAMILY_ETHERNET &&		\
+	(_ifp)->if_subfamily == IFNET_SUBFAMILY_WIFI &&		\
+	!((_ifp)->if_eflags & IFEF_AWDL))
+
+/*
+ * Indicate whether or not the immediate interface, or the interface delegated
+ * by it, is marked as expensive.  The delegated interface is set/cleared
+ * along with the delegated ifp; we cache the flag for performance to avoid
+ * dereferencing delegated ifp each time.
+ *
+ * Note that this is meant to be used only for policy purposes.
+ */
+#define	IFNET_IS_EXPENSIVE(_ifp)					\
+	((_ifp)->if_eflags & IFEF_EXPENSIVE ||				\
+	(_ifp)->if_delegated.expensive)
+
+/*
+ * We don't support AWDL interface delegation.
+ */
+#define	IFNET_IS_AWDL_RESTRICTED(_ifp)					\
+	(((_ifp)->if_eflags & (IFEF_AWDL|IFEF_AWDL_RESTRICTED)) == 	\
+	    (IFEF_AWDL|IFEF_AWDL_RESTRICTED))
+
+#define	IFNET_IS_INTCOPROC(_ifp)					\
+	((_ifp)->if_family == IFNET_FAMILY_ETHERNET &&			\
+	 (_ifp)->if_subfamily == IFNET_SUBFAMILY_INTCOPROC)
+
+extern struct ifnethead ifnet_head;
+extern struct ifnethead ifnet_ordered_head;
+extern struct ifnet **ifindex2ifnet;
+extern u_int32_t if_sndq_maxlen;
+extern u_int32_t if_rcvq_maxlen;
+extern int if_index;
+extern struct ifaddr **ifnet_addrs;
+extern lck_attr_t *ifa_mtx_attr;
+extern lck_grp_t *ifa_mtx_grp;
+extern lck_grp_t *ifnet_lock_group;
+extern lck_attr_t *ifnet_lock_attr;
 extern ifnet_t lo_ifp;
 extern uint32_t if_bw_measure_size;
 extern u_int32_t if_bw_smoothing_val;
@@ -910,6 +1341,8 @@ __private_extern__ void if_updown(struct ifnet *ifp, int up);
 extern int ifioctl(struct socket *, u_long, caddr_t, struct proc *);
 extern int ifioctllocked(struct socket *, u_long, caddr_t, struct proc *);
 extern struct ifnet *ifunit(const char *);
+extern struct ifnet *ifunit_ref(const char *);
+extern int ifunit_extract(const char *src, char *dst, size_t dstlen, int *unit);
 extern struct ifnet *if_withname(struct sockaddr *);
 extern void if_qflush(struct ifnet *, int);
 extern void if_qflush_sc(struct ifnet *, mbuf_svc_class_t, u_int32_t,
@@ -918,6 +1351,8 @@ extern void if_qflush_sc(struct ifnet *, mbuf_svc_class_t, u_int32_t,
 extern struct if_clone *if_clone_lookup(const char *, u_int32_t *);
 extern int if_clone_attach(struct if_clone *);
 extern void if_clone_detach(struct if_clone *);
+
+extern u_int32_t if_functional_type(struct ifnet *, bool);
 
 extern errno_t if_mcasts_update(struct ifnet *);
 
@@ -928,18 +1363,35 @@ typedef enum {
 	IFNET_LCK_ASSERT_NOTOWNED	/* not held */
 } ifnet_lock_assert_t;
 
+#define	IF_LLADDR(_ifp)	\
+	(LLADDR(SDL(((_ifp)->if_lladdr)->ifa_addr)))
+
 __private_extern__ void ifnet_lock_assert(struct ifnet *, ifnet_lock_assert_t);
 __private_extern__ void ifnet_lock_shared(struct ifnet *ifp);
 __private_extern__ void ifnet_lock_exclusive(struct ifnet *ifp);
 __private_extern__ void ifnet_lock_done(struct ifnet *ifp);
 
+#if INET
+__private_extern__ void if_inetdata_lock_shared(struct ifnet *ifp);
+__private_extern__ void if_inetdata_lock_exclusive(struct ifnet *ifp);
+__private_extern__ void if_inetdata_lock_done(struct ifnet *ifp);
+#endif
+
+#if INET6
+__private_extern__ void if_inet6data_lock_shared(struct ifnet *ifp);
+__private_extern__ void if_inet6data_lock_exclusive(struct ifnet *ifp);
+__private_extern__ void if_inet6data_lock_done(struct ifnet *ifp);
+#endif
+
 __private_extern__ void	ifnet_head_lock_shared(void);
 __private_extern__ void	ifnet_head_lock_exclusive(void);
 __private_extern__ void	ifnet_head_done(void);
+__private_extern__ void	ifnet_head_assert_exclusive(void);
 
 __private_extern__ errno_t ifnet_set_idle_flags_locked(ifnet_t, u_int32_t,
     u_int32_t);
 __private_extern__ int ifnet_is_attached(struct ifnet *, int refio);
+__private_extern__ void ifnet_incr_iorefcnt(struct ifnet *);
 __private_extern__ void ifnet_decr_iorefcnt(struct ifnet *);
 __private_extern__ void ifnet_set_start_cycle(struct ifnet *,
     struct timespec *);
@@ -956,7 +1408,10 @@ __private_extern__ void dlil_if_unlock(void);
 __private_extern__ void dlil_if_lock_assert(void);
 
 extern struct ifaddr *ifa_ifwithaddr(const struct sockaddr *);
+extern struct ifaddr *ifa_ifwithaddr_locked(const struct sockaddr *);
 extern struct ifaddr *ifa_ifwithaddr_scoped(const struct sockaddr *,
+    unsigned int);
+extern struct ifaddr *ifa_ifwithaddr_scoped_locked(const struct sockaddr *,
     unsigned int);
 extern struct ifaddr *ifa_ifwithdstaddr(const struct sockaddr *);
 extern struct ifaddr *ifa_ifwithnet(const struct sockaddr *);
@@ -983,15 +1438,17 @@ __private_extern__ struct in_ifaddr *ifa_foraddr(unsigned int);
 __private_extern__ struct in_ifaddr *ifa_foraddr_scoped(unsigned int,
     unsigned int);
 
-extern void ifnet_fclist_append(struct sfb *sp, struct sfb_fc_list *fcl);
-extern struct sfb_bin_fcentry* ifnet_fce_alloc(int how);
-extern void ifnet_fce_free(struct sfb_bin_fcentry *);
-
 struct ifreq;
 extern errno_t ifnet_getset_opportunistic(struct ifnet *, u_long,
     struct ifreq *, struct proc *);
 extern int ifnet_get_throttle(struct ifnet *, u_int32_t *);
 extern int ifnet_set_throttle(struct ifnet *, u_int32_t);
+extern errno_t ifnet_getset_log(struct ifnet *, u_long,
+    struct ifreq *, struct proc *);
+extern int ifnet_set_log(struct ifnet *, int32_t, uint32_t, int32_t, int32_t);
+extern int ifnet_get_log(struct ifnet *, int32_t *, uint32_t *, int32_t *,
+    int32_t *);
+extern int ifnet_notify_address(struct ifnet *, int);
 
 #if INET6
 struct in6_addr;
@@ -1020,9 +1477,17 @@ __private_extern__ struct rtentry *ifnet_cached_rtlookup_inet6(struct ifnet *,
     struct in6_addr *);
 #endif /* INET6 */
 
-__private_extern__ void if_lqm_update(struct ifnet *, int32_t);
+__private_extern__ errno_t if_state_update(struct ifnet *,
+    struct if_interface_state *);
+__private_extern__ void if_get_state(struct ifnet *,
+    struct if_interface_state *);
+__private_extern__ errno_t if_probe_connectivity(struct ifnet *ifp,
+    u_int32_t conn_probe);
+__private_extern__ void if_lqm_update(struct ifnet *, int32_t, int);
 __private_extern__ void ifnet_update_sndq(struct ifclassq *, cqev_t);
 __private_extern__ void ifnet_update_rcv(struct ifnet *, cqev_t);
+
+__private_extern__ void ifnet_flowadv(uint32_t);
 
 __private_extern__ errno_t ifnet_set_input_bandwidths(struct ifnet *,
     struct if_bandwidths *);
@@ -1030,6 +1495,30 @@ __private_extern__ errno_t ifnet_set_output_bandwidths(struct ifnet *,
     struct if_bandwidths *, boolean_t);
 __private_extern__ u_int64_t ifnet_output_linkrate(struct ifnet *);
 __private_extern__ u_int64_t ifnet_input_linkrate(struct ifnet *);
+
+__private_extern__ errno_t ifnet_set_input_latencies(struct ifnet *,
+    struct if_latencies *);
+__private_extern__ errno_t ifnet_set_output_latencies(struct ifnet *,
+    struct if_latencies *, boolean_t);
+
+__private_extern__ void ifnet_clear_netagent(uuid_t);
+
+__private_extern__ int ifnet_set_netsignature(struct ifnet *, uint8_t,
+    uint8_t, uint16_t, uint8_t *);
+__private_extern__ int ifnet_get_netsignature(struct ifnet *, uint8_t,
+    uint8_t *, uint16_t *, uint8_t *);
+
+/* Required exclusive ifnet_head lock */
+__private_extern__ void ifnet_remove_from_ordered_list(struct ifnet *);
+
+__private_extern__ void ifnet_increment_generation(struct ifnet *);
+__private_extern__ u_int32_t ifnet_get_generation(struct ifnet *);
+
+extern int if_set_qosmarking_mode(struct ifnet *, u_int32_t);
+
+__private_extern__ errno_t ifnet_framer_stub(struct ifnet *, struct mbuf **,
+    const struct sockaddr *, const char *, const char *, u_int32_t *,
+    u_int32_t *);
 #endif /* BSD_KERNEL_PRIVATE */
 #ifdef XNU_KERNEL_PRIVATE
 /* for uuid.c */

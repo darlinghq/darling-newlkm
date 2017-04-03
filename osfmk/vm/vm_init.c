@@ -68,6 +68,7 @@
 #include <kern/zalloc.h>
 #include <kern/kalloc.h>
 #include <kern/kext_alloc.h>
+#include <sys/kdebug.h>
 #include <vm/vm_object.h>
 #include <vm/vm_map.h>
 #include <vm/vm_page.h>
@@ -90,10 +91,19 @@ const vm_offset_t vm_max_kernel_address = VM_MAX_KERNEL_ADDRESS;
 
 boolean_t vm_kernel_ready = FALSE;
 boolean_t kmem_ready = FALSE;
+boolean_t kmem_alloc_ready = FALSE;
 boolean_t zlog_ready = FALSE;
 
 vm_offset_t kmapoff_kaddr;
 unsigned int kmapoff_pgcnt;
+
+
+static inline void
+vm_mem_bootstrap_log(const char *message)
+{
+//	kprintf("vm_mem_bootstrap: %s\n", message);
+	kernel_debug_string_early(message);
+}
 
 /*
  *	vm_mem_bootstrap initializes the virtual memory system.
@@ -112,27 +122,25 @@ vm_mem_bootstrap(void)
 	 *	From here on, all physical memory is accounted for,
 	 *	and we use only virtual addresses.
 	 */
-#define vm_mem_bootstrap_kprintf(x) /* kprintf(x) */
-
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling vm_page_bootstrap\n"));
+	vm_mem_bootstrap_log("vm_page_bootstrap");
 	vm_page_bootstrap(&start, &end);
 
 	/*
 	 *	Initialize other VM packages
 	 */
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling zone_bootstrap\n"));
+	vm_mem_bootstrap_log("zone_bootstrap");
 	zone_bootstrap();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling vm_object_bootstrap\n"));
+	vm_mem_bootstrap_log("vm_object_bootstrap");
 	vm_object_bootstrap();
 
 	vm_kernel_ready = TRUE;
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling vm_map_init\n"));
+	vm_mem_bootstrap_log("vm_map_init");
 	vm_map_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling kmem_init\n"));
+	vm_mem_bootstrap_log("kmem_init");
 	kmem_init(start, end);
 	kmem_ready = TRUE;
 	/*
@@ -146,13 +154,14 @@ vm_mem_bootstrap(void)
 
 	if (kmapoff_pgcnt > 0 &&
 	    vm_allocate(kernel_map, &kmapoff_kaddr,
-	    kmapoff_pgcnt * PAGE_SIZE_64, VM_FLAGS_ANYWHERE) != KERN_SUCCESS)
+	    kmapoff_pgcnt * PAGE_SIZE_64, VM_FLAGS_ANYWHERE | VM_MAKE_TAG(VM_KERN_MEMORY_OSFMK)) != KERN_SUCCESS)
 		panic("cannot vm_allocate %u kernel_map pages", kmapoff_pgcnt);
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling pmap_init\n"));
+
+	vm_mem_bootstrap_log("pmap_init");
 	pmap_init();
 	
-	zlog_ready = TRUE;
+	kmem_alloc_ready = TRUE;
 
 	if (PE_parse_boot_argn("zsize", &zsizearg, sizeof (zsizearg)))
 		zsize = zsizearg * 1024ULL * 1024ULL;
@@ -172,10 +181,10 @@ vm_mem_bootstrap(void)
 		zsize = ZONE_MAP_MAX;	/* Clamp to 1.5GB max for K32 */
 #endif /* !__LP64__ */
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling kext_alloc_init\n"));
+	vm_mem_bootstrap_log("kext_alloc_init");
 	kext_alloc_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling zone_init\n"));
+	vm_mem_bootstrap_log("zone_init");
 	assert((vm_size_t) zsize == zsize);
 	zone_init((vm_size_t) zsize);	/* Allocate address space for zones */
 
@@ -185,27 +194,27 @@ vm_mem_bootstrap(void)
 	 * page allocations (which are used for guard pages by the guard
 	 * mode zone allocator).
 	 */
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling vm_page_module_init\n"));
+	vm_mem_bootstrap_log("vm_page_module_init");
 	vm_page_module_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling kalloc_init\n"));
+	vm_mem_bootstrap_log("kalloc_init");
 	kalloc_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling vm_fault_init\n"));
+	vm_mem_bootstrap_log("vm_fault_init");
 	vm_fault_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling memory_manager_default_init\n"));
+	vm_mem_bootstrap_log("memory_manager_default_init");
 	memory_manager_default_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling memory_object_control_bootstrap\n"));
+	vm_mem_bootstrap_log("memory_object_control_bootstrap");
 	memory_object_control_bootstrap();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: calling device_pager_bootstrap\n"));
+	vm_mem_bootstrap_log("device_pager_bootstrap");
 	device_pager_bootstrap();
 
 	vm_paging_map_init();
 
-	vm_mem_bootstrap_kprintf(("vm_mem_bootstrap: done\n"));
+	vm_mem_bootstrap_log("vm_mem_bootstrap done");
 }
 
 void

@@ -101,6 +101,7 @@ struct radix_node {
 	struct radix_node *rn_twin;
 	struct radix_node *rn_ybro;
 #endif
+
 };
 
 #define	rn_dupedkey	rn_u.rn_leaf.rn_Dupedkey
@@ -195,7 +196,7 @@ struct radix_node_head {
 #define R_Free(p) FREE((caddr_t)p, M_RTABLE);
 #endif /*KERNEL*/
 
-void	 rn_init(void) __attribute__((section("__TEXT, initcode")));
+void	 rn_init(void);
 int	 rn_inithead(void **, int);
 int	 rn_refines(void *, void *);
 struct radix_node

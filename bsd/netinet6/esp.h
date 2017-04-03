@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -95,7 +95,7 @@ struct esptail {
 	/*variable size, 32bit bound*/	/* Authentication data (new IPsec)*/
 };
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 struct secasvar;
 
 struct esp_algorithm {
@@ -117,6 +117,10 @@ struct esp_algorithm {
 		struct secasvar *, u_int8_t *, u_int8_t *);
 	int (*blockencrypt)(const struct esp_algorithm *,
 		struct secasvar *, u_int8_t *, u_int8_t *);
+	/* For Authenticated Encryption Methods */
+	size_t icvlen;
+	int (*finalizedecrypt)(struct secasvar *, u_int8_t *, uint);
+	int (*finalizeencrypt)(struct secasvar *, u_int8_t *, uint);
 };
 
 extern const struct esp_algorithm *esp_algorithm_lookup(int);
@@ -130,6 +134,6 @@ extern size_t esp_hdrsiz(struct ipsecrequest *);
 extern int esp_schedule(const struct esp_algorithm *, struct secasvar *);
 extern int esp_auth(struct mbuf *, size_t, size_t,
 	struct secasvar *, u_char *);
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 
 #endif /* _NETINET6_ESP_H_ */

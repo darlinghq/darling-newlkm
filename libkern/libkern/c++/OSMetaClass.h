@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -59,24 +59,18 @@ class OSOrderedSet;
 
 #ifdef XNU_KERNEL_PRIVATE
 
-#ifdef CONFIG_EMBEDDED
-#define APPLE_KEXT_VTABLE_PADDING   0
-#else /* CONFIG_EMBEDDED */
 /*! @parseOnly */
 #define APPLE_KEXT_VTABLE_PADDING   1
-#endif /* CONFIG_EMBEDDED */
 
 #else /* XNU_KERNEL_PRIVATE */
 #include <TargetConditionals.h>
 
-#if TARGET_OS_EMBEDDED
-#define APPLE_KEXT_VTABLE_PADDING   0
-#else /* TARGET_OS_EMBEDDED */
 /*! @parseOnly */
 #define APPLE_KEXT_VTABLE_PADDING   1
-#endif /* TARGET_OS_EMBEDDED */
 
 #endif /* XNU_KERNEL_PRIVATE */
+
+#define APPLE_KEXT_ALIGN_CONTAINERS     (0 == APPLE_KEXT_VTABLE_PADDING)
 
 #if defined(__LP64__)
 /*! @parseOnly */
@@ -95,6 +89,20 @@ class OSOrderedSet;
 
 /*! @parseOnly */
 #define APPLE_KEXT_DEPRECATED  __attribute__((deprecated))
+
+
+#if __cplusplus >= 201103L
+#define APPLE_KEXT_OVERRIDE  				override
+#if defined(__LP64__)
+#define APPLE_KEXT_COMPATIBILITY_OVERRIDE
+#else
+#define APPLE_KEXT_COMPATIBILITY_OVERRIDE	APPLE_KEXT_OVERRIDE
+#endif
+#else
+#define APPLE_KEXT_OVERRIDE
+#define APPLE_KEXT_COMPATIBILITY_OVERRIDE
+#endif
+
 
 /*!
  * @class OSMetaClassBase
@@ -285,11 +293,9 @@ public:
 #define OSCheckTypeInst(typeinst, inst) \
     OSMetaClassBase::checkTypeInst(inst, typeinst)
 
-/*! @function OSSafeRelease
- *  @abstract Release an object if not <code>NULL</code>.
- *  @param    inst  Instance of an OSObject, may be <code>NULL</code>.
- */
-#define OSSafeRelease(inst)       do { if (inst) (inst)->release(); } while (0)
+#define OSSafeRelease(inst) \
+  do { int OSSafeRelease __attribute__ ((deprecated("Use OSSafeReleaseNULL"))); (OSSafeRelease); \
+	if (inst) (inst)->release(); } while (0)
 
 /*! @function OSSafeReleaseNULL
  *  @abstract Release an object if not <code>NULL</code>, then set it to <code>NULL</code>.
@@ -783,9 +789,7 @@ typedef bool (*OSMetaClassInstanceApplierFunction)(const OSObject * instance,
  * OSMetaClass manages run-time type information
  * for Libkern and I/O Kit C++ classes.
  *
- * @discussion
- *
- * OSMetaClass manages run-time type information
+ * @discussion OSMetaClass manages run-time type information
  * for Libkern and I/O Kit C++ classes.
  * An instance of OSMetaClass exists for (nearly) every such C++ class,
  * keeping track of inheritance relationships, class lookup by name,
@@ -1101,7 +1105,7 @@ protected:
 
     // Needs to be overriden as NULL as all OSMetaClass objects are allocated
     // statically at compile time, don't accidently try to free them.
-    void operator delete(void *, size_t) { };
+    void operator delete(void *, size_t) { }
 
 public:
     static const OSMetaClass * const metaClass;
@@ -1590,7 +1594,7 @@ public:
             virtual OSObject *alloc() const;                    \
         } gMetaClass;                                           \
         friend class className ::MetaClass;                     \
-        virtual const OSMetaClass * getMetaClass() const;       \
+        virtual const OSMetaClass * getMetaClass() const APPLE_KEXT_OVERRIDE; \
     protected:                                                  \
     className (const OSMetaClass *);                            \
     virtual ~ className ()
@@ -2073,6 +2077,17 @@ void className ::_RESERVED ## className ## index ()             \
     // I/O Kit debug internal routines.
     static void printInstanceCounts();
     static void serializeClassDictionary(OSDictionary * dict);
+#ifdef XNU_KERNEL_PRIVATE
+#if IOTRACKING
+public:
+    static void * trackedNew(size_t size);
+    static void trackedDelete(void * mem, size_t size);
+    void trackedInstance(OSObject * instance) const;
+    void trackedFree(OSObject * instance) const;
+    void trackedAccumSize(OSObject * instance, size_t size) const;
+    struct IOTrackingQueue * getTracking() const;
+#endif
+#endif
 
 private:
     // Obsolete APIs

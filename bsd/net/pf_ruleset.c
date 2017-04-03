@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -32,6 +32,7 @@
 /*
  * Copyright (c) 2001 Daniel Hartmeier
  * Copyright (c) 2002,2003 Henning Brauer
+ * NAT64 - Copyright (c) 2010 Viagenie Inc. (http://www.viagenie.ca)
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -151,23 +152,20 @@ pf_get_ruleset_number(u_int8_t action)
 	case PF_SCRUB:
 	case PF_NOSCRUB:
 		return (PF_RULESET_SCRUB);
-		break;
 	case PF_PASS:
 	case PF_DROP:
 		return (PF_RULESET_FILTER);
-		break;
 	case PF_NAT:
 	case PF_NONAT:
 		return (PF_RULESET_NAT);
-		break;
 	case PF_BINAT:
 	case PF_NOBINAT:
 		return (PF_RULESET_BINAT);
-		break;
 	case PF_RDR:
 	case PF_NORDR:
+	case PF_NAT64:
+	case PF_NONAT64:
 		return (PF_RULESET_RDR);
-		break;
 #if DUMMYNET
 	case PF_DUMMYNET:
 	case PF_NODUMMYNET:
@@ -175,7 +173,6 @@ pf_get_ruleset_number(u_int8_t action)
 #endif /* DUMMYNET */
 	default:
 		return (PF_RULESET_MAX);
-		break;
 	}
 }
 
@@ -237,7 +234,7 @@ pf_find_ruleset_with_owner(const char *path, const char *owner, int is_anchor,
 		*error = EINVAL;
 		return (NULL);
 	} else {
-		if ((owner && anchor->owner && (!strcmp(owner, anchor->owner)))
+		if ((owner && (!strcmp(owner, anchor->owner)))
 		    || (is_anchor && !strcmp(anchor->owner, "")))
 			return (&anchor->ruleset);
 		*error = EPERM;

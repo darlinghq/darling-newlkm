@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -59,21 +59,9 @@
 
 #define COMMPAGE_DESCRIPTOR_NAME(label)  _commpage_ ## label
 
-#if defined (__i386__)
-
-#define COMMPAGE_DESCRIPTOR_FIELD_POINTER .long
-#define COMMPAGE_DESCRIPTOR_REFERENCE(label) \
-	.long COMMPAGE_DESCRIPTOR_NAME(label)
-
-#elif defined (__x86_64__)
-
 #define COMMPAGE_DESCRIPTOR_FIELD_POINTER .quad
 #define COMMPAGE_DESCRIPTOR_REFERENCE(label) \
 	.quad COMMPAGE_DESCRIPTOR_NAME(label)
-
-#else
-#error unsupported architecture
-#endif
 
 #define COMMPAGE_FUNCTION_START(label,codetype,alignment) \
 .text								;\
@@ -81,7 +69,7 @@
 .align alignment, 0x90						;\
 L ## label ## :
 
-#define	COMMPAGE_DESCRIPTOR(label,address,must,cant)	\
+#define	COMMPAGE_DESCRIPTOR(label,address)			\
 L ## label ## _end:						;\
 .set L ## label ## _size, L ## label ## _end - L ## label	;\
 .const_data							;\
@@ -90,8 +78,6 @@ COMMPAGE_DESCRIPTOR_NAME(label) ## :				;\
     COMMPAGE_DESCRIPTOR_FIELD_POINTER	L ## label 		;\
     .long				L ## label ## _size	;\
     .long				address			;\
-    .long				must			;\
-    .long				cant			;\
 .text
 
 
@@ -131,8 +117,6 @@ typedef	struct	commpage_descriptor	{
     void		*code_address;				// address of code
     uint32_t	 	code_length;				// length in bytes
     uint32_t		commpage_address;			// put at this address (_COMM_PAGE_BCOPY etc)
-    uint32_t		musthave;				// _cpu_capability bits we must have
-    uint32_t		canthave;				// _cpu_capability bits we can't have
 } commpage_descriptor;
 
 
@@ -161,6 +145,11 @@ extern	void	commpage_set_memory_pressure(unsigned int  pressure);
 extern	void	commpage_set_spin_count(unsigned int  count);
 extern	void	commpage_sched_gen_inc(void);
 extern	void	commpage_update_active_cpus(void);
+extern	void	commpage_update_mach_approximate_time(uint64_t abstime);
+extern  void	commpage_update_mach_continuous_time(uint64_t sleeptime);
+extern  void	commpage_update_boottime(uint64_t boottime_usec);
+extern	void	commpage_update_kdebug_state(void);
+extern	void	commpage_update_atm_diagnostic_config(uint32_t);
 
 extern	uint32_t	commpage_is_in_pfz32(uint32_t);
 extern	uint32_t	commpage_is_in_pfz64(addr64_t);

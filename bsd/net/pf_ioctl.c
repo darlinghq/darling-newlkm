@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2015 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -132,6 +132,8 @@ struct ip_fw_args;
 #include <net/classq/classq_sfb.h>
 #endif /* PF_ALTQ */
 
+#include <dev/random/randomdev.h>
+
 #if 0
 static void pfdetach(void);
 #endif
@@ -192,10 +194,11 @@ static void pf_pooladdr_copyout(struct pf_pooladdr *, struct pf_pooladdr *);
 static void pf_expire_states_and_src_nodes(struct pf_rule *);
 static void pf_delete_rule_from_ruleset(struct pf_ruleset *,
     int, struct pf_rule *);
+static void pf_addrwrap_setup(struct pf_addr_wrap *);
 static int pf_rule_setup(struct pfioc_rule *, struct pf_rule *,
     struct pf_ruleset *);
-static void pf_delete_rule_by_owner(char *);
-static int pf_delete_rule_by_ticket(struct pfioc_rule *);
+static void pf_delete_rule_by_owner(char *, u_int32_t);
+static int pf_delete_rule_by_ticket(struct pfioc_rule *, u_int32_t);
 static void pf_ruleset_cleanup(struct pf_ruleset *, int);
 static void pf_deleterule_anchor_step_out(struct pf_ruleset **,
     int, struct pf_rule **);
@@ -237,6 +240,7 @@ u_int32_t altq_allowed = 0;
 #endif /* PF_ALTQ */
 
 u_int32_t pf_hash_seed;
+int16_t pf_nat64_configured = 0;
 
 /*
  * These are the pf enabled reference counting variables
@@ -381,7 +385,7 @@ generate_token(struct proc *p)
 		return (0);
 	}
 
-	token_value = (u_int64_t)(uintptr_t)new_token;
+	token_value = VM_KERNEL_ADDRPERM((u_int64_t)(uintptr_t)new_token);
 
 	new_token->token.token_value = token_value;
 	new_token->token.pid = proc_pid(p);
@@ -544,7 +548,7 @@ pfinit(void)
 	pf_normalize_init();
 	bzero(&pf_status, sizeof (pf_status));
 	pf_status.debug = PF_DEBUG_URGENT;
-	pf_hash_seed = random();
+	pf_hash_seed = RandomULong();
 
 	/* XXX do our best to avoid a conflict */
 	pf_status.hostid = random();
@@ -1292,7 +1296,7 @@ static int
 pf_commit_rules(u_int32_t ticket, int rs_num, char *anchor)
 {
 	struct pf_ruleset	*rs;
-	struct pf_rule		*rule, **old_array;
+	struct pf_rule		*rule, **old_array, *r;
 	struct pf_rulequeue	*old_rules;
 	int			 error;
 	u_int32_t		 old_rcount;
@@ -1317,6 +1321,16 @@ pf_commit_rules(u_int32_t ticket, int rs_num, char *anchor)
 	old_rules = rs->rules[rs_num].active.ptr;
 	old_rcount = rs->rules[rs_num].active.rcount;
 	old_array = rs->rules[rs_num].active.ptr_array;
+
+	if(old_rcount != 0) {
+		r = TAILQ_FIRST(rs->rules[rs_num].active.ptr);
+		while (r) {
+			if (r->rule_flag & PFRULE_PFM)
+				pffwrules--;
+			r = TAILQ_NEXT(r, entries);
+		}
+	}
+
 
 	rs->rules[rs_num].active.ptr =
 	    rs->rules[rs_num].inactive.ptr;
@@ -1407,12 +1421,15 @@ pf_state_export(struct pfsync_state *sp, struct pf_state_key *sk,
 	sp->lan.xport = sk->lan.xport;
 	sp->gwy.addr = sk->gwy.addr;
 	sp->gwy.xport = sk->gwy.xport;
-	sp->ext.addr = sk->ext.addr;
-	sp->ext.xport = sk->ext.xport;
+	sp->ext_lan.addr = sk->ext_lan.addr;
+	sp->ext_lan.xport = sk->ext_lan.xport;
+	sp->ext_gwy.addr = sk->ext_gwy.addr;
+	sp->ext_gwy.xport = sk->ext_gwy.xport;
 	sp->proto_variant = sk->proto_variant;
 	sp->tag = s->tag;
 	sp->proto = sk->proto;
-	sp->af = sk->af;
+	sp->af_lan = sk->af_lan;
+	sp->af_gwy = sk->af_gwy;
 	sp->direction = sk->direction;
 	sp->flowhash = sk->flowhash;
 
@@ -1460,12 +1477,15 @@ pf_state_import(struct pfsync_state *sp, struct pf_state_key *sk,
 	sk->lan.xport = sp->lan.xport;
 	sk->gwy.addr = sp->gwy.addr;
 	sk->gwy.xport = sp->gwy.xport;
-	sk->ext.addr = sp->ext.addr;
-	sk->ext.xport = sp->ext.xport;
+	sk->ext_lan.addr = sp->ext_lan.addr;
+	sk->ext_lan.xport = sp->ext_lan.xport;
+	sk->ext_gwy.addr = sp->ext_gwy.addr;
+	sk->ext_gwy.xport = sp->ext_gwy.xport;
 	sk->proto_variant = sp->proto_variant;
 	s->tag = sp->tag;
 	sk->proto = sp->proto;
-	sk->af = sp->af;
+	sk->af_lan = sp->af_lan;
+	sk->af_gwy = sp->af_gwy;
 	sk->direction = sp->direction;
 	sk->flowhash = pf_calc_state_key_flowhash(sk);
 
@@ -2810,79 +2830,103 @@ pf_ruleset_cleanup(struct pf_ruleset *ruleset, int rs)
 	    ++ruleset->rules[rs].inactive.ticket;
 }
 
+/*
+ * req_dev encodes the PF interface. Currently, possible values are
+ * 0 or PFRULE_PFM
+ */
 static int
-pf_delete_rule_by_ticket(struct pfioc_rule *pr)
+pf_delete_rule_by_ticket(struct pfioc_rule *pr, u_int32_t req_dev)
 {
 	struct pf_ruleset	*ruleset;
-	struct pf_rule		*rule;
-	int			 rs_num;
+	struct pf_rule		*rule = NULL;
 	int			 is_anchor;
 	int			 error;
+	int			 i;
 
 	is_anchor = (pr->anchor_call[0] != '\0');
 	if ((ruleset = pf_find_ruleset_with_owner(pr->anchor,
 	    pr->rule.owner, is_anchor, &error)) == NULL)
 		return (error);
 
-	rs_num = pf_get_ruleset_number(pr->rule.action);
-	if (rs_num >= PF_RULESET_MAX) {
-		return (EINVAL);
-	}
-
-	if (pr->rule.ticket) {
-		rule = TAILQ_FIRST(ruleset->rules[rs_num].active.ptr);
+	for (i = 0; i < PF_RULESET_MAX && rule == NULL; i++) {
+		rule = TAILQ_FIRST(ruleset->rules[i].active.ptr);
 		while (rule && (rule->ticket != pr->rule.ticket))
 			rule = TAILQ_NEXT(rule, entries);
-		if (rule == NULL)
-			return (ENOENT);
+	}
+	if (rule == NULL)
+		return (ENOENT);
+	else
+		i--;
 
-		if (strcmp(rule->owner, pr->rule.owner))
-			return (EACCES);
+	if (strcmp(rule->owner, pr->rule.owner))
+		return (EACCES);
 
 delete_rule:
-		if (rule->anchor && (ruleset != &pf_main_ruleset) &&
-		    ((strcmp(ruleset->anchor->owner, "")) == 0) &&
-		    ((ruleset->rules[rs_num].active.rcount - 1) == 0)) {
-			/* set rule & ruleset to parent and repeat */
-			struct pf_rule *delete_rule = rule;
-			struct pf_ruleset *delete_ruleset = ruleset;
+	if (rule->anchor && (ruleset != &pf_main_ruleset) &&
+	    ((strcmp(ruleset->anchor->owner, "")) == 0) &&
+	    ((ruleset->rules[i].active.rcount - 1) == 0)) {
+		/* set rule & ruleset to parent and repeat */
+		struct pf_rule *delete_rule = rule;
+		struct pf_ruleset *delete_ruleset = ruleset;
 
 #define	parent_ruleset		ruleset->anchor->parent->ruleset
-			if (ruleset->anchor->parent == NULL)
-				ruleset = &pf_main_ruleset;
-			else
-				ruleset = &parent_ruleset;
+		if (ruleset->anchor->parent == NULL)
+			ruleset = &pf_main_ruleset;
+		else
+			ruleset = &parent_ruleset;
 
-			rule = TAILQ_FIRST(ruleset->rules[rs_num].active.ptr);
-			while (rule &&
-			    (rule->anchor != delete_ruleset->anchor))
-				rule = TAILQ_NEXT(rule, entries);
-			if (rule == NULL)
-				panic("%s: rule not found!", __func__);
+		rule = TAILQ_FIRST(ruleset->rules[i].active.ptr);
+		while (rule &&
+		    (rule->anchor != delete_ruleset->anchor))
+			rule = TAILQ_NEXT(rule, entries);
+		if (rule == NULL)
+			panic("%s: rule not found!", __func__);
 
-			if (delete_rule->rule_flag & PFRULE_PFM)
-				pffwrules--;
-
-			pf_delete_rule_from_ruleset(delete_ruleset,
-			    rs_num, delete_rule);
-			delete_ruleset->rules[rs_num].active.ticket =
-			    ++delete_ruleset->rules[rs_num].inactive.ticket;
-
-			goto delete_rule;
-		} else {
-			if (rule->rule_flag & PFRULE_PFM)
-				pffwrules--;
-			pf_delete_rule_from_ruleset(ruleset, rs_num,
-			    rule);
-			pf_ruleset_cleanup(ruleset, rs_num);
+		/*
+		 * if reqest device != rule's device, bail :
+		 * with error if ticket matches;
+		 * without error if ticket doesn't match (i.e. its just cleanup)
+		 */
+		if ((rule->rule_flag & PFRULE_PFM) ^ req_dev) {
+			if (rule->ticket != pr->rule.ticket) {
+				return (0);
+			} else {
+				return EACCES;
+			}
 		}
+
+		if (delete_rule->rule_flag & PFRULE_PFM) {
+			pffwrules--;
+		}
+
+		pf_delete_rule_from_ruleset(delete_ruleset,
+		    i, delete_rule);
+		delete_ruleset->rules[i].active.ticket =
+		    ++delete_ruleset->rules[i].inactive.ticket;
+		goto delete_rule;
+	} else {
+		/*
+		 * process deleting rule only if device that added the
+		 * rule matches device that issued the request
+		 */
+		if ((rule->rule_flag & PFRULE_PFM) ^ req_dev)
+			return EACCES;
+		if (rule->rule_flag & PFRULE_PFM)
+			pffwrules--;
+		pf_delete_rule_from_ruleset(ruleset, i,
+		    rule);
+		pf_ruleset_cleanup(ruleset, i);
 	}
 
 	return (0);
 }
 
+/*
+ * req_dev encodes the PF interface. Currently, possible values are
+ * 0 or PFRULE_PFM
+ */
 static void
-pf_delete_rule_by_owner(char *owner)
+pf_delete_rule_by_owner(char *owner, u_int32_t req_dev)
 {
 	struct pf_ruleset	*ruleset;
 	struct pf_rule		*rule, *next;
@@ -2893,6 +2937,14 @@ pf_delete_rule_by_owner(char *owner)
 		ruleset = &pf_main_ruleset;
 		while (rule) {
 			next = TAILQ_NEXT(rule, entries);
+			/*
+			 * process deleting rule only if device that added the
+			 * rule matches device that issued the request
+			 */
+			if ((rule->rule_flag & PFRULE_PFM) ^ req_dev) {
+				rule = next;
+				continue;
+			}
 			if (rule->anchor) {
 				if (((strcmp(rule->owner, owner)) == 0) ||
 				    ((strcmp(rule->owner, "")) == 0)) {
@@ -2964,6 +3016,13 @@ pf_deleterule_anchor_step_out(struct pf_ruleset **ruleset_ptr,
 	*rule_ptr = rule;
 }
 
+static void
+pf_addrwrap_setup(struct pf_addr_wrap *aw)
+{
+	VERIFY(aw);
+	bzero(&aw->p, sizeof aw->p);
+}
+
 static int
 pf_rule_setup(struct pfioc_rule *pr, struct pf_rule *rule,
     struct pf_ruleset *ruleset) {
@@ -3006,6 +3065,8 @@ pf_rule_setup(struct pfioc_rule *pr, struct pf_rule *rule,
 	if (rule->logif >= PFLOGIFS_MAX)
 		error = EINVAL;
 #endif /* PFLOG */
+	pf_addrwrap_setup(&rule->src.addr);
+	pf_addrwrap_setup(&rule->dst.addr);
 	if (pf_rtlabel_add(&rule->src.addr) ||
 	    pf_rtlabel_add(&rule->dst.addr))
 		error = EBUSY;
@@ -3033,8 +3094,10 @@ pf_rule_setup(struct pfioc_rule *pr, struct pf_rule *rule,
 	}
 
 	pf_mv_pool(&pf_pabuf, &rule->rpool.list);
+
 	if (((((rule->action == PF_NAT) || (rule->action == PF_RDR) ||
-	    (rule->action == PF_BINAT)) && rule->anchor == NULL) ||
+	    (rule->action == PF_BINAT) || (rule->action == PF_NAT64)) &&
+	    rule->anchor == NULL) ||
 	    (rule->rt > PF_FASTROUTE)) &&
 	    (TAILQ_FIRST(&rule->rpool.list) == NULL))
 		error = EINVAL;
@@ -3043,6 +3106,10 @@ pf_rule_setup(struct pfioc_rule *pr, struct pf_rule *rule,
 		pf_rm_rule(NULL, rule);
 		return (error);
 	}
+	/* For a NAT64 rule the rule's address family is AF_INET6 whereas
+	 * the address pool's family will be AF_INET
+	 */
+	rule->rpool.af = (rule->action == PF_NAT64) ? AF_INET: rule->af;
 	rule->rpool.cur = TAILQ_FIRST(&rule->rpool.list);
 	rule->evaluations = rule->packets[0] = rule->packets[1] =
 	    rule->bytes[0] = rule->bytes[1] = 0;
@@ -3054,6 +3121,7 @@ static int
 pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p)
 {
 	int error = 0;
+	u_int32_t req_dev = 0;
 
 	switch (cmd) {
 	case DIOCADDRULE: {
@@ -3120,6 +3188,9 @@ pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p
 		ruleset->rules[rs_num].inactive.rcount++;
 		if (rule->rule_flag & PFRULE_PFM)
 			pffwrules++;
+
+		if (rule->action == PF_NAT64)
+			atomic_add_16(&pf_nat64_configured, 1);
 		break;
 	}
 
@@ -3314,6 +3385,8 @@ pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p
 			if (newrule->logif >= PFLOGIFS_MAX)
 				error = EINVAL;
 #endif /* PFLOG */
+			pf_addrwrap_setup(&newrule->src.addr);
+			pf_addrwrap_setup(&newrule->dst.addr);
 			if (pf_rtlabel_add(&newrule->src.addr) ||
 			    pf_rtlabel_add(&newrule->dst.addr))
 				error = EBUSY;
@@ -3452,6 +3525,8 @@ pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p
 				}
 				r = TAILQ_NEXT(r, entries);
 			}
+			if (error != 0)
+				return (error);
 		}
 
 		rule = pool_get(&pf_rule_pl, PR_WAITOK);
@@ -3493,7 +3568,7 @@ pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p
 			break;
 
 		if (rule->anchor != NULL)
-			strncpy(rule->anchor->owner, rule->owner,
+			strlcpy(rule->anchor->owner, rule->owner,
 			    PF_OWNER_NAME_SIZE);
 
 		if (r) {
@@ -3510,12 +3585,14 @@ pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p
 			error = pf_setup_pfsync_matching(ruleset);
 
 		pf_ruleset_cleanup(ruleset, rs_num);
-		rule->ticket = ruleset->rules[rs_num].active.ticket;
+		rule->ticket = VM_KERNEL_ADDRPERM((u_int64_t)(uintptr_t)rule);
 
 		pr->rule.ticket = rule->ticket;
 		pf_rule_copyout(rule, &pr->rule);
 		if (rule->rule_flag & PFRULE_PFM)
 			pffwrules++;
+		if (rule->action == PF_NAT64)
+			atomic_add_16(&pf_nat64_configured, 1);
 		break;
 	}
 
@@ -3528,12 +3605,18 @@ pfioctl_ioc_rule(u_long cmd, int minordev, struct pfioc_rule *pr, struct proc *p
 			break;
 		}
 
+		/* get device through which request is made */
+		if ((uint8_t)minordev == PFDEV_PFM)
+			req_dev |= PFRULE_PFM;
+
 		if (pr->rule.ticket) {
-			if ((error = pf_delete_rule_by_ticket(pr)))
+			if ((error = pf_delete_rule_by_ticket(pr, req_dev)))
 				break;
 		} else
-			pf_delete_rule_by_owner(pr->rule.owner);
+			pf_delete_rule_by_owner(pr->rule.owner, req_dev);
 		pr->nr = pffwrules;
+		if (pr->rule.action == PF_NAT64)
+			atomic_add_16(&pf_nat64_configured, -1);
 		break;
 	}
 
@@ -3551,17 +3634,42 @@ pfioctl_ioc_state_kill(u_long cmd, struct pfioc_state_kill *psk, struct proc *p)
 #pragma unused(p)
 	int error = 0;
 
+	psk->psk_ifname[sizeof (psk->psk_ifname) - 1] = '\0';
+	psk->psk_ownername[sizeof(psk->psk_ownername) - 1] = '\0';
+
+	bool ifname_matched = true;
+	bool owner_matched = true;
+
 	switch (cmd) {
 	case DIOCCLRSTATES: {
 		struct pf_state		*s, *nexts;
 		int			 killed = 0;
 
-		psk->psk_ifname[sizeof (psk->psk_ifname) - 1] = '\0';
 		for (s = RB_MIN(pf_state_tree_id, &tree_id); s; s = nexts) {
 			nexts = RB_NEXT(pf_state_tree_id, &tree_id, s);
+			/*
+			 * Purge all states only when neither ifname
+			 * or owner is provided. If any of these are provided
+			 * we purge only the states with meta data that match
+			 */
+			bool unlink_state = false;
+			ifname_matched = true;
+			owner_matched = true;
 
-			if (!psk->psk_ifname[0] || strcmp(psk->psk_ifname,
-			    s->kif->pfik_name) == 0) {
+			if (psk->psk_ifname[0] &&
+			    strcmp(psk->psk_ifname, s->kif->pfik_name)) {
+				ifname_matched = false;
+			}
+
+			if (psk->psk_ownername[0] &&
+			    ((NULL == s->rule.ptr) ||
+			     strcmp(psk->psk_ownername, s->rule.ptr->owner))) {
+				owner_matched = false;
+			}
+
+			unlink_state = ifname_matched && owner_matched;
+
+			if (unlink_state) {
 #if NPFSYNC
 				/* don't send out individual delete messages */
 				s->sync_flags = PFSTATE_NOSYNC;
@@ -3587,32 +3695,45 @@ pfioctl_ioc_state_kill(u_long cmd, struct pfioc_state_kill *psk, struct proc *p)
 		    s = nexts) {
 			nexts = RB_NEXT(pf_state_tree_id, &tree_id, s);
 			sk = s->state_key;
+			ifname_matched = true;
+			owner_matched = true;
+
+			if (psk->psk_ifname[0] &&
+			    strcmp(psk->psk_ifname, s->kif->pfik_name)) {
+				ifname_matched = false;
+			}
+
+			if (psk->psk_ownername[0] &&
+			    ((NULL == s->rule.ptr) ||
+			     strcmp(psk->psk_ownername, s->rule.ptr->owner))) {
+				owner_matched = false;
+			}
 
 			if (sk->direction == PF_OUT) {
 				src = &sk->lan;
-				dst = &sk->ext;
+				dst = &sk->ext_lan;
 			} else {
-				src = &sk->ext;
+				src = &sk->ext_lan;
 				dst = &sk->lan;
 			}
-			if ((!psk->psk_af || sk->af == psk->psk_af) &&
+			if ((!psk->psk_af || sk->af_lan == psk->psk_af) &&
 			    (!psk->psk_proto || psk->psk_proto == sk->proto) &&
 			    PF_MATCHA(psk->psk_src.neg,
 			    &psk->psk_src.addr.v.a.addr,
 			    &psk->psk_src.addr.v.a.mask,
-			    &src->addr, sk->af) &&
+			    &src->addr, sk->af_lan) &&
 			    PF_MATCHA(psk->psk_dst.neg,
 			    &psk->psk_dst.addr.v.a.addr,
 			    &psk->psk_dst.addr.v.a.mask,
-			    &dst->addr, sk->af) &&
+			    &dst->addr, sk->af_lan) &&
 			    (pf_match_xport(psk->psk_proto,
 			    psk->psk_proto_variant, &psk->psk_src.xport,
 			    &src->xport)) &&
 			    (pf_match_xport(psk->psk_proto,
 			    psk->psk_proto_variant, &psk->psk_dst.xport,
 			    &dst->xport)) &&
-			    (!psk->psk_ifname[0] || strcmp(psk->psk_ifname,
-			    s->kif->pfik_name) == 0)) {
+			    ifname_matched &&
+			    owner_matched) {
 #if NPFSYNC
 				/* send immediate delete of state */
 				pfsync_delete_state(s);
@@ -3647,8 +3768,7 @@ pfioctl_ioc_state(u_long cmd, struct pfioc_state *ps, struct proc *p)
 		struct pf_state_key	*sk;
 		struct pfi_kif		*kif;
 
-		if (sp->timeout >= PFTM_MAX &&
-		    sp->timeout != PFTM_UNTIL_PACKET) {
+		if (sp->timeout >= PFTM_MAX) {
 			error = EINVAL;
 			break;
 		}
@@ -3791,7 +3911,6 @@ pfioctl_ioc_natlook(u_long cmd, struct pfioc_natlook *pnl, struct proc *p)
 		struct pf_state_key_cmp	 key;
 		int			 m = 0, direction = pnl->direction;
 
-		key.af = pnl->af;
 		key.proto = pnl->proto;
 		key.proto_variant = pnl->proto_variant;
 
@@ -3810,20 +3929,24 @@ pfioctl_ioc_natlook(u_long cmd, struct pfioc_natlook *pnl, struct proc *p)
 			 * state tree.
 			 */
 			if (direction == PF_IN) {
-				PF_ACPY(&key.ext.addr, &pnl->daddr, pnl->af);
-				memcpy(&key.ext.xport, &pnl->dxport,
-				    sizeof (key.ext.xport));
+				key.af_gwy = pnl->af;
+				PF_ACPY(&key.ext_gwy.addr, &pnl->daddr,
+					pnl->af);
+				memcpy(&key.ext_gwy.xport, &pnl->dxport,
+				    sizeof (key.ext_gwy.xport));
 				PF_ACPY(&key.gwy.addr, &pnl->saddr, pnl->af);
 				memcpy(&key.gwy.xport, &pnl->sxport,
 				    sizeof (key.gwy.xport));
 				state = pf_find_state_all(&key, PF_IN, &m);
 			} else {
+				key.af_lan = pnl->af;
 				PF_ACPY(&key.lan.addr, &pnl->daddr, pnl->af);
 				memcpy(&key.lan.xport, &pnl->dxport,
 				    sizeof (key.lan.xport));
-				PF_ACPY(&key.ext.addr, &pnl->saddr, pnl->af);
-				memcpy(&key.ext.xport, &pnl->sxport,
-				    sizeof (key.ext.xport));
+				PF_ACPY(&key.ext_lan.addr, &pnl->saddr,
+					pnl->af);
+				memcpy(&key.ext_lan.xport, &pnl->sxport,
+				    sizeof (key.ext_lan.xport));
 				state = pf_find_state_all(&key, PF_OUT, &m);
 			}
 			if (m > 1)
@@ -3832,7 +3955,7 @@ pfioctl_ioc_natlook(u_long cmd, struct pfioc_natlook *pnl, struct proc *p)
 				sk = state->state_key;
 				if (direction == PF_IN) {
 					PF_ACPY(&pnl->rsaddr, &sk->lan.addr,
-					    sk->af);
+					    sk->af_lan);
 					memcpy(&pnl->rsxport, &sk->lan.xport,
 					    sizeof (pnl->rsxport));
 					PF_ACPY(&pnl->rdaddr, &pnl->daddr,
@@ -3841,7 +3964,7 @@ pfioctl_ioc_natlook(u_long cmd, struct pfioc_natlook *pnl, struct proc *p)
 					    sizeof (pnl->rdxport));
 				} else {
 					PF_ACPY(&pnl->rdaddr, &sk->gwy.addr,
-					    sk->af);
+					    sk->af_gwy);
 					memcpy(&pnl->rdxport, &sk->gwy.xport,
 					    sizeof (pnl->rdxport));
 					PF_ACPY(&pnl->rsaddr, &pnl->saddr,
@@ -4000,6 +4123,7 @@ pfioctl_ioc_pooladdr(u_long cmd, struct pfioc_pooladdr *pp, struct proc *p)
 			}
 			pfi_kif_ref(pa->kif, PFI_KIF_REF_RULE);
 		}
+		pf_addrwrap_setup(&pa->addr);
 		if (pfi_dynaddr_setup(&pa->addr, pp->af)) {
 			pfi_dynaddr_remove(&pa->addr);
 			pfi_kif_unref(pa->kif, PFI_KIF_REF_RULE);
@@ -4111,6 +4235,7 @@ pfioctl_ioc_pooladdr(u_long cmd, struct pfioc_pooladdr *pp, struct proc *p)
 				pfi_kif_ref(newpa->kif, PFI_KIF_REF_RULE);
 			} else
 				newpa->kif = NULL;
+			pf_addrwrap_setup(&newpa->addr);
 			if (pfi_dynaddr_setup(&newpa->addr, pca->af) ||
 			    pf_tbladdr_setup(ruleset, &newpa->addr)) {
 				pfi_dynaddr_remove(&newpa->addr);
@@ -4727,17 +4852,22 @@ int
 pf_af_hook(struct ifnet *ifp, struct mbuf **mppn, struct mbuf **mp,
     unsigned int af, int input, struct ip_fw_args *fwa)
 {
-	int error = 0, reentry;
+	int error = 0;
 	struct mbuf *nextpkt;
+	net_thread_marks_t marks;
+	struct ifnet * pf_ifp = ifp;
 
-	reentry = net_thread_check_lock(NET_THREAD_HELD_PF);
-	if (!reentry) {
+	/* Always allow traffic on co-processor interfaces. */
+	if (ifp && IFNET_IS_INTCOPROC(ifp))
+		return (0);
+
+	marks = net_thread_marks_push(NET_THREAD_HELD_PF);
+
+	if (marks != net_thread_marks_none) {
 		lck_rw_lock_shared(pf_perim_lock);
 		if (!pf_is_enabled)
 			goto done;
-
 		lck_mtx_lock(pf_lock);
-		net_thread_set_lock(NET_THREAD_HELD_PF);
 	}
 
 	if (mppn != NULL && *mppn != NULL)
@@ -4745,16 +4875,32 @@ pf_af_hook(struct ifnet *ifp, struct mbuf **mppn, struct mbuf **mp,
 	if ((nextpkt = (*mp)->m_nextpkt) != NULL)
 		(*mp)->m_nextpkt = NULL;
 
+        /*
+         * For packets destined to locally hosted IP address
+         * ip_output_list sets Mbuf's pkt header's rcvif to
+         * the interface hosting the IP address.
+         * While on the output path ifp passed to pf_af_hook
+         * to such local communication is the loopback interface,
+         * the input path derives ifp from mbuf packet header's
+         * rcvif.
+         * This asymmetry caues issues with PF.
+         * To handle that case, we have a limited change here to
+         * pass interface as loopback if packets are looped in.
+         */
+	if (input && ((*mp)->m_pkthdr.pkt_flags & PKTF_LOOP)) {
+		pf_ifp = lo_ifp;
+	}
+
 	switch (af) {
 #if INET
 	case AF_INET: {
-		error = pf_inet_hook(ifp, mp, input, fwa);
+		error = pf_inet_hook(pf_ifp, mp, input, fwa);
 		break;
 	}
 #endif /* INET */
 #if INET6
 	case AF_INET6:
-		error = pf_inet6_hook(ifp, mp, input, fwa);
+		error = pf_inet6_hook(pf_ifp, mp, input, fwa);
 		break;
 #endif /* INET6 */
 	default:
@@ -4775,14 +4921,15 @@ pf_af_hook(struct ifnet *ifp, struct mbuf **mppn, struct mbuf **mp,
 		else
 			*mppn = nextpkt;
 	}
-	if (!reentry) {
-		net_thread_unset_lock(NET_THREAD_HELD_PF);
+
+	if (marks != net_thread_marks_none)
 		lck_mtx_unlock(pf_lock);
-	}
+
 done:
-	if (!reentry)
+	if (marks != net_thread_marks_none)
 		lck_rw_done(pf_perim_lock);
 
+	net_thread_marks_pop(marks);
 	return (error);
 }
 
@@ -4862,7 +5009,11 @@ pf_inet6_hook(struct ifnet *ifp, struct mbuf **mp, int input,
 		    ~IF_HWASSIST_CSUM_FLAGS(ifp->if_hwassist);
 
 		if (flags & mask) {
-			in6_delayed_cksum(*mp, sizeof(struct ip6_hdr));
+			/*
+			 * Checksum offload should not have been enabled
+			 * when extension headers exist, thus 0 for optlen.
+			 */
+			in6_delayed_cksum(*mp);
 			(*mp)->m_pkthdr.csum_flags &= ~mask;
 		}
 	}
@@ -4881,30 +5032,19 @@ pf_inet6_hook(struct ifnet *ifp, struct mbuf **mp, int input,
 #endif /* INET6 */
 
 int
-pf_ifaddr_hook(struct ifnet *ifp, unsigned long cmd)
+pf_ifaddr_hook(struct ifnet *ifp)
 {
-	lck_rw_lock_shared(pf_perim_lock);
-	lck_mtx_lock(pf_lock);
+	struct pfi_kif *kif = ifp->if_pf_kif;
 
-	switch (cmd) {
-	case SIOCSIFADDR:
-	case SIOCAIFADDR:
-	case SIOCDIFADDR:
-#if INET6
-	case SIOCAIFADDR_IN6_32:
-	case SIOCAIFADDR_IN6_64:
-	case SIOCDIFADDR_IN6:
-#endif /* INET6 */
-		if (ifp->if_pf_kif != NULL)
-			pfi_kifaddr_update(ifp->if_pf_kif);
-		break;
-	default:
-		panic("%s: unexpected ioctl %lu", __func__, cmd);
-		/* NOTREACHED */
+	if (kif != NULL) {
+		lck_rw_lock_shared(pf_perim_lock);
+		lck_mtx_lock(pf_lock);
+
+		pfi_kifaddr_update(kif);
+
+		lck_mtx_unlock(pf_lock);
+		lck_rw_done(pf_perim_lock);
 	}
-
-	lck_mtx_unlock(pf_lock);
-	lck_rw_done(pf_perim_lock);
 	return (0);
 }
 
@@ -4965,3 +5105,99 @@ pf_detach_hooks(void)
 	ifnet_head_done();
 }
 #endif
+
+/*
+ * 'D' group ioctls.
+ *
+ * The switch statement below does nothing at runtime, as it serves as a
+ * compile time check to ensure that all of the socket 'D' ioctls (those
+ * in the 'D' group going thru soo_ioctl) that are made available by the
+ * networking stack is unique.  This works as long as this routine gets
+ * updated each time a new interface ioctl gets added.
+ *
+ * Any failures at compile time indicates duplicated ioctl values.
+ */
+static __attribute__((unused)) void
+pfioctl_cassert(void)
+{
+	/*
+	 * This is equivalent to _CASSERT() and the compiler wouldn't
+	 * generate any instructions, thus for compile time only.
+	 */
+	switch ((u_long)0) {
+	case 0:
+
+	/* bsd/net/pfvar.h */
+	case DIOCSTART:
+	case DIOCSTOP:
+	case DIOCADDRULE:
+	case DIOCGETSTARTERS:
+	case DIOCGETRULES:
+	case DIOCGETRULE:
+	case DIOCSTARTREF:
+	case DIOCSTOPREF:
+	case DIOCCLRSTATES:
+	case DIOCGETSTATE:
+	case DIOCSETSTATUSIF:
+	case DIOCGETSTATUS:
+	case DIOCCLRSTATUS:
+	case DIOCNATLOOK:
+	case DIOCSETDEBUG:
+	case DIOCGETSTATES:
+	case DIOCCHANGERULE:
+	case DIOCINSERTRULE:
+	case DIOCDELETERULE:
+	case DIOCSETTIMEOUT:
+	case DIOCGETTIMEOUT:
+	case DIOCADDSTATE:
+	case DIOCCLRRULECTRS:
+	case DIOCGETLIMIT:
+	case DIOCSETLIMIT:
+	case DIOCKILLSTATES:
+	case DIOCSTARTALTQ:
+	case DIOCSTOPALTQ:
+	case DIOCADDALTQ:
+	case DIOCGETALTQS:
+	case DIOCGETALTQ:
+	case DIOCCHANGEALTQ:
+	case DIOCGETQSTATS:
+	case DIOCBEGINADDRS:
+	case DIOCADDADDR:
+	case DIOCGETADDRS:
+	case DIOCGETADDR:
+	case DIOCCHANGEADDR:
+	case DIOCGETRULESETS:
+	case DIOCGETRULESET:
+	case DIOCRCLRTABLES:
+	case DIOCRADDTABLES:
+	case DIOCRDELTABLES:
+	case DIOCRGETTABLES:
+	case DIOCRGETTSTATS:
+	case DIOCRCLRTSTATS:
+	case DIOCRCLRADDRS:
+	case DIOCRADDADDRS:
+	case DIOCRDELADDRS:
+	case DIOCRSETADDRS:
+	case DIOCRGETADDRS:
+	case DIOCRGETASTATS:
+	case DIOCRCLRASTATS:
+	case DIOCRTSTADDRS:
+	case DIOCRSETTFLAGS:
+	case DIOCRINADEFINE:
+	case DIOCOSFPFLUSH:
+	case DIOCOSFPADD:
+	case DIOCOSFPGET:
+	case DIOCXBEGIN:
+	case DIOCXCOMMIT:
+	case DIOCXROLLBACK:
+	case DIOCGETSRCNODES:
+	case DIOCCLRSRCNODES:
+	case DIOCSETHOSTID:
+	case DIOCIGETIFACES:
+	case DIOCSETIFFLAG:
+	case DIOCCLRIFFLAG:
+	case DIOCKILLSRCNODES:
+	case DIOCGIFSPEED:
+		;
+	}
+}

@@ -95,6 +95,8 @@ extern kern_return_t vm_fault(
 		pmap_t		pmap,
 		vm_map_offset_t	pmap_addr);
 
+extern void vm_pre_fault(vm_map_offset_t);
+
 #ifdef	MACH_KERNEL_PRIVATE
 
 #include <vm/vm_page.h>
@@ -113,10 +115,11 @@ extern vm_fault_return_t vm_fault_page(
 		vm_object_offset_t first_offset,/* Offset into object */
 		vm_prot_t	fault_type,	/* What access is requested */
 		boolean_t	must_be_resident,/* Must page be resident? */
+		boolean_t	caller_lookup,	/* caller looked up page */
 		/* Modifies in place: */
 		vm_prot_t	*protection,	/* Protection for mapping */
-		/* Returns: */
 		vm_page_t	*result_page,	/* Page found, if successful */
+		/* Returns: */
 		vm_page_t	*top_page,	/* Page in top object, if
 						 * not result_page.  */
 		int             *type_of_fault, /* if non-zero, return COW, zero-filled, etc...
@@ -134,8 +137,10 @@ extern void vm_fault_cleanup(
 extern kern_return_t vm_fault_wire(
 		vm_map_t	map,
 		vm_map_entry_t	entry,
+		vm_prot_t       prot,
 		pmap_t		pmap,
-		vm_map_offset_t	pmap_addr);
+		vm_map_offset_t	pmap_addr,
+		ppnum_t		*physpage_p);
 
 extern void vm_fault_unwire(
 		vm_map_t	map,
@@ -164,8 +169,15 @@ extern kern_return_t vm_fault_enter(
 	boolean_t change_wiring,
 	boolean_t no_cache,
 	boolean_t cs_bypass,
+	int	  user_tag,
+	int	  pmap_options,
 	boolean_t *need_retry,
 	int *type_of_fault);
+
+extern vm_offset_t kdp_lightweight_fault(
+		vm_map_t map,
+		vm_offset_t cur_target_addr);
+
 
 #endif	/* MACH_KERNEL_PRIVATE */
 

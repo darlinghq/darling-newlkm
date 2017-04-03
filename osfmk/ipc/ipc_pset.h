@@ -84,8 +84,6 @@ struct ipc_pset {
 };
 
 #define	ips_references		ips_object.io_references
-#define ips_local_name		ips_messages.imq_local_name
-
 
 #define	ips_active(pset)	io_active(&(pset)->ips_object)
 #define	ips_lock(pset)		io_lock(&(pset)->ips_object)
@@ -106,11 +104,16 @@ extern kern_return_t ipc_pset_alloc_name(
 	mach_port_name_t	name,
 	ipc_pset_t		*psetp);
 
+/* Allocate a port set in a special space */
+extern ipc_pset_t ipc_pset_alloc_special(
+	ipc_space_t		space);
+
 /* Add a port to a port set */
 extern kern_return_t ipc_pset_add(
 	ipc_pset_t	pset,
 	ipc_port_t	port,
-	wait_queue_link_t wql);
+	uint64_t	*reserved_link,
+	uint64_t	*reserved_prepost);
 
 /* determine if port is a member of set */
 extern boolean_t ipc_pset_member(
@@ -120,13 +123,11 @@ extern boolean_t ipc_pset_member(
 /* Remove a port from a port set */
 extern kern_return_t ipc_pset_remove(
 	ipc_pset_t	pset,
-	ipc_port_t	port,
-	wait_queue_link_t *wqlp);
+	ipc_port_t	port);
 
 /* Remove a port from all its current port sets */
 extern kern_return_t ipc_pset_remove_from_all(
-	ipc_port_t	port,
-	queue_t		links);
+	ipc_port_t	port);
 
 /* Destroy a port_set */
 extern void ipc_pset_destroy(

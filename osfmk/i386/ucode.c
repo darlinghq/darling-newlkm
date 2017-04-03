@@ -12,6 +12,7 @@
 #include <vm/vm_kern.h>
 #include <i386/mp.h>			// mp_broadcast
 #include <machine/cpu_number.h> // cpu_number
+#include <pexpert/pexpert.h>  // boot-args
 
 #define IA32_BIOS_UPDT_TRIG (0x79) /* microcode update trigger MSR */
 
@@ -108,7 +109,7 @@ copyin_update(uint64_t inaddr)
 	 * It need only be aligned to 16-bytes, according to the SDM.
 	 * This also wires it down
 	 */
-	ret = kmem_alloc_kobject(kernel_map, (vm_offset_t *)&update, size);
+	ret = kmem_alloc_kobject(kernel_map, (vm_offset_t *)&update, size, VM_KERN_MEMORY_OSFMK);
 	if (ret != KERN_SUCCESS)
 		return ENOMEM;
 
@@ -150,10 +151,6 @@ cpu_update(__unused void *arg)
 	/* execute the update */
 	update_microcode();
 
-	/* if CPU #0, update global CPU information */
-	if (!cpu_number())
-		cpuid_set_info();
-
 	/* release the lock */
 	lck_spin_unlock(ucode_slock);
 }
@@ -167,6 +164,10 @@ xcpu_update(void)
 
 	/* Get all CPUs to perform the update */
 	mp_broadcast(cpu_update, NULL);
+
+	/* Update the cpuid info */
+	cpuid_set_info();
+
 }
 
 /*
@@ -177,6 +178,12 @@ int
 ucode_interface(uint64_t addr)
 {
 	int error;
+	char arg[16]; 
+
+	if (PE_parse_boot_argn("-x", arg, sizeof (arg))) {
+		printf("ucode: no updates in safe mode\n");
+		return EPERM;
+	}
 
 #if !DEBUG
 	/*

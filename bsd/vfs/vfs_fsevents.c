@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2004-2014 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -165,30 +165,6 @@ __private_extern__ void qsort(
     size_t member_size,
     int (*)(const void *, const void *));
 
-
-
-/* From kdp_udp.c + user mode Libc - this ought to be in a library */
-static char *
-strnstr(char *s, const char *find, size_t slen)
-{
-  char c, sc;
-  size_t len;
-  
-  if ((c = *find++) != '\0') {
-    len = strlen(find);
-    do {
-      do {
-        if ((sc = *s++) == '\0' || slen-- < 1)
-          return (NULL);
-      } while (sc != c);
-      if (len > slen)
-        return (NULL);
-    } while (strncmp(s, find, len) != 0);
-    s--;
-  }
-  return (s);
-}
-
 static int
 is_ignored_directory(const char *path) {
 
@@ -196,14 +172,14 @@ is_ignored_directory(const char *path) {
       return 0;
     }
 
-#define IS_TLD(x) strnstr((char *) path, x, MAXPATHLEN) 
+#define IS_TLD(x) strnstr(__DECONST(char *, path), x, MAXPATHLEN)
     if (IS_TLD("/.Spotlight-V100/") ||
         IS_TLD("/.MobileBackups/") || 
         IS_TLD("/Backups.backupdb/")) {
         return 1;
     }
 #undef IS_TLD
-    
+	
     return 0;
 }
 
@@ -416,7 +392,7 @@ add_fsevent(int type, vfs_context_t ctx, ...)
     // (as long as it's not an event type that can never be the
     // same as a previous event)
     //
-    if (type != FSE_CREATE_FILE && type != FSE_DELETE && type != FSE_RENAME && type != FSE_EXCHANGE && type != FSE_CHOWN) {
+    if (type != FSE_CREATE_FILE && type != FSE_DELETE && type != FSE_RENAME && type != FSE_EXCHANGE && type != FSE_CHOWN && type != FSE_DOCID_CHANGED && type != FSE_DOCID_CREATED) {
 	void *ptr=NULL;
 	int   vid=0, was_str=0, nlen=0;
 
@@ -524,6 +500,7 @@ add_fsevent(int type, vfs_context_t ctx, ...)
 		    printf("add_fsevent: kfse_list head %p ; num_pending_rename %d\n", listhead, num_pending_rename);
 		    printf("add_fsevent: zalloc sez: %p\n", junkptr);
 		    printf("add_fsevent: event_zone info: %d 0x%x\n", ((int *)event_zone)[0], ((int *)event_zone)[1]);
+		    lock_watch_table();
 		    for(ii=0; ii < MAX_WATCHERS; ii++) {
 			if (watcher_table[ii] == NULL) {
 			    continue;
@@ -535,6 +512,7 @@ add_fsevent(int type, vfs_context_t ctx, ...)
 			       watcher_table[ii]->rd, watcher_table[ii]->wr,
 			       watcher_table[ii]->eventq_size, watcher_table[ii]->flags);
 		    }
+		    unlock_watch_table();
 
 		    last_print = current_tv;
 		    if (junkptr) {
@@ -587,6 +565,60 @@ add_fsevent(int type, vfs_context_t ctx, ...)
     //
     
     cur = kfse;
+
+    if (type == FSE_DOCID_CREATED || type == FSE_DOCID_CHANGED) {
+	    uint64_t val;
+
+	    //
+	    // These events are special and not like the other events.  They only
+	    // have a dev_t, src inode #, dest inode #, and a doc-id.  We use the
+	    // fields that we can in the kfse but have to overlay the dest inode
+	    // number and the doc-id on the other fields.
+	    //
+
+	    // First the dev_t
+	    arg_type = va_arg(ap, int32_t);
+	    if (arg_type == FSE_ARG_DEV) {
+		    cur->dev = (dev_t)(va_arg(ap, dev_t));
+	    } else {
+		    cur->dev = (dev_t)0xbadc0de1;
+	    }
+
+	    // next the source inode #
+	    arg_type = va_arg(ap, int32_t);
+	    if (arg_type == FSE_ARG_INO) {
+		    cur->ino = (ino64_t)(va_arg(ap, ino64_t));
+	    } else {
+		    cur->ino = 0xbadc0de2;
+	    }
+
+	    // now the dest inode #
+	    arg_type = va_arg(ap, int32_t);
+	    if (arg_type == FSE_ARG_INO) {
+		    val = (ino64_t)(va_arg(ap, ino64_t));
+	    } else {
+		    val = 0xbadc0de2;
+	    }
+	    // overlay the dest inode number on the str/dest pointer fields
+	    memcpy(&cur->str, &val, sizeof(ino64_t));
+
+
+	    // and last the document-id
+	    arg_type = va_arg(ap, int32_t);
+	    if (arg_type == FSE_ARG_INT32) {
+		    val = (uint64_t)va_arg(ap, uint32_t);
+	    } else if (arg_type == FSE_ARG_INT64) {
+		    val = (uint64_t)va_arg(ap, uint64_t);
+	    } else {
+		    val = 0xbadc0de3;
+	    }
+	    
+	    // the docid is 64-bit and overlays the uid/gid fields
+	    memcpy(&cur->uid, &val, sizeof(uint64_t));
+
+	    goto done_with_args;
+    }
+
     for(arg_type=va_arg(ap, int32_t); arg_type != FSE_ARG_DONE; arg_type=va_arg(ap, int32_t))
 
 	switch(arg_type) {
@@ -611,6 +643,7 @@ add_fsevent(int type, vfs_context_t ctx, ...)
 		VATTR_WANTED(&va, va_mode);
 		VATTR_WANTED(&va, va_uid);
 		VATTR_WANTED(&va, va_gid);
+		VATTR_WANTED(&va, va_nlink);
 		if ((ret = vnode_getattr(vp, &va, vfs_context_kernel())) != 0) {
 		    // printf("add_fsevent: failed to getattr on vp %p (%d)\n", cur->fref.vp, ret);
 		    cur->str = NULL;
@@ -623,6 +656,12 @@ add_fsevent(int type, vfs_context_t ctx, ...)
 		cur->mode = (int32_t)vnode_vttoif(vnode_vtype(vp)) | va.va_mode;
 		cur->uid  = va.va_uid;
 		cur->gid  = va.va_gid;
+		if (vp->v_flag & VISHARDLINK) {
+			cur->mode |= FSE_MODE_HLINK;
+			if ((vp->v_type == VDIR && va.va_dirlinkcount == 0) || (vp->v_type == VREG && va.va_nlink == 0)) {
+				cur->mode |= FSE_MODE_LAST_HLINK;
+			}
+		}
 
 		// if we haven't gotten the path yet, get it.
 		if (pathbuff == NULL) {
@@ -711,12 +750,19 @@ add_fsevent(int type, vfs_context_t ctx, ...)
 		}
 		break;
 
+	    case FSE_ARG_INT32: {
+		    uint32_t ival = (uint32_t)va_arg(ap, int32_t);
+		    kfse->uid = (ino64_t)ival;
+		break;
+	    }
+		    
 	    default:
 		printf("add_fsevent: unknown type %d\n", arg_type);
 		// just skip one 32-bit word and hope we sync up...
 		(void)va_arg(ap, int32_t);
 	}
 
+done_with_args:
     va_end(ap);
 
     OSBitAndAtomic16(~KFSE_BEING_CREATED, &kfse->flags);
@@ -736,7 +782,8 @@ add_fsevent(int type, vfs_context_t ctx, ...)
 	    continue;
 	}
 	
-	if (   watcher->event_list[type] == FSE_REPORT
+	if (   type < watcher->num_events
+	    && watcher->event_list[type] == FSE_REPORT
 	    && watcher_cares_about_dev(watcher, dev)) {
 	    
 	    if (watcher_add_event(watcher, kfse) != 0) {
@@ -859,7 +906,7 @@ release_event_ref(kfs_event *kfse)
     unlock_fs_event_list();
     
     // if we have a pointer in the union
-    if (copy.str) {
+    if (copy.str && copy.type != FSE_DOCID_CHANGED) {
 	if (copy.len == 0) {    // and it's not a string
 	    panic("%s:%d: no more fref.vp!\n", __FILE__, __LINE__);
 	    // vnode_rele_ext(copy.fref.vp, O_EVTONLY, 0);
@@ -927,14 +974,7 @@ add_watcher(int8_t *event_list, int32_t num_events, int32_t eventq_size, fs_even
 
     lock_watch_table();
 
-    // now update the global list of who's interested in
-    // events of a particular type...
-    for(i=0; i < num_events; i++) {
-	if (event_list[i] != FSE_IGNORE && i < FSE_MAX_EVENTS) {
-	    fs_event_type_watchers[i]++;
-	}
-    }
-
+    // find a slot for the new watcher
     for(i=0; i < MAX_WATCHERS; i++) {
 	if (watcher_table[i] == NULL) {
 	    watcher->my_id   = i;
@@ -943,10 +983,19 @@ add_watcher(int8_t *event_list, int32_t num_events, int32_t eventq_size, fs_even
 	}
     }
 
-    if (i > MAX_WATCHERS) {
+    if (i >= MAX_WATCHERS) {
 	printf("fsevents: too many watchers!\n");
 	unlock_watch_table();
+	FREE(watcher, M_TEMP);
 	return ENOSPC;
+    }
+
+    // now update the global list of who's interested in
+    // events of a particular type...
+    for(i=0; i < num_events; i++) {
+	if (event_list[i] != FSE_IGNORE && i < FSE_MAX_EVENTS) {
+	    fs_event_type_watchers[i]++;
+	}
     }
 
     unlock_watch_table();
@@ -1272,6 +1321,36 @@ copy_out_kfse(fs_event_watcher *watcher, kfs_event *kfse, struct uio *uio)
 
   copy_again:
 
+    if (kfse->type == FSE_DOCID_CHANGED || kfse->type == FSE_DOCID_CREATED) {
+	dev_t    dev  = cur->dev;
+	ino_t    ino  = cur->ino;
+	uint64_t ival;
+
+	error = fill_buff(FSE_ARG_DEV, sizeof(dev_t), &dev, evbuff, &evbuff_idx, sizeof(evbuff), uio);
+	if (error != 0) {
+	    goto get_out;
+	}
+
+	error = fill_buff(FSE_ARG_INO, sizeof(ino_t), &ino, evbuff, &evbuff_idx, sizeof(evbuff), uio);
+	if (error != 0) {
+	    goto get_out;
+	}
+
+	memcpy(&ino, &cur->str, sizeof(ino_t));
+	error = fill_buff(FSE_ARG_INO, sizeof(ino_t), &ino, evbuff, &evbuff_idx, sizeof(evbuff), uio);
+	if (error != 0) {
+	    goto get_out;
+	}
+
+	memcpy(&ival, &cur->uid, sizeof(uint64_t));   // the docid gets stuffed into the ino field
+	error = fill_buff(FSE_ARG_INT64, sizeof(uint64_t), &ival, evbuff, &evbuff_idx, sizeof(evbuff), uio);
+	if (error != 0) {
+	    goto get_out;
+	}
+
+	goto done;
+    }
+
     if (cur->str == NULL || cur->str[0] == '\0') {
 	printf("copy_out_kfse:2: empty/short path (%s)\n", cur->str);
 	error = fill_buff(FSE_ARG_STRING, 2, "/", evbuff, &evbuff_idx, sizeof(evbuff), uio);
@@ -1456,13 +1535,13 @@ fmod_watch(fs_event_watcher *watcher, struct uio *uio)
 	// its type or which device it is for)
 	//
 	kfse = watcher->event_queue[watcher->rd];
-	if (!kfse || kfse->type == FSE_INVALID || kfse->refcount < 1) {
+	if (!kfse || kfse->type == FSE_INVALID || kfse->type >= watcher->num_events || kfse->refcount < 1) {
 	  break;
 	}
 
 	if (watcher->event_list[kfse->type] == FSE_REPORT && watcher_cares_about_dev(watcher, kfse->dev)) {
 
-	  if (!(watcher->flags & WATCHER_APPLE_SYSTEM_SERVICE) & is_ignored_directory(kfse->str)) {
+	  if (!(watcher->flags & WATCHER_APPLE_SYSTEM_SERVICE) && kfse->type != FSE_DOCID_CHANGED && is_ignored_directory(kfse->str)) {
 	    // If this is not an Apple System Service, skip specified directories
 	    // radar://12034844
 	    error = 0;
@@ -1563,62 +1642,25 @@ fseventsf_write(__unused struct fileproc *fp, __unused struct uio *uio,
 }
 
 #pragma pack(push, 4)
-typedef struct ext_fsevent_dev_filter_args {
-    uint32_t    num_devices;
-    user_addr_t devices;
-} ext_fsevent_dev_filter_args;
+typedef struct fsevent_dev_filter_args32 {
+    uint32_t            num_devices;
+    user32_addr_t       devices;
+} fsevent_dev_filter_args32;
+typedef struct fsevent_dev_filter_args64 {
+    uint32_t            num_devices;
+    user64_addr_t       devices;
+} fsevent_dev_filter_args64;
 #pragma pack(pop)
 
-#define NEW_FSEVENTS_DEVICE_FILTER      _IOW('s', 100, ext_fsevent_dev_filter_args)
-
-typedef struct old_fsevent_dev_filter_args {
-    uint32_t  num_devices;
-    int32_t   devices;
-} old_fsevent_dev_filter_args;
-
-#define	OLD_FSEVENTS_DEVICE_FILTER	_IOW('s', 100, old_fsevent_dev_filter_args)
-
-#if __LP64__
-/* need this in spite of the padding due to alignment of devices */
-typedef struct fsevent_dev_filter_args32 {
-    uint32_t  num_devices;
-    uint32_t  devices;
-    int32_t   pad1;
-} fsevent_dev_filter_args32;
-#endif
+#define	FSEVENTS_DEVICE_FILTER_32	_IOW('s', 100, fsevent_dev_filter_args32)
+#define	FSEVENTS_DEVICE_FILTER_64	_IOW('s', 100, fsevent_dev_filter_args64)
 
 static int
 fseventsf_ioctl(struct fileproc *fp, u_long cmd, caddr_t data, vfs_context_t ctx)
 {
     fsevent_handle *fseh = (struct fsevent_handle *)fp->f_fglob->fg_data;
     int ret = 0;
-    ext_fsevent_dev_filter_args *devfilt_args, _devfilt_args;
-
-    if (proc_is64bit(vfs_context_proc(ctx))) {
-	devfilt_args = (ext_fsevent_dev_filter_args *)data;
-    }
-    else if (cmd == OLD_FSEVENTS_DEVICE_FILTER) {
-	old_fsevent_dev_filter_args *udev_filt_args = (old_fsevent_dev_filter_args *)data;
-	
-	devfilt_args = &_devfilt_args;
-	memset(devfilt_args, 0, sizeof(ext_fsevent_dev_filter_args));
-
-	devfilt_args->num_devices = udev_filt_args->num_devices;
-	devfilt_args->devices     = CAST_USER_ADDR_T(udev_filt_args->devices);
-    }
-    else {
-#if __LP64__
-	fsevent_dev_filter_args32 *udev_filt_args = (fsevent_dev_filter_args32 *)data;
-#else
-	fsevent_dev_filter_args *udev_filt_args = (fsevent_dev_filter_args *)data;
-#endif
-	
-	devfilt_args = &_devfilt_args;
-	memset(devfilt_args, 0, sizeof(ext_fsevent_dev_filter_args));
-
-	devfilt_args->num_devices = udev_filt_args->num_devices;
-	devfilt_args->devices     = CAST_USER_ADDR_T(udev_filt_args->devices);
-    }
+    fsevent_dev_filter_args64 *devfilt_args, _devfilt_args;
 
     OSAddAtomic(1, &fseh->active);
     if (fseh->flags & FSEH_CLOSING) {
@@ -1647,8 +1689,29 @@ fseventsf_ioctl(struct fileproc *fp, u_long cmd, caddr_t data, vfs_context_t ctx
 		break;
 	}
 
-	case OLD_FSEVENTS_DEVICE_FILTER:
-	case NEW_FSEVENTS_DEVICE_FILTER: {
+	case FSEVENTS_DEVICE_FILTER_32: {
+	    if (proc_is64bit(vfs_context_proc(ctx))) {
+		    ret = EINVAL;
+		    break;
+	    }
+	    fsevent_dev_filter_args32 *devfilt_args32 = (fsevent_dev_filter_args32 *)data;
+
+	    devfilt_args = &_devfilt_args;
+	    memset(devfilt_args, 0, sizeof(fsevent_dev_filter_args64));
+	    devfilt_args->num_devices = devfilt_args32->num_devices;
+	    devfilt_args->devices     = CAST_USER_ADDR_T(devfilt_args32->devices);
+	    goto handle_dev_filter;
+	}
+
+	case FSEVENTS_DEVICE_FILTER_64:
+	    if (!proc_is64bit(vfs_context_proc(ctx))) {
+		    ret = EINVAL;
+		    break;
+	    }
+	    devfilt_args = (fsevent_dev_filter_args64 *)data;
+
+	handle_dev_filter:
+	{
 	    int new_num_devices;
 	    dev_t *devices_not_to_watch, *tmp=NULL;
 	    
@@ -1832,28 +1895,84 @@ filt_fsevent(struct knote *kn, long hint)
 }
 
 
+static int
+filt_fsevent_touch(struct knote *kn, struct kevent_internal_s *kev)
+{
+	int res;
+
+	lock_watch_table();
+
+	/* accept new fflags/data as saved */
+	kn->kn_sfflags = kev->fflags;
+	kn->kn_sdata = kev->data;
+	if ((kn->kn_status & KN_UDATA_SPECIFIC) == 0)
+		kn->kn_udata = kev->udata;
+
+	/* restrict the current results to the (smaller?) set of new interest */
+	/*
+	 * For compatibility with previous implementations, we leave kn_fflags
+	 * as they were before.
+	 */
+	//kn->kn_fflags &= kev->fflags;
+
+	/* determine if the filter is now fired */
+	res = filt_fsevent(kn, 0);
+
+	unlock_watch_table();
+
+	return res;
+}
+
+static int
+filt_fsevent_process(struct knote *kn, struct filt_process_s *data, struct kevent_internal_s *kev)
+{
+#pragma unused(data)
+	int res;
+
+	lock_watch_table();
+
+	res = filt_fsevent(kn, 0);
+	if (res) {
+		*kev = kn->kn_kevent;
+		if (kev->flags & EV_CLEAR) {
+			kn->kn_data = 0;
+			kn->kn_fflags = 0;
+		}
+	}
+
+	unlock_watch_table();
+	return res;
+}
+
 struct  filterops fsevent_filtops = { 
 	.f_isfd = 1, 
 	.f_attach = NULL, 
 	.f_detach = filt_fsevent_detach, 
-	.f_event = filt_fsevent
+	.f_event = filt_fsevent,
+	.f_touch = filt_fsevent_touch,
+	.f_process = filt_fsevent_process,
 };
 
 static int
 fseventsf_kqfilter(__unused struct fileproc *fp, __unused struct knote *kn, __unused vfs_context_t ctx)
 {
     fsevent_handle *fseh = (struct fsevent_handle *)fp->f_fglob->fg_data;
+    int res;
 
     kn->kn_hook = (void*)fseh;
     kn->kn_hookid = 1;
-    kn->kn_fop = &fsevent_filtops;
-    
+   	kn->kn_filtid = EVFILTID_FSEVENT;
+
     lock_watch_table();
 
     KNOTE_ATTACH(&fseh->knotes, kn);
 
+    /* check to see if it is fired already */
+    res = filt_fsevent(kn, 0);
+
     unlock_watch_table();
-    return 0;
+
+    return res;
 }
 
 
@@ -1890,7 +2009,7 @@ fseventsf_drain(struct fileproc *fp, __unused vfs_context_t ctx)
 static int
 fseventsopen(__unused dev_t dev, __unused int flag, __unused int mode, __unused struct proc *p)
 {
-    if (!is_suser()) {
+    if (!kauth_cred_issuser(kauth_cred_get())) {
 	return EPERM;
     }
     
@@ -2029,7 +2148,7 @@ fseventswrite(__unused dev_t dev, struct uio *uio, __unused int ioflag)
     lck_mtx_lock(&event_writer_lock);
 
     if (write_buffer == NULL) {
-	if (kmem_alloc(kernel_map, (vm_offset_t *)&write_buffer, WRITE_BUFFER_SIZE)) {
+	if (kmem_alloc(kernel_map, (vm_offset_t *)&write_buffer, WRITE_BUFFER_SIZE, VM_KERN_MEMORY_FILE)) {
 	    lck_mtx_unlock(&event_writer_lock);
 	    return ENOMEM;
 	}
@@ -2083,31 +2202,33 @@ fseventswrite(__unused dev_t dev, struct uio *uio, __unused int ioflag)
 }
 
 
-static struct fileops fsevents_fops = {
-    fseventsf_read,
-    fseventsf_write,
-    fseventsf_ioctl,
-    fseventsf_select,
-    fseventsf_close,
-    fseventsf_kqfilter,
-    fseventsf_drain
+static const struct fileops fsevents_fops = {
+    .fo_type = DTYPE_FSEVENTS,
+    .fo_read = fseventsf_read,
+    .fo_write = fseventsf_write,
+    .fo_ioctl = fseventsf_ioctl,
+    .fo_select = fseventsf_select,
+    .fo_close = fseventsf_close,
+    .fo_kqfilter = fseventsf_kqfilter,
+    .fo_drain = fseventsf_drain,
 };
 
-typedef struct ext_fsevent_clone_args {
-    user_addr_t  event_list;
-    int32_t      num_events;
-    int32_t      event_queue_depth;
-    user_addr_t  fd;
-} ext_fsevent_clone_args;
+typedef struct fsevent_clone_args32 {
+    user32_addr_t       event_list;
+    int32_t             num_events;
+    int32_t             event_queue_depth;
+    user32_addr_t       fd;
+} fsevent_clone_args32;
 
-typedef struct old_fsevent_clone_args {
-    uint32_t  event_list;
-    int32_t  num_events;
-    int32_t  event_queue_depth;
-    uint32_t  fd;
-} old_fsevent_clone_args;
+typedef struct fsevent_clone_args64 {
+    user64_addr_t       event_list;
+    int32_t             num_events;
+    int32_t             event_queue_depth;
+    user64_addr_t       fd;
+} fsevent_clone_args64;
 
-#define	OLD_FSEVENTS_CLONE	_IOW('s', 1, old_fsevent_clone_args)
+#define	FSEVENTS_CLONE_32	_IOW('s', 1, fsevent_clone_args32)
+#define	FSEVENTS_CLONE_64	_IOW('s', 1, fsevent_clone_args64)
 
 static int
 fseventsioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, struct proc *p)
@@ -2115,38 +2236,32 @@ fseventsioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, s
     struct fileproc *f;
     int fd, error;
     fsevent_handle *fseh = NULL;
-    ext_fsevent_clone_args *fse_clone_args, _fse_clone;
+    fsevent_clone_args64 *fse_clone_args, _fse_clone;
     int8_t *event_list;
     int is64bit = proc_is64bit(p);
 
     switch (cmd) {
-	case OLD_FSEVENTS_CLONE: {
-	    old_fsevent_clone_args *old_args = (old_fsevent_clone_args *)data;
+	case FSEVENTS_CLONE_32: {
+	    if (is64bit) {
+		    return EINVAL;
+	    }
+	    fsevent_clone_args32 *args32 = (fsevent_clone_args32 *)data;
 
 	    fse_clone_args = &_fse_clone;
-	    memset(fse_clone_args, 0, sizeof(ext_fsevent_clone_args));
+	    memset(fse_clone_args, 0, sizeof(fsevent_clone_args64));
 
-	    fse_clone_args->event_list        = CAST_USER_ADDR_T(old_args->event_list);
-	    fse_clone_args->num_events        = old_args->num_events;
-	    fse_clone_args->event_queue_depth = old_args->event_queue_depth;
-	    fse_clone_args->fd                = CAST_USER_ADDR_T(old_args->fd);
+	    fse_clone_args->event_list        = CAST_USER_ADDR_T(args32->event_list);
+	    fse_clone_args->num_events        = args32->num_events;
+	    fse_clone_args->event_queue_depth = args32->event_queue_depth;
+	    fse_clone_args->fd                = CAST_USER_ADDR_T(args32->fd);
 	    goto handle_clone;
 	}
-	    
-	case FSEVENTS_CLONE:
-	    if (is64bit) {
-		fse_clone_args = (ext_fsevent_clone_args *)data;
-	    } else {
-		fsevent_clone_args *ufse_clone = (fsevent_clone_args *)data;
-		
-		fse_clone_args = &_fse_clone;
-		memset(fse_clone_args, 0, sizeof(ext_fsevent_clone_args));
 
-		fse_clone_args->event_list        = CAST_USER_ADDR_T(ufse_clone->event_list);
-		fse_clone_args->num_events        = ufse_clone->num_events;
-		fse_clone_args->event_queue_depth = ufse_clone->event_queue_depth;
-		fse_clone_args->fd                = CAST_USER_ADDR_T(ufse_clone->fd);
+	case FSEVENTS_CLONE_64:
+	    if (!is64bit) {
+		    return EINVAL;
 	    }
+	    fse_clone_args = (fsevent_clone_args64 *)data;
 
 	handle_clone:
 	    if (fse_clone_args->num_events < 0 || fse_clone_args->num_events > 4096) {
@@ -2194,13 +2309,13 @@ fseventsioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, s
 
 	    error = falloc(p, &f, &fd, vfs_context_current());
 	    if (error) {
+		remove_watcher(fseh->watcher);
 		FREE(event_list, M_TEMP);
 		FREE(fseh, M_TEMP);
 		return (error);
 	    }
 	    proc_fdlock(p);
 	    f->f_fglob->fg_flag = FREAD | FWRITE;
-	    f->f_fglob->fg_type = DTYPE_FSEVENTS;
 	    f->f_fglob->fg_ops = &fsevents_fops;
 	    f->f_fglob->fg_data = (caddr_t) fseh;
 	    proc_fdunlock(p);
@@ -2402,6 +2517,9 @@ create_fsevent_from_kevent(vnode_t vp, uint32_t kevents, struct vnode_attr *vap)
 }
 
 #else /* CONFIG_FSE */
+
+#include <sys/fsevents.h>
+
 /*
  * The get_pathbuff and release_pathbuff routines are used in places not
  * related to fsevents, and it's a handy abstraction, so define trivial
@@ -2422,4 +2540,16 @@ release_pathbuff(char *path)
 {
 	FREE_ZONE(path, MAXPATHLEN, M_NAMEI);
 }
+
+int
+add_fsevent(__unused int type, __unused vfs_context_t ctx, ...)
+{
+	return 0;
+}
+
+int need_fsevent(__unused int type, __unused vnode_t vp)
+{
+	return 0;
+}
+
 #endif /* CONFIG_FSE */

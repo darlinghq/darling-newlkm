@@ -30,8 +30,10 @@
 
 #include <sys/cdefs.h>
 
+#ifdef KERNEL
 #include <IOKit/IOInterrupts.h>
 #include <kern/kern_types.h>
+#endif
 
 __BEGIN_DECLS
 #include <mach/boolean.h>
@@ -57,11 +59,44 @@ void PE_init_platform(
 	boolean_t vm_initialized, 
 	void *args);
 
+/*
+ * Copies the requested number of bytes from the "random-seed" property in
+ * the device tree, and zeros the corresponding bytes in the device tree.
+ * Returns the number of bytes actually copied.
+ */
+uint32_t PE_get_random_seed(
+	unsigned char * dst_random_seed,
+	uint32_t request_size);
+
+uint32_t PE_i_can_has_debugger(
+	uint32_t *);
+
+
+#if KERNEL_PRIVATE
+
+/*
+ * Kexts should consult this bitmask to change behavior, since the kernel
+ * may be configured as RELEASE but have MACH_ASSERT enabled, or boot args
+ * may have changed the kernel behavior for statistics and kexts should
+ * participate similarly
+ */
+
+#define kPEICanHasAssertions	0x00000001	/* Exceptional conditions should panic() instead of printf() */
+#define kPEICanHasStatistics	0x00000002	/* Gather expensive statistics (that don't otherwise change behavior */
+#define kPEICanHasDiagnosticAPI	0x00000004	/* Vend API to userspace or kexts that introspect kernel state */
+
+extern uint32_t PE_i_can_has_kernel_configuration(void);
+
+#endif /* KERNEL_PRIVATE */
 
 void PE_init_kprintf(
 	boolean_t vm_initialized);
 
 extern int32_t gPESerialBaud;
+
+extern uint8_t gPlatformECID[8];
+
+extern uint32_t gPlatformMemoryID;
 
 unsigned int PE_init_taproot(vm_offset_t *taddr);
 
@@ -118,9 +153,11 @@ void PE_register_timebase_callback(timebase_callback_func callback);
 
 void PE_call_timebase_callback(void);
 
+#ifdef KERNEL
 void PE_install_interrupt_handler(
 	void *nub, int source,
         void *target, IOInterruptHandler handler, void *refCon);
+#endif
 
 #ifndef _FN_KPRINTF
 #define	_FN_KPRINTF
@@ -221,6 +258,7 @@ extern int PE_initialize_console(
 #define kPEEnableScreen	 	6
 #define kPEDisableScreen	7
 #define kPEBaseAddressChange	8
+#define kPERefreshBootGraphics	9
 
 extern void PE_display_icon( unsigned int flags,
 			     const char * name );
@@ -247,6 +285,13 @@ extern boolean_t PE_parse_boot_argn(
 	const char	*arg_string,
 	void    	*arg_ptr,
 	int			max_arg);
+
+#if XNU_KERNEL_PRIVATE
+extern boolean_t PE_parse_boot_arg_str(
+	const char *arg_string,
+	char *      arg_ptr,
+	int         size);
+#endif /* XNU_KERNEL_PRIVATE */
 
 extern boolean_t PE_get_default(
 	const char	*property_name,
@@ -281,6 +326,14 @@ extern void PE_cpu_signal(
 	cpu_id_t source,
 	cpu_id_t target);
 
+extern void PE_cpu_signal_deferred(
+	cpu_id_t source,
+	cpu_id_t target);
+
+extern void PE_cpu_signal_cancel(
+	cpu_id_t source,
+	cpu_id_t target);
+
 extern void PE_cpu_machine_init(
 	cpu_id_t target,
 	boolean_t bootb);
@@ -295,6 +348,7 @@ extern boolean_t PE_imgsrc_mount_supported(void);
 
 #if KERNEL_PRIVATE
 boolean_t PE_reboot_on_panic(void);
+void PE_sync_panic_buffers(void);
 #endif
 
 __END_DECLS

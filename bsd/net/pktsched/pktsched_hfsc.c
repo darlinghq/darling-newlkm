@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -767,7 +767,11 @@ hfsc_enqueue(struct hfsc_if *hif, struct hfsc_class *cl, struct mbuf *m,
 	VERIFY(cl == NULL || cl->cl_hif == hif);
 
 	if (cl == NULL) {
+#if PF_ALTQ
 		cl = hfsc_clh_to_clp(hif, t->pftag_qid);
+#else /* !PF_ALTQ */
+		cl = hfsc_clh_to_clp(hif, 0);
+#endif /* !PF_ALTQ */
 		if (cl == NULL || HFSC_IS_A_PARENT_CLASS(cl)) {
 			cl = hif->hif_defaultclass;
 			if (cl == NULL) {
@@ -804,6 +808,7 @@ hfsc_enqueue(struct hfsc_if *hif, struct hfsc_class *cl, struct mbuf *m,
 		}
 	}
 	IFCQ_INC_LEN(ifq);
+	IFCQ_INC_BYTES(ifq, len);
 	cl->cl_hif->hif_packets++;
 
 	/* successfully queued. */
@@ -893,6 +898,7 @@ hfsc_dequeue(struct hfsc_if *hif, cqdq_op_t op)
 	len = m_pktlen(m);
 	cl->cl_hif->hif_packets--;
 	IFCQ_DEC_LEN(ifq);
+	IFCQ_DEC_BYTES(ifq, len);
 	IFCQ_XMIT_ADD(ifq, 1, len);
 	PKTCNTR_ADD(&cl->cl_stats.xmit_cnt, 1, len);
 
@@ -971,8 +977,10 @@ hfsc_addq(struct hfsc_class *cl, struct mbuf *m, struct pf_mtag *t)
 		return (CLASSQEQ_DROPPED);
 	}
 
+#if PF_ECN
 	if (cl->cl_flags & HFCF_CLEARDSCP)
 		write_dsfield(m, t, 0);
+#endif /* PF_ECN */
 
 	_addq(&cl->cl_q, m);
 
@@ -1149,7 +1157,7 @@ hfsc_updateq(struct hfsc_if *hif, struct hfsc_class *cl, cqev_t ev)
 		    cl->cl_handle, cl->cl_id, ifclassq_ev2str(ev));
 	}
 
-	if (ev == CLASSQ_EV_LINK_SPEED)
+	if (ev == CLASSQ_EV_LINK_BANDWIDTH)
 		hfsc_updateq_linkrate(hif, cl);
 
 #if CLASSQ_RIO

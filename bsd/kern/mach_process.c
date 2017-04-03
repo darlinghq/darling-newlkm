@@ -83,6 +83,7 @@
 #include <sys/mount_internal.h>
 #include <sys/sysproto.h>
 #include <sys/kdebug.h>
+#include <sys/codesign.h>		/* cs_allow_invalid() */
 
 #include <security/audit/audit.h>
 
@@ -91,8 +92,6 @@
 
 #include <mach/task.h>			/* for task_resume() */
 #include <kern/sched_prim.h>		/* for thread_exception_return() */
-
-#include <vm/vm_protos.h>		/* cs_allow_invalid() */
 
 #include <pexpert/pexpert.h>
 
@@ -135,7 +134,7 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 			KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_FRCEXIT) | DBG_FUNC_NONE,
 					      p->p_pid, W_EXITCODE(ENOTSUP, 0), 4, 0, 0);
 			exit1(p, W_EXITCODE(ENOTSUP, 0), retval);
-			/* drop funnel before we return */
+
 			thread_exception_return();
 			/* NOTREACHED */
 		}
@@ -146,7 +145,7 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 	}
 
 	if (uap->req == PT_FORCEQUOTA) {
-		if (is_suser()) {
+		if (kauth_cred_issuser(kauth_cred_get())) {
 			OSBitOrAtomic(P_FORCEQUOTA, &t->p_flag);
 			return (0);
 		} else
@@ -157,20 +156,38 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 	 *	Intercept and deal with "please trace me" request.
 	 */	 
 	if (uap->req == PT_TRACE_ME) {
-		proc_lock(p);
-		SET(p->p_lflag, P_LTRACED);
-		/* Non-attached case, our tracer is our parent. */
-		p->p_oppid = p->p_ppid;
-		/* Check whether child and parent are allowed to run modified
-		 * code (they'll have to) */
-		struct proc *pproc=proc_find(p->p_oppid);
-		proc_unlock(p);
-		cs_allow_invalid(p);
-		if(pproc) {
+retry_trace_me:;
+		proc_t pproc = proc_parent(p);
+		if (pproc == NULL)
+			return (EINVAL);
+#if CONFIG_MACF
+		/*
+		 * NB: Cannot call kauth_authorize_process(..., KAUTH_PROCESS_CANTRACE, ...)
+		 *     since that assumes the process being checked is the current process
+		 *     when, in this case, it is the current process's parent.
+		 *     Most of the other checks in cantrace() don't apply either.
+		 */
+		if ((error = mac_proc_check_debug(pproc, p)) == 0) {
+#endif
+			proc_lock(p);
+			/* Make sure the process wasn't re-parented. */
+			if (p->p_ppid != pproc->p_pid) {
+				proc_unlock(p);
+				proc_rele(pproc);
+				goto retry_trace_me;
+			}
+			SET(p->p_lflag, P_LTRACED);
+			/* Non-attached case, our tracer is our parent. */
+			p->p_oppid = p->p_ppid;
+			proc_unlock(p);
+			/* Child and parent will have to be able to run modified code. */
+			cs_allow_invalid(p);
 			cs_allow_invalid(pproc);
-			proc_rele(pproc);
+#if CONFIG_MACF
 		}
-		return(0);
+#endif
+		proc_rele(pproc);
+		return (error);
 	}
 	if (uap->req == PT_SIGEXC) {
 		proc_lock(p);
@@ -201,12 +218,16 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 
 	task = t->task;
 	if (uap->req == PT_ATTACHEXC) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 		uap->req = PT_ATTACH;
 		tr_sigexc = 1;
 	}
 	if (uap->req == PT_ATTACH) {
+#pragma clang diagnostic pop
 		int		err;
-		
+
+
 		if ( kauth_authorize_process(proc_ucred(p), KAUTH_PROCESS_CANTRACE, 
 									 t, (uintptr_t)&err, 0, 0) == 0 ) {
 			/* it's OK to attach */
@@ -294,11 +315,17 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 
 			proc_unlock(t);
 			pp = proc_find(t->p_oppid);
-			proc_reparentlocked(t, pp ? pp : initproc, 1, 0);
-			if (pp != PROC_NULL)
+			if (pp != PROC_NULL) {
+				proc_reparentlocked(t, pp, 1, 0);
 				proc_rele(pp);
+			} else {
+				/* original parent exited while traced */
+				proc_list_lock();
+				t->p_listflag |= P_LIST_DEADPARENT;
+				proc_list_unlock();
+				proc_reparentlocked(t, initproc, 1, 0);
+			}
 			proc_lock(t);
-			
 		}
 
 		t->p_oppid = 0;
@@ -313,7 +340,7 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 		 *	is resumed by adding NSIG to p_cursig. [see issig]
 		 */
 		proc_unlock(t);
-#if NOTYET
+#if CONFIG_MACF
 		error = mac_proc_check_signal(p, t, SIGKILL);
 		if (0 != error)
 			goto resume;
@@ -350,7 +377,7 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 			 * set trace bit 
 			 * we use sending SIGSTOP as a comparable security check.
 			 */
-#if NOTYET
+#if CONFIG_MACF
 			error = mac_proc_check_signal(p, t, SIGSTOP);
 			if (0 != error) {
 				goto out;
@@ -365,7 +392,7 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 			 * clear trace bit if on
 			 * we use sending SIGCONT as a comparable security check.
 			 */
-#if NOTYET
+#if CONFIG_MACF
 			error = mac_proc_check_signal(p, t, SIGCONT);
 			if (0 != error) {
 				goto out;
@@ -398,8 +425,10 @@ ptrace(struct proc *p, struct ptrace_args *uap, int32_t *retval)
 			goto out;
 		}
 		th_act = port_name_to_thread(CAST_MACH_PORT_TO_NAME(uap->addr));
-		if (th_act == THREAD_NULL)
-			return (ESRCH);
+		if (th_act == THREAD_NULL) {
+			error = ESRCH;
+			goto out;
+		}
 		ut = (uthread_t)get_bsdthread_info(th_act);
 		if (uap->data)
 			ut->uu_siglist |= sigmask(uap->data);
@@ -469,5 +498,13 @@ cantrace(proc_t cur_procp, kauth_cred_t creds, proc_t traced_procp, int *errp)
 		*errp = EBUSY;
 		return (0);
 	}
+
+#if CONFIG_MACF
+	if ((my_err = mac_proc_check_debug(cur_procp, traced_procp)) != 0) {
+		*errp = my_err;
+		return (0);
+	}
+#endif
+
 	return(1);
 }
