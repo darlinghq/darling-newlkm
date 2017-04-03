@@ -1,0 +1,1 @@
+#define NO_BSD_INLINES 0

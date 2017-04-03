@@ -1,0 +1,1 @@
+#define NKPERF 0

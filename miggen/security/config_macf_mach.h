@@ -1,0 +1,1 @@
+#define NCONFIG_MACF_MACH 0

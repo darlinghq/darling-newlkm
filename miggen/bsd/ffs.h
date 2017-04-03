@@ -1,0 +1,1 @@
+#define FFS 0

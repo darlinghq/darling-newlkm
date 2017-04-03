@@ -1,0 +1,1 @@
+#define KERNEL_STACK 1

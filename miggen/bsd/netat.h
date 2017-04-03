@@ -1,0 +1,1 @@
+#define NETAT 0
