@@ -94,7 +94,7 @@
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 #include <mach/mach_types.h>	/* to get vm_address_t */
-#include <mach/memory_object.h>
+//#include <mach/memory_object.h>
 #include <mach/std_types.h>	/* to get pointer_t */
 #include <mach/upl.h>
 #include <mach/vm_attributes.h>

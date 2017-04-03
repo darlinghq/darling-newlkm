@@ -86,14 +86,19 @@
 #include <kern/debug.h>
 #include <string.h>
 
+#ifdef __arm__
 #include <arm/machine_routines.h>
-#include <machine/machine_cpu.h>
 #include <arm/mp.h>
+#include <arm/misc_protos.h>
+#else
+#include <i386/machine_routines.h>
+#include <i386/mp.h>
+#include <i386/misc_protos.h>
+#endif
+#include <machine/machine_cpu.h>
 
 #include <sys/kdebug.h>
 #include <mach/branch_predicates.h>
-
-#include <arm/misc_protos.h>
 
 /*
  * This file works, don't mess with it.
@@ -104,6 +109,8 @@ unsigned int lock_wait_time[2] = { (unsigned int) -1, 0 };
 #define lck_mtx_data    lck_mtx_sw.lck_mtxd.lck_mtxd_data
 #define lck_mtx_waiters lck_mtx_sw.lck_mtxd.lck_mtxd_waiters
 #define lck_mtx_pri     lck_mtx_sw.lck_mtxd.lck_mtxd_pri
+
+#warning Implement locks?
 
 uint32_t LcksOpts;
 

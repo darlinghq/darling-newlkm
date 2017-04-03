@@ -83,6 +83,7 @@ NXConvertHostFloatToSwapped(float x)
     return u.sf;
 }
 
+#ifndef __DARLING__
 static __inline__ float
 NXConvertSwappedFloatToHost(NXSwappedFloat x)
 {
@@ -127,6 +128,7 @@ NXSwapDouble(NXSwappedDouble x)
 {  
     return (NXSwappedDouble)OSSwapInt64((uint64_t)x);
 }
+#endif
 
 /*
  * Identify the byte order
@@ -188,6 +190,7 @@ NXSwapBigLongLongToHost(
     return (unsigned long long)OSSwapBigToHostInt64((uint64_t)x);
 }
 
+#ifndef __DARLING__
 static __inline__
 double
 NXSwapBigDoubleToHost(
@@ -205,6 +208,7 @@ NXSwapBigFloatToHost(
 {
     return NXConvertSwappedFloatToHost((NXSwappedFloat)OSSwapBigToHostInt32((uint32_t)x));
 }
+#endif
 
 static __inline__
 unsigned short
@@ -242,6 +246,7 @@ NXSwapHostLongLongToBig(
     return (unsigned long long)OSSwapHostToBigInt64((uint64_t)x);
 }
 
+#ifndef __DARLING__
 static __inline__
 NXSwappedDouble
 NXSwapHostDoubleToBig(
@@ -259,6 +264,7 @@ NXSwapHostFloatToBig(
 {
     return (NXSwappedFloat)OSSwapHostToBigInt32((uint32_t)NXConvertHostFloatToSwapped(x));
 }
+#endif
 
 static __inline__
 unsigned short
@@ -296,6 +302,7 @@ NXSwapLittleLongLongToHost(
     return (unsigned long long)OSSwapLittleToHostInt64((uint64_t)x);
 }
 
+#ifndef __DARLING__
 static __inline__
 double
 NXSwapLittleDoubleToHost(
@@ -313,6 +320,7 @@ NXSwapLittleFloatToHost(
 {
     return NXConvertSwappedFloatToHost((NXSwappedFloat)OSSwapLittleToHostInt32((uint32_t)x));
 }
+#endif
 
 static __inline__
 unsigned short
@@ -350,6 +358,7 @@ NXSwapHostLongLongToLittle(
     return (unsigned long long)OSSwapHostToLittleInt64((uint64_t)x);
 }
 
+#ifndef __DARLING__
 static __inline__
 NXSwappedDouble
 NXSwapHostDoubleToLittle(
@@ -367,5 +376,6 @@ NXSwapHostFloatToLittle(
 {
     return (NXSwappedFloat)OSSwapHostToLittleInt32((uint32_t)NXConvertHostFloatToSwapped(x));
 }
+#endif
 
 #endif	/* _ARCHITECTURE_BYTE_ORDER_H_ */

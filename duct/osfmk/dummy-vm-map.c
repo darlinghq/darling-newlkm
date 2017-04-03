@@ -76,7 +76,7 @@
 #include <mach/vm_param.h>
 #include <mach/vm_behavior.h>
 #include <mach/vm_statistics.h>
-#include <mach/memory_object.h>
+//#include <mach/memory_object.h>
 #include <mach/mach_vm.h>
 #include <machine/cpu_capabilities.h>
 #include <mach/sdt.h>

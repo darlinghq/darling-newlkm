@@ -30,6 +30,15 @@
 #;* Boolean OSCompareAndSwap(SInt32 oldValue, SInt32 newValue, SInt32 *ptr) *
 #;***************************************************************************
 
+#ifdef __DARLING__
+#define _OSCompareAndSwap OSCompareAndSwap
+#define _OSCompareAndSwap64 OSCompareAndSwap64
+#define _OSCompareAndSwapPtr OSCompareAndSwapPtr
+#define _OSAddAtomicLong OSAddAtomicLong
+#define _OSAddAtomic64 OSAddAtomic64
+#define _OSAddAtomic OSAddAtomic
+#endif
+
 	.globl _OSCompareAndSwap
 _OSCompareAndSwap: #;oldValue, newValue, ptr
 #if	DEBUG

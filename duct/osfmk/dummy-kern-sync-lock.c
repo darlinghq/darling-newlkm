@@ -116,8 +116,6 @@ lck_attr_t              lock_set_attr;
 lck_grp_t               lock_set_grp;
 static lck_grp_attr_t   lock_set_grp_attr;
 
-
-
 /*
  *  ROUTINE:    lock_set_init       [private]
  *
@@ -128,7 +126,6 @@ lock_set_init(void)
 {
         kprintf("not implemented: lock_set_init()\n");
 }
-
 
 /*
  *  ROUTINE:    lock_set_create     [exported]

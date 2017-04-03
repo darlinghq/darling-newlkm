@@ -102,7 +102,11 @@ extern lck_attr_t	lock_set_attr;
 #define ulock_lock(ul)			lck_mtx_lock(&(ul)->lock)
 #define ulock_unlock(ul)		lck_mtx_unlock(&(ul)->lock)
 
+#ifdef __DARLING__
+extern void lock_set_init(void);
+#else
 extern void lock_set_init(void) __attribute__((section("__TEXT, initcode")));
+#endif
 
 extern	kern_return_t	ulock_release_internal(
 					ulock_t		ulock,

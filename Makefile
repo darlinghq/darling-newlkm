@@ -1,5 +1,7 @@
 BUILD_ROOT ?= $(src)
 
+asflags-y := -D__DARLING__
+
 ccflags-y := -D__DARLING__ \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS/bsd \
@@ -76,6 +78,7 @@ ccflags-y := -D__DARLING__ \
 	-DCONFIG_WORKQUEUE \
 	-DCONFIG_HFS_STD \
 	-DCONFIG_HFS_TRIM \
+	-DCONFIG_TASK_MAX=512 \
 	-DNAMEDSTREAMS \
 	-DCONFIG_VOLFS \
 	-DCONFIG_IMGSRC_ACCESS \
@@ -112,11 +115,29 @@ ccflags-y := -D__DARLING__ \
 	-DCONFIG_MEMORYSTATUS \
 	-DCONFIG_JETSAM \
 	-DCONFIG_FREEZE \
+	-DCONFIG_ZLEAK_ALLOCATION_MAP_NUM=8192 \
+	-DCONFIG_ZLEAK_TRACE_MAP_NUM=4096 \
 	-DVM_PRESSURE_EVENTS \
 	-DCONFIG_KERNEL_0DAY_SYSCALL_HANDLER \
 	-DEVENTMETER \
 	-DCONFIG_APP_PROFILE=0 \
 	-DDEBUG
+
+miggen_cflags := -include $(BUILD_ROOT)/osfmk/duct/duct.h -include $(BUILD_ROOT)/osfmk/duct/duct_pre_xnu.h
+CFLAGS_task_server.o := $(miggen_cflags)
+CFLAGS_clock_server.o := $(miggen_cflags)
+CFLAGS_lock_set_server.o := $(miggen_cflags)
+CFLAGS_clock_priv_server.o := $(miggen_cflags)
+CFLAGS_processor_server.o := $(miggen_cflags)
+CFLAGS_host_priv_server.o := $(miggen_cflags)
+CFLAGS_host_security_server.o := $(miggen_cflags)
+CFLAGS_UNDReply_server.o := $(miggen_cflags)
+CFLAGS_mach_port_server.o := $(miggen_cflags)
+CFLAGS_default_pager_object_server.o := $(miggen_cflags)
+CFLAGS_mach_vm_server.o := $(miggen_cflags)
+CFLAGS_memory_object_name_server.o := $(miggen_cflags)
+CFLAGS_mach_host_server.o := $(miggen_cflags)
+CFLAGS_thread_act_server.o := $(miggen_cflags)
 
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
@@ -163,13 +184,53 @@ ifneq ($(KERNELRELEASE),)
 		osfmk/duct/duct_vm_kern.o \
 		osfmk/duct/duct_vm_map.o \
 		osfmk/duct/duct_vm_user.o \
+		osfmk/duct/duct_arm_locks_arm.o \
 		osfmk/kern/clock_oldops.o \
+		osfmk/kern/ipc_clock.o \
 		osfmk/kern/ipc_tt.o \
+		osfmk/kern/ipc_sync.o \
 		osfmk/kern/host.o \
+		osfmk/kern/ipc_host.o \
+		osfmk/kern/ipc_kobject.o \
+		osfmk/kern/mk_timer.o \
+		osfmk/kern/ipc_mig.o \
+		osfmk/kern/locks.o \
 		duct/osfmk/dummy-kern.o \
 		duct/osfmk/dummy-vm-resident.o \
 		duct/osfmk/dummy-kern-thread-call.o \
-		duct/osfmk/dummy-vm-map.o
+		duct/osfmk/dummy-vm-map.o \
+		duct/osfmk/dummy-vm-user.o \
+		duct/osfmk/dummy-kern-task.o \
+		duct/osfmk/dummy-kern-thread.o \
+		duct/osfmk/dummy-arm-locks-arm.o \
+		duct/osfmk/dummy-misc.o \
+		duct/osfmk/dummy-kern-processor.o \
+		duct/osfmk/dummy-kern-syscall-emulation.o \
+		duct/osfmk/dummy-kern-zalloc.o \
+		duct/osfmk/dummy-kern-sync-lock.o \
+		duct/osfmk/dummy-vm-memory-object.o \
+		duct/osfmk/dummy-kern-kmod.o \
+		duct/osfmk/dummy-vm-kern.o \
+		duct/osfmk/dummy-kern-thread-act.o \
+		duct/osfmk/dummy-kern-host-notify.o \
+		libkern/gen/OSAtomicOperations.o \
+		libkern/x86_64/OSAtomic.o \
+		miggen/osfmk/mach/task_server.o \
+		miggen/osfmk/mach/clock_server.o \
+		miggen/osfmk/mach/clock_priv_server.o \
+		miggen/osfmk/mach/processor_server.o \
+		miggen/osfmk/mach/host_priv_server.o \
+		miggen/osfmk/mach/host_security_server.o \
+		miggen/osfmk/mach/lock_set_server.o \
+		miggen/osfmk/mach/mach_port_server.o \
+		miggen/osfmk/mach/mach_vm_server.o \
+		miggen/osfmk/mach/mach_host_server.o \
+		miggen/osfmk/mach/memory_object_name_server.o \
+		miggen/osfmk/mach/thread_act_server.o \
+		miggen/osfmk/default_pager/default_pager_object_server.o \
+		miggen/osfmk/UserNotification/UNDReply_server.o \
+		pexpert/duct/duct_gen_bootargs.o \
+		pexpert/duct/duct_pe_kprintf.o \
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.

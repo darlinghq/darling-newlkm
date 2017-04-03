@@ -90,6 +90,11 @@ typedef struct uslock_debug {
 	unsigned char	unlock_cpu;
 } uslock_debug;
 
+#if defined (__DARLING__)
+typedef struct spinlock     usimple_lock_data_t;
+typedef struct spinlock   * usimple_lock_t;
+
+#else
 typedef struct slock {
 	hw_lock_data_t	interlock;	/* must be first... see lock.c */
 #if	USLOCK_DEBUG
@@ -98,6 +103,7 @@ typedef struct slock {
 	uslock_debug	debug;
 #endif
 } usimple_lock_data_t, *usimple_lock_t;
+#endif
 
 extern void			i386_lock_unlock_with_flush(
 					hw_lock_t);

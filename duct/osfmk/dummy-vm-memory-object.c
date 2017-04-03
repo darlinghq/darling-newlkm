@@ -76,7 +76,7 @@
 
 #include <mach/mig.h>
 #include <mach/kern_return.h>
-#include <mach/memory_object.h>
+//#include <mach/memory_object.h>
 #include <mach/memory_object_default.h>
 #include <mach/memory_object_control_server.h>
 #include <mach/host_priv_server.h>

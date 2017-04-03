@@ -70,6 +70,12 @@
  *	Functions for letting a port represent a kernel object.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#include <duct/duct_kern_printf.h>
+#endif
+
 #include <mach_debug.h>
 #include <mach_ipc_test.h>
 #include <mach_machine_routines.h>
@@ -110,7 +116,7 @@
 #include <device/device_types.h>
 #include <device/device_server.h>
 
-#include <UserNotification/UNDReplyServer.h>
+#include <UserNotification/UNDReply_server.h>
 
 #if	CONFIG_AUDIT
 #include <kern/audit_sessionport.h>
@@ -138,6 +144,12 @@
 #include <vm/vm_protos.h>
 
 #include <security/mac_mach_internal.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
+
 
 /*
  *	Routine:	ipc_kobject_notify
@@ -172,8 +184,6 @@ mach_msg_size_t mig_reply_size;
 #if CONFIG_MACF
 #include <mach/security_server.h>
 #endif
-
-
 
 const struct mig_subsystem *mig_e[] = {
         (const struct mig_subsystem *)&mach_vm_subsystem,
@@ -210,6 +220,7 @@ const struct mig_subsystem *mig_e[] = {
 	(const struct mig_subsystem *)&security_subsystem,
 #endif
 };
+
 
 void
 mig_init(void)
@@ -341,9 +352,19 @@ ipc_kobject_server(
 	 * to perform the kernel function
 	 */
 	{
+#if 0
+	    kprintf("[Mach] Message has routine %p", ptr->routine);
+	    panic_print_symbol_name(ptr->routine);
+	    kprintf("\n");
+#endif
 	    if (ptr) {	
+            #if defined (__DARLING__)
+                printk ( KERN_NOTICE "- kobject routine: %pF\n", ptr->routine);
+            #endif
+
 		(*ptr->routine)(request->ikm_header, reply->ikm_header);
 		kernel_task->messages_received++;
+
 	    }
 	    else {
 		if (!ipc_kobject_notify(request->ikm_header, reply->ikm_header)){

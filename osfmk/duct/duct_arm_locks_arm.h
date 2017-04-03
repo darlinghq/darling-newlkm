@@ -38,7 +38,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 
+#ifdef __arm__
 #include <arm/lock.h>
+#else
+#include <i386/lock.h>
+#include <i386/simple_lock.h>
+#endif
 
 extern void usimple_lock_init (usimple_lock_t lock, unsigned short tag);
 extern void usimple_lock (usimple_lock_t lock);

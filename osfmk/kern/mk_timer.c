@@ -34,6 +34,11 @@
  *  Created.
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_port_server.h>
@@ -44,6 +49,10 @@
 
 #include <kern/mk_timer.h>
 #include <kern/thread_call.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 static zone_t		mk_timer_zone;
 

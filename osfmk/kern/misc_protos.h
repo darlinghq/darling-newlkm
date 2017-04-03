@@ -225,5 +225,11 @@ struct kmod_info_t;
 
 extern uint64_t early_random(void);
 
+#else
+extern kern_return_t	kernel_set_special_port(
+		host_priv_t	host_priv,
+		int 		which,
+		ipc_port_t	port);
+
 #endif
 #endif	/* _MISC_PROTOS_H_ */

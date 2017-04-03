@@ -87,6 +87,7 @@
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
 
+#include <kern/thread.h>
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/policy.h>

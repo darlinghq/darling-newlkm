@@ -61,6 +61,12 @@
  *
  *	Routines to implement host ports.
  */
+
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/message.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_host_server.h>
@@ -76,6 +82,11 @@
 #include <kern/spl.h>
 #include <ipc/ipc_port.h>
 #include <ipc/ipc_space.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
 
 /*
  * Forward declarations
@@ -141,8 +152,11 @@ void ipc_host_init(void)
 	/*
 	 *	And for master processor
 	 */
+#if defined (__DARLING__)
+#else
 	ipc_processor_init(master_processor);
 	ipc_processor_enable(master_processor);
+#endif
 }
 
 /*

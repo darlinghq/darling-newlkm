@@ -40,6 +40,7 @@
 #include <kern/queue.h>
 #include <kern/processor.h>
 #include <kern/pms.h>
+#include <kern/ast.h>
 #include <pexpert/pexpert.h>
 #include <mach/i386/thread_status.h>
 #include <mach/i386/vm_param.h>
@@ -59,6 +60,7 @@
 struct cpu_cons_buffer;
 struct cpu_desc_table;
 struct mca_state;
+typedef uint32_t ast_t;
 
 /*
  * Data structures embedded in per-cpu data:

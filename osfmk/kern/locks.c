@@ -53,6 +53,12 @@
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
+
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_ldebug.h>
 #include <debug.h>
 
@@ -82,6 +88,16 @@
 #include <../bsd/sys/lockstat.h>
 #endif
 
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
+
+
+decl_lck_mtx_data(static,lck_grp_lock)
+
+// #endif
+
 #define	LCK_MTX_SLEEP_CODE		0
 #define	LCK_MTX_SLEEP_DEADLINE_CODE	1
 #define	LCK_MTX_LCK_WAIT_CODE		2
@@ -91,7 +107,7 @@
 static queue_head_t	lck_grp_queue;
 static unsigned int	lck_grp_cnt;
 
-decl_lck_mtx_data(static,lck_grp_lock)
+
 static lck_mtx_ext_t lck_grp_lock_ext;
 
 lck_grp_attr_t	LockDefaultGroupAttr;
@@ -280,8 +296,12 @@ void
 lck_grp_deallocate(
 	lck_grp_t	*grp)
 {
+#if defined (__DARLING__)
+     kprintf ("lck_grp_deallocate () not yet implemented\n");
+#else
 	if (hw_atomic_sub(&grp->lck_grp_refcnt, 1) == 0)
 	 	kfree(grp, sizeof(lck_grp_t));
+#endif
 }
 
 /*
@@ -306,7 +326,12 @@ lck_grp_lckcnt_incr(
 		lckcnt = &grp->lck_grp_rwcnt;
 		break;
 	default:
+#if defined (__DARLING__)
+        panic ("lck_grp_lckcnt_incr (): invalid lock type: %d\n", lck_type);
+        return;
+#else
 		return panic("lck_grp_lckcnt_incr(): invalid lock type: %d\n", lck_type);
+#endif
 	}
 
 	(void)hw_atomic_add(lckcnt, 1);
@@ -334,7 +359,12 @@ lck_grp_lckcnt_decr(
 		lckcnt = &grp->lck_grp_rwcnt;
 		break;
 	default:
+#if defined (__DARLING__)
+        panic ("lck_grp_lckcnt_decr (): invalid lock type: %d\n", lck_type);
+        return;
+#else
 		return panic("lck_grp_lckcnt_decr(): invalid lock type: %d\n", lck_type);
+#endif
 	}
 
 	(void)hw_atomic_sub(lckcnt, 1);
@@ -374,6 +404,8 @@ lck_attr_setdefault(
 #else
  	attr->lck_attr_val =  LCK_ATTR_DEBUG;
 #endif	/* !DEBUG */
+#elif defined(__arm__)
+    attr->lck_attr_val =  LCK_ATTR_DEBUG;
 #else
 #error Unknown architecture.
 #endif	/* __arm__ */
@@ -387,7 +419,11 @@ void
 lck_attr_setdebug(
 	lck_attr_t	*attr)
 {
+#if defined (__DARLING__)
+     kprintf ("lck_attr_setdebug () not yet implemented\n");
+#else
 	(void)hw_atomic_or(&attr->lck_attr_val, LCK_ATTR_DEBUG);
+#endif
 }
 
 /*
@@ -397,7 +433,11 @@ void
 lck_attr_cleardebug(
 	lck_attr_t	*attr)
 {
+#if defined (__DARLING__)
+     kprintf ("lck_attr_setdebug () not yet implemented\n");
+#else
 	(void)hw_atomic_and(&attr->lck_attr_val, ~LCK_ATTR_DEBUG);
+#endif
 }
 
 
@@ -408,7 +448,11 @@ void
 lck_attr_rw_shared_priority(
 	lck_attr_t	*attr)
 {
+#if defined (__DARLING__)
+     kprintf ("lck_attr_rw_shared_priority () not yet implemented\n");
+#else
 	(void)hw_atomic_or(&attr->lck_attr_val, LCK_ATTR_RW_SHARED_PRIORITY);
+#endif
 }
 
 
@@ -575,6 +619,9 @@ lck_mtx_lock_wait (
 	lck_mtx_t			*lck,
 	thread_t			holder)
 {
+#if defined (__DARLING__)
+	kprintf ("lck_mtx_lock_wait () not yet implemented\n");
+#else
 	thread_t		self = current_thread();
 	lck_mtx_t		*mutex;
 	integer_t		priority;
@@ -582,9 +629,13 @@ lck_mtx_lock_wait (
 #if	CONFIG_DTRACE
 	uint64_t		sleep_start = 0;
 
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_lock_wait () not yet implemented\n");
+#else
 	if (lockstat_probemap[LS_LCK_MTX_LOCK_BLOCK] || lockstat_probemap[LS_LCK_MTX_EXT_LOCK_BLOCK]) {
 		sleep_start = mach_absolute_time();
 	}
+#endif
 #endif
 
 	if (lck->lck_mtx_tag != LCK_MTX_TAG_INDIRECT)
@@ -610,7 +661,11 @@ lck_mtx_lock_wait (
 			MACHDBG_CODE(DBG_MACH_SCHED,MACH_PROMOTE) | DBG_FUNC_NONE,
 					holder->sched_pri, priority, holder, lck, 0);
 
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_lock_wait () not yet implemented\n");
+#else
 		set_sched_pri(holder, priority);
+#endif
 	}
 	thread_unlock(holder);
 	splx(s);
@@ -628,7 +683,11 @@ lck_mtx_lock_wait (
 	}
 
 	assert_wait((event_t)(((unsigned int*)lck)+((sizeof(lck_mtx_t)-1)/sizeof(unsigned int))), THREAD_UNINT);
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_lock_wait () not yet implemented\n");
+#else
 	lck_mtx_ilk_unlock(mutex);
+#endif
 
 	thread_block(THREAD_CONTINUE_NULL);
 
@@ -648,6 +707,8 @@ lck_mtx_lock_wait (
 		}
 	}
 #endif
+
+#endif
 }
 
 /*
@@ -664,6 +725,9 @@ int
 lck_mtx_lock_acquire(
 	lck_mtx_t		*lck)
 {
+#if defined (__DARLING__)
+	kprintf ("lck_mtx_lock_acquire () not yet implemented\n");
+#else
 	thread_t		thread = current_thread();
 	lck_mtx_t		*mutex;
 
@@ -691,7 +755,11 @@ lck_mtx_lock_acquire(
 				MACHDBG_CODE(DBG_MACH_SCHED,MACH_PROMOTE) | DBG_FUNC_NONE,
 						thread->sched_pri, priority, 0, lck, 0);
 
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_lock_acquire () not yet implemented\n");
+#else
 			set_sched_pri(thread, priority);
+#endif
 		}
 		thread_unlock(thread);
 		splx(s);
@@ -700,6 +768,8 @@ lck_mtx_lock_acquire(
 		mutex->lck_mtx_pri = 0;
 
 	return (mutex->lck_mtx_waiters);
+#endif
+	return 0;
 }
 
 /*
@@ -714,6 +784,9 @@ lck_mtx_unlock_wakeup (
 	lck_mtx_t			*lck,
 	thread_t			holder)
 {
+#if defined (__DARLING__)
+	kprintf ("lck_mtx_unlock_wakeup () not yet implemented\n");
+#else
 	thread_t		thread = current_thread();
 	lck_mtx_t		*mutex;
 
@@ -742,7 +815,11 @@ lck_mtx_unlock_wakeup (
 					MACHDBG_CODE(DBG_MACH_SCHED,MACH_DEMOTE) | DBG_FUNC_NONE,
 						  thread->sched_pri, DEPRESSPRI, 0, lck, 0);
 
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_unlock_wakeup () not yet implemented\n");
+#else
 				set_sched_pri(thread, DEPRESSPRI);
+#endif
 			}
 			else {
 				if (thread->priority < thread->sched_pri) {
@@ -753,7 +830,11 @@ lck_mtx_unlock_wakeup (
 									0, lck, 0);
 				}
 
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_lock_wait () not yet implemented\n");
+#else
 				SCHED(compute_priority)(thread, FALSE);
+#endif
 			}
 		}
 		thread_unlock(thread);
@@ -761,12 +842,16 @@ lck_mtx_unlock_wakeup (
 	}
 
 	KERNEL_DEBUG(MACHDBG_CODE(DBG_MACH_LOCKS, LCK_MTX_UNLCK_WAKEUP_CODE) | DBG_FUNC_END, 0, 0, 0, 0, 0);
+#endif
 }
 
 void
 lck_mtx_unlockspin_wakeup (
 	lck_mtx_t			*lck)
 {
+#if defined (__DARLING__)
+	kprintf ("lck_mtx_unlockspin_wakeup () not yet implemented\n");
+#else
 	assert(lck->lck_mtx_waiters > 0);
 	thread_wakeup_one((event_t)(((unsigned int*)lck)+(sizeof(lck_mtx_t)-1)/sizeof(unsigned int)));
 
@@ -776,7 +861,13 @@ lck_mtx_unlockspin_wakeup (
 	 * When there are waiters, we skip the hot-patch spot in the
 	 * fastpath, so we record it here.
 	 */
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_unlockspin_wakeup () not yet implemented\n");
+#else
 	LOCKSTAT_RECORD(LS_LCK_MTX_UNLOCK_RELEASE, lck, 0);
+#endif
+#endif
+
 #endif
 }
 
@@ -810,11 +901,15 @@ mutex_pause(uint32_t collisions)
 	        collisions = MAX_COLLISION - 1;
 	back_off = collision_backoffs[collisions];
 
+#if defined (__DARLING__)
+     kprintf ("BUG - mutex_pause () not yet implemented\n");
+#else
 	wait_result = assert_wait_timeout((event_t)mutex_pause, THREAD_UNINT, back_off, NSEC_PER_USEC);
 	assert(wait_result == THREAD_WAITING);
 
 	wait_result = thread_block(THREAD_CONTINUE_NULL);
 	assert(wait_result == THREAD_TIMED_OUT);
+#endif
 }
 
 
@@ -825,10 +920,17 @@ void
 lck_mtx_yield(
 	    lck_mtx_t	*lck)
 {
+#if defined (__DARLING__)
+	kprintf ("lck_mtx_yield () not yet implemented\n");
+#else
 	int	waiters;
 	
 #if DEBUG
+#if defined (__DARLING__)
+     kprintf ("lck_mtx_yield () not yet implemented\n");
+#else
 	lck_mtx_assert(lck, LCK_MTX_ASSERT_OWNED);
+#endif
 #endif /* DEBUG */
 	
 	if (lck->lck_mtx_tag == LCK_MTX_TAG_INDIRECT)
@@ -844,6 +946,7 @@ lck_mtx_yield(
 		mutex_pause(0);
 		lck_mtx_lock(lck);
 	}
+#endif
 }
 
 
@@ -1040,7 +1143,12 @@ lock_alloc_EXT(
 	__unused unsigned short  tag0,
 	__unused unsigned short  tag1)
 {
+#if defined (__DARLING__)
+     kprintf ("lock_alloc_EXT () not yet implemented\n");
+     return 0;
+#else
 	return( lck_rw_alloc_init( &LockCompatGroup, LCK_ATTR_NULL));
+#endif
 }
 
 void
@@ -1078,7 +1186,12 @@ boolean_t
 lock_read_to_write_EXT(
 	lck_rw_t	*lock)
 {
+#if defined (__DARLING__)
+     kprintf ("lock_read_to_write_EXT () not yet implemented\n");
+     return 0;
+#else
 	return( lck_rw_lock_shared_to_exclusive(lock));
+#endif
 }
 
 void
@@ -1092,7 +1205,11 @@ void
 lock_write_to_read_EXT(
 	lck_rw_t	*lock)
 {
+#if defined (__DARLING__)
+     kprintf ("lock_write_to_read_EXT () not yet implemented\n");
+#else
 	lck_rw_lock_exclusive_to_shared(lock);
+#endif
 }
 
 wait_result_t

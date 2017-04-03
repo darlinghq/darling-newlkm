@@ -28,20 +28,8 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
 */
-
-#ifndef DUCT_KERN_PRINTF_H
-#define DUCT_KERN_PRINTF_H
 
 #include <mach/mach_types.h>
 
-#ifdef __arm__
-#include <mach/arm/boolean.h>
-#else
-#include <mach/i386/boolean.h>
-#endif
-extern int duct_printf(const char * param, ...);
-
-#endif // DUCT_KERN_PRINTF_H
+extern boolean_t PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_arg);
