@@ -25,6 +25,12 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/notify.h>
 #include <ipc/ipc_port.h>
@@ -35,6 +41,10 @@
 #include <mach/vm_map.h>
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 extern void fileport_releasefg(struct fileglob *);
 

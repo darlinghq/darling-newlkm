@@ -28,65 +28,17 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
 */
 
-#include "duct.h"
-#include "duct_pre_xnu.h"
-#include "duct_atomic.h"
+#ifndef BSD_COMPAT_KEVMACHPORTFD_H
+#define BSD_COMPAT_KEVMACHPORTFD_H
 
-// arm/atomic.s
+#include "duct/duct.h"
+#include "duct/duct_pre_xnu.h"
+#include <mach/mach_types.h>
+#include <kern/wait_queue.h>
 
-uint32_t hw_compare_and_store (uint32_t oldval, uint32_t newval, volatile uint32_t * dest)
-{
-        return (atomic_cmpxchg ((atomic_t *) dest, oldval, newval) == oldval) ? 1 : 0;
-}
+extern void compat_kevmachportfd_raise (void * fdctx);
+extern int compat_kevmachportfd (mach_port_name_t port_name, wait_queue_t waitq);
 
-
-uint32_t hw_atomic_add (volatile uint32_t * dest, uint32_t mask)
-{
-        return atomic_add_return (mask, (atomic_t *) dest);
-}
-
-uint32_t hw_atomic_sub (volatile uint32_t * dest, uint32_t mask)
-{
-        return atomic_sub_return (mask, (atomic_t *) dest);
-}
-
-
-// ref: include/linux/atomic.h
-void hw_atomic_and_noret (volatile uint32_t * dest, uint32_t mask)
-{
-        int     old;
-        int     new;
-
-        do {
-                old     = atomic_read ((atomic_t *) dest);
-                new     = old & mask;
-        } while (atomic_cmpxchg ((atomic_t *) dest, old, new) != old);
-}
-
-
-void hw_atomic_or_noret (volatile uint32_t * dest, uint32_t mask)
-{
-        int     old;
-        int     new;
-
-        do {
-                old     = atomic_read ((atomic_t *) dest);
-                new     = old | mask;
-        } while (atomic_cmpxchg ((atomic_t *) dest, old, new) != old);
-}
-
-uint32_t hw_atomic_or (volatile uint32_t * dest, uint32_t mask)
-{
-        int     old;
-        int     new;
-
-        do {
-                old     = atomic_read ((atomic_t *) dest);
-                new     = old | mask;
-        } while (atomic_cmpxchg ((atomic_t *) dest, old, new) != old);
-        return new;
-}
+#endif  // BSD_COMPAT_KEVMACHPORTFD_H

@@ -138,6 +138,10 @@ CFLAGS_mach_vm_server.o := $(miggen_cflags)
 CFLAGS_memory_object_name_server.o := $(miggen_cflags)
 CFLAGS_mach_host_server.o := $(miggen_cflags)
 CFLAGS_thread_act_server.o := $(miggen_cflags)
+CFLAGS_processor_set_server.o := $(miggen_cflags)
+CFLAGS_vm32_map_server.o := $(miggen_cflags)
+CFLAGS_device_server.o := $(miggen_cflags)
+CFLAGS_clock_reply_user.o := $(miggen_cflags)
 
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
@@ -163,6 +167,7 @@ ifneq ($(KERNELRELEASE),)
 		osfmk/ipc/ipc_port.o \
 		osfmk/kern/sync_sema.o \
 		linux/down_interruptible.o \
+		linux/compat_kevmachportfd.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
 		osfmk/duct/duct_kern_clock.o \
@@ -185,10 +190,12 @@ ifneq ($(KERNELRELEASE),)
 		osfmk/duct/duct_vm_map.o \
 		osfmk/duct/duct_vm_user.o \
 		osfmk/duct/duct_arm_locks_arm.o \
+		osfmk/duct/duct_fileport.o \
 		osfmk/kern/clock_oldops.o \
 		osfmk/kern/ipc_clock.o \
 		osfmk/kern/ipc_tt.o \
 		osfmk/kern/ipc_sync.o \
+		osfmk/kern/ipc_misc.o \
 		osfmk/kern/host.o \
 		osfmk/kern/ipc_host.o \
 		osfmk/kern/ipc_kobject.o \
@@ -202,17 +209,27 @@ ifneq ($(KERNELRELEASE),)
 		duct/osfmk/dummy-vm-user.o \
 		duct/osfmk/dummy-kern-task.o \
 		duct/osfmk/dummy-kern-thread.o \
+		duct/osfmk/dummy-kern-audit-sessionport.o \
 		duct/osfmk/dummy-arm-locks-arm.o \
 		duct/osfmk/dummy-misc.o \
 		duct/osfmk/dummy-kern-processor.o \
 		duct/osfmk/dummy-kern-syscall-emulation.o \
 		duct/osfmk/dummy-kern-zalloc.o \
 		duct/osfmk/dummy-kern-sync-lock.o \
+		duct/osfmk/dummy-kern-machine.o \
+		duct/osfmk/dummy-kern-clock-oldops.o \
+		duct/osfmk/dummy-kern-thread-policy.o \
+		duct/osfmk/dummy-kern-task-policy.o \
+		duct/osfmk/dummy-kern-mk-sp.o \
 		duct/osfmk/dummy-vm-memory-object.o \
 		duct/osfmk/dummy-kern-kmod.o \
 		duct/osfmk/dummy-vm-kern.o \
+		duct/osfmk/dummy-vm-debug.o \
 		duct/osfmk/dummy-kern-thread-act.o \
 		duct/osfmk/dummy-kern-host-notify.o \
+		duct/bsd/dummy-kdebug.o \
+		duct/bsd/dummy-init.o \
+		duct/bsd/dummy-sched.o \
 		libkern/gen/OSAtomicOperations.o \
 		libkern/x86_64/OSAtomic.o \
 		miggen/osfmk/mach/task_server.o \
@@ -225,8 +242,11 @@ ifneq ($(KERNELRELEASE),)
 		miggen/osfmk/mach/mach_port_server.o \
 		miggen/osfmk/mach/mach_vm_server.o \
 		miggen/osfmk/mach/mach_host_server.o \
+		miggen/osfmk/mach/processor_set_server.o \
 		miggen/osfmk/mach/memory_object_name_server.o \
 		miggen/osfmk/mach/thread_act_server.o \
+		miggen/osfmk/mach/clock_reply_user.o \
+		miggen/osfmk/device/device_server.o \
 		miggen/osfmk/default_pager/default_pager_object_server.o \
 		miggen/osfmk/UserNotification/UNDReply_server.o \
 		pexpert/duct/duct_gen_bootargs.o \

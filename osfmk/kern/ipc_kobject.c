@@ -200,7 +200,7 @@ const struct mig_subsystem *mig_e[] = {
 	(const struct mig_subsystem *)&lock_set_subsystem,
 	(const struct mig_subsystem *)&task_subsystem,
 	(const struct mig_subsystem *)&thread_act_subsystem,
-#if VM32_SUPPORT
+#if VM32_SUPPORT && !defined(__DARLING__)
 	(const struct mig_subsystem *)&vm32_map_subsystem,
 #endif
 	(const struct mig_subsystem *)&UNDReply_subsystem,
