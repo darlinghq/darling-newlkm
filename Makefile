@@ -173,6 +173,7 @@ ifneq ($(KERNELRELEASE),)
 		linux/traps.o \
 		linux/task_registry.o \
 		linux/license.o \
+		linux/psynch/pthread_kill.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \

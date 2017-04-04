@@ -103,8 +103,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define LINUX_MAX_SCHEDULE_TIMEOUT      LINUX_LONG_MAX
 #undef MAX_SCHEDULE_TIMEOUT
 
-
-
 // linux/arch/arm/include/asm/current.h
 #define linux_current       (get_current())
 #undef current
@@ -114,6 +112,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef IA32_PAGE_OFFSET
 #define IA32_PAGE_OFFSET    ((linux_current->personality & ADDR_LIMIT_3GB) ? \
                     0xc0000000 : 0xFFFFe000)
+
+#define linux_si_pid _sifields._kill._pid
+#define linux_si_uid _sifields._kill._uid
 
 // linux/include/linux/wait.h
 #undef init_wait
