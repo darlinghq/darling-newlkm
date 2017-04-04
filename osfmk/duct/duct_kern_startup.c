@@ -132,7 +132,8 @@ void duct_kernel_bootstrap (void)
         duct_thread_init();
 
         thread          = current_thread ();
-        thread->task    = kernel_task;
+        if (thread != NULL)
+            thread->task    = kernel_task;
 
         kprintf ("current_thread(0x%p)\n", thread);
         kprintf ("kernel_task(0x%p)\n", kernel_task);

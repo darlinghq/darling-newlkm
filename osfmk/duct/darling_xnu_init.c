@@ -61,8 +61,8 @@ void darling_xnu_init ()
         duct_thread_bootstrap ();
         machine_startup ();
 
-        kprintf ("darling.xnu.init.2 ()\n");
-        machine_startup();
+        //kprintf ("darling.xnu.init.2 ()\n");
+        //machine_startup();
 }
 
 
