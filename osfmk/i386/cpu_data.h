@@ -313,6 +313,7 @@ extern cpu_data_t	cpu_data_master;
  * inline versions of these routines.  Everyone outside, must call
  * the real thing,
  */
+#ifndef __DARLING__
 static inline thread_t
 get_active_thread(void)
 {
@@ -320,6 +321,10 @@ get_active_thread(void)
 }
 #define current_thread_fast()		get_active_thread()
 #define current_thread()		current_thread_fast()
+#else
+#define current_thread_fast() current_thread()
+extern thread_t current_thread(void);
+#endif
 
 static inline boolean_t
 get_is64bit(void)

@@ -100,7 +100,21 @@ void duct_task_init (void)
 
 }
 
+void duct_task_destroy(task_t task)
+{
+        if (task == TASK_NULL) {
+                return;
+        }
 
+        if (task_deallocate_internal (task) > 0) {
+                return;
+        }
+
+        ipc_task_terminate (task);
+
+        printk(KERN_NOTICE "Freeing task %p\n", task);
+        duct_zfree(task_zone, task);
+}
 
 kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task)
 {

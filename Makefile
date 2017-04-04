@@ -171,6 +171,8 @@ ifneq ($(KERNELRELEASE),)
 		linux/down_interruptible.o \
 		linux/compat_kevmachportfd.o \
 		linux/traps.o \
+		linux/task_registry.o \
+		linux/license.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
@@ -270,7 +272,7 @@ all:
 	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
-	rm -f *.o *.ko
+	find . \( -name '*.o' -or -name '*.ko' \) -delete
 	rm -f *.mod.c
 	rm -rf modules.order Module.symvers
 

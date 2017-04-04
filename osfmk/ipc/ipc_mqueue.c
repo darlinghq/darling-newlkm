@@ -70,6 +70,7 @@
  */
     
 #if defined (__DARLING__)
+#include <linux/task_registry.h>
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
 #endif
@@ -582,8 +583,7 @@ ipc_mqueue_post(
 
                 if (lwait) {
                         struct task_struct    * ltask   = lwait->private;
-//                        receiver    = ltask->mach_thread;
-#warning GET MACH THREAD HERE
+                        receiver    = darling_thread_get(ltask->pid);
                         // thread_lock (receiver);
                 }
                 spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);

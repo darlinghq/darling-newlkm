@@ -32,6 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#include <linux/task_registry.h>
 #include "duct.h"
 #include "duct_pre_xnu.h"
 #include "duct_pcb.h"
@@ -45,8 +46,5 @@ void machine_set_current_thread (thread_t thread)
 {
         CurrentThread   = thread;
 
-#if 0
-        linux_current->mach_thread      = (void *) thread;
-#endif
-#warning SET MACH THREAD HERE?
+		darling_thread_register(thread);
 }

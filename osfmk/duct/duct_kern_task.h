@@ -43,6 +43,8 @@ extern void duct_task_init (void);
 
 extern kern_return_t duct_task_create_internal (task_t  parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task);
 
+extern void duct_task_destroy(task_t task);
+
 #if defined (MACH_KERNEL_PRIVATE)
 
 #define duct_current_task_fast()    (current_thread ()->task)

@@ -44,7 +44,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/ipc_tt.h>
 
 #include "duct_post_xnu.h"
-
+#include <linux/task_registry.h>
 
 static struct zone          *thread_zone;
 static lck_grp_attr_t       thread_lck_grp_attr;
@@ -371,6 +371,8 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
         /* Cache the task's map */
         new_thread->map = parent_task->map;
+
+#warning TODO: Add thread into task below!
 //
 //         /* Chain the thread onto the task's list */
 //         queue_enter(&parent_task->threads, new_thread, thread_t, task_threads);
@@ -503,11 +505,7 @@ static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_t
 thread_t current_thread (void)
 {
         // kprintf ("calling current thread on linux task: 0x%x\n", (unsigned int) linux_current);
-#if 0
-        return (thread_t) linux_current->mach_thread;
-#endif
-#warning GET CURRENT MACH THREAD HERE!
-		return 0;
+		return darling_thread_get_current();
 }
 
 void duct_thread_deallocate (thread_t thread)
