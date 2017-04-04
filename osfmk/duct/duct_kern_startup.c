@@ -54,7 +54,7 @@ static void duct_kernel_bootstrap_thread (void);
 void duct_wait_queue_bootstrap (void);
 
 // WC: should be in duct_startup.c
-void __init duct_kernel_early_bootstrap (void)
+void duct_kernel_early_bootstrap (void)
 {
         lck_mod_init ();
 
@@ -63,7 +63,7 @@ void __init duct_kernel_early_bootstrap (void)
 }
 
 // WC: should be in ovrt_startup.c
-void __init duct_kernel_bootstrap (void)
+void duct_kernel_bootstrap (void)
 {
         thread_t	thread;
 

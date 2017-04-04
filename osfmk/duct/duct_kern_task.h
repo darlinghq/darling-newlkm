@@ -39,7 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/vm_types.h>
 #include <kern/kern_types.h>
 
-extern void __init duct_task_init (void);
+extern void duct_task_init (void);
 
 extern kern_return_t duct_task_create_internal (task_t  parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task);
 

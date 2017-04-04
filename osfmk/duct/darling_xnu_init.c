@@ -44,23 +44,25 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <ipc/ipc_init.h>
 
 
-static void __init machine_startup (void);
+static void machine_startup (void);
+extern void duct_kernel_early_bootstrap(void);
+extern void duct_kernel_bootstrap(void);
 
 // [i386|arm]_init.h
 void darling_xnu_init ()
 {
-        // printk (KERN_NOTICE "darling_xnu_init () called");
+        kprintf ("darling_xnu_init () called");
         // kprintf (KERN_NOTICE "now print using xnu's kprintf ()\n");
 
 
-        // kprintf ("darling.xnu.init.1 ()\n");
+        kprintf ("darling.xnu.init.1 ()\n");
 
         duct_kernel_early_bootstrap ();
         duct_thread_bootstrap ();
         machine_startup ();
 
-        // kprintf ("darling.xnu.init.2 ()\n");
-
+        kprintf ("darling.xnu.init.2 ()\n");
+        machine_startup();
 }
 
 
@@ -76,6 +78,8 @@ static void machine_startup ()
 
 #define CLONE_STOPPED   0x02000000
 
+#warning IMPLEMENT CREATING MACH THREAD!
+#if 0
 // WC: ref to fork_create_child ()
 void * darling_copy_mach_thread (unsigned long clone_flags, struct task_struct * p, struct pt_regs * regs)
 {
@@ -206,6 +210,7 @@ void * darling_copy_mach_thread (unsigned long clone_flags, struct task_struct *
 ret:
         return thread;
 }
+#endif
 
 void darling_exit_mach_thread (void * mach_thread)
 {

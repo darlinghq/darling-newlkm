@@ -40,7 +40,7 @@
 #include	<kern/queue.h>
 
 #if defined (__DARLING__)
-extern void __init lck_mod_init (void);
+extern void lck_mod_init (void);
 #else
 extern void				lck_mod_init(
 								void) __attribute__((section("__TEXT, initcode")));

@@ -38,7 +38,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <mach/vm_types.h>
 
-extern void __init duct_vm_map_init (void);
+extern void duct_vm_map_init (void);
 
 /* WC - different interface */
 extern vm_map_t duct_vm_map_create (struct mm_struct * linux_mm);

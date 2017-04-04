@@ -38,8 +38,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 
-extern void __init duct_thread_bootstrap (void);
-extern void __init duct_thread_init (void);
+extern void duct_thread_bootstrap (void);
+extern void duct_thread_init (void);
 
 extern kern_return_t duct_thread_create (task_t task, thread_t * new_thread);
 

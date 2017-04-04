@@ -170,6 +170,8 @@ ifneq ($(KERNELRELEASE),)
 		osfmk/kern/sync_sema.o \
 		linux/down_interruptible.o \
 		linux/compat_kevmachportfd.o \
+		linux/traps.o \
+		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
 		osfmk/duct/duct_kern_clock.o \

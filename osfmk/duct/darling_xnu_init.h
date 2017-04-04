@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <mach/mach_types.h>
 
-extern void __init darling_xnu_init (void);
+extern void darling_xnu_init (void);
 
 extern void * darling_copy_mach_thread (unsigned long clone_flags, struct task_struct * p, struct pt_regs * regs);
 

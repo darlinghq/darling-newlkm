@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef DUCT_KERN_STARTUP_H
 #define DUCT_KERN_STARTUP_H
 
-extern void __init duct_kernel_early_bootstrap (void);
-extern void __init duct_kernel_bootstrap (void);
+extern void duct_kernel_early_bootstrap (void);
+extern void duct_kernel_bootstrap (void);
 
 #endif // DUCT_KERN_STARTUP_H

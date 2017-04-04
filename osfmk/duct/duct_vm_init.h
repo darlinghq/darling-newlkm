@@ -38,6 +38,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <mach/vm_types.h>
 
-extern void __init duct_vm_mem_bootstrap (void);
+extern void duct_vm_mem_bootstrap (void);
 
 #endif // DUCT_VM_INIT_H
