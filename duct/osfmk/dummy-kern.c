@@ -20,9 +20,9 @@
 #include <mach_debug/vm_info.h>
 #include <mach_debug/page_info.h>
 
-#undef thread_block
+//#undef thread_block
 #undef thread_block_parameter
-#undef thread_wakeup_prim
+//#undef thread_wakeup_prim
 #undef assert_wait_deadline
 // osfmk/kern/sync_lock.c
 

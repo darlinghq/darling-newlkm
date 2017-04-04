@@ -1,6 +1,8 @@
 BUILD_ROOT ?= $(src)
 
-asflags-y := -D__DARLING__
+asflags-y := -D__DARLING__ -D__NO_UNDERSCORES__ \
+	-I$(BUILD_ROOT)/miggen/osfmk \
+	-I$(BUILD_ROOT)/osfmk
 
 ccflags-y := -D__DARLING__ \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS \
@@ -210,7 +212,7 @@ ifneq ($(KERNELRELEASE),)
 		duct/osfmk/dummy-kern-task.o \
 		duct/osfmk/dummy-kern-thread.o \
 		duct/osfmk/dummy-kern-audit-sessionport.o \
-		duct/osfmk/dummy-arm-locks-arm.o \
+		duct/osfmk/dummy-locks.o \
 		duct/osfmk/dummy-misc.o \
 		duct/osfmk/dummy-kern-processor.o \
 		duct/osfmk/dummy-kern-syscall-emulation.o \

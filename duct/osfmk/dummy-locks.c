@@ -141,7 +141,9 @@ void lck_mtx_free(lck_mtx_t * lck, lck_grp_t * grp)
         // kprintf("not implemented: lck_mtx_free()\n");
 }
 
-
+void lck_mtx_lock_spin(lck_mtx_t* lck)
+{
+}
 
 void lck_mtx_destroy(lck_mtx_t * lck, lck_grp_t * grp)
 {
@@ -172,6 +174,10 @@ void lck_rw_init(lck_rw_t * lck, lck_grp_t * grp, lck_attr_t * attr)
 void lck_spin_destroy(lck_spin_t * lck, lck_grp_t * grp)
 {
         // kprintf("not implemented: lck_spin_destroy()\n");
+}
+
+void lck_spin_unlock(lck_spin_t* lck)
+{
 }
 
 // void lck_spin_init(lck_spin_t * lck, lck_grp_t * grp,
