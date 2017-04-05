@@ -20,13 +20,14 @@
 #ifndef PSYNCH_MUTEX_H
 #define	PSYNCH_MUTEX_H
 #include "../api.h"
-#include "../ipc_types.h"
 
-int psynch_mutexwait_trap(mach_task_t* task,
+typedef struct task *task_t;
+
+int psynch_mutexwait_trap(task_t task,
 		struct psynch_mutexwait_args* args);
-int psynch_mutexdrop_trap(mach_task_t* task,
+int psynch_mutexdrop_trap(task_t task,
 		struct psynch_mutexdrop_args* args);
-int psynch_mutexdrop(mach_task_t* task, uint64_t mutex, uint32_t mgen,
+int psynch_mutexdrop(task_t task, uint64_t mutex, uint32_t mgen,
 		uint32_t ugen);
 
 #endif	/* PSYNCH_MUTEX_H */

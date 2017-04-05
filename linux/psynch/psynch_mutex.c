@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015 Lubos Dolezel
+ * Copyright (C) 2015-2017 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -18,13 +18,14 @@
  */
 
 #include "psynch_mutex.h"
-#include "../darling_task.h"
-#include "../debug.h"
+#include "../debug_print.h"
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
+#include <linux/hashtable.h>
+#include "../task_registry.h"
 
 struct pthread_mutex
 {
@@ -44,23 +45,32 @@ struct pthread_waiter
 	int wakeup;
 };
 
-static pthread_mutex_t* mutex_get(mach_task_t* task, uint64_t address);
-static void mutex_put(mach_task_t* task, pthread_mutex_t* mutex);
+struct task_mutexes
+{
+	spinlock_t mutex_wq_lock;
+	DECLARE_HASHTABLE(mutex_wq, 8);
+};
 
-int psynch_mutexwait_trap(mach_task_t* task,
+static pthread_mutex_t* mutex_get(task_t task, uint64_t address);
+static void mutex_put(task_t task, pthread_mutex_t* mutex);
+static struct task_mutexes* task_mutexes_get(void);
+
+int psynch_mutexwait_trap(task_t task,
 		struct psynch_mutexwait_args* in_args)
 {
 	struct psynch_mutexwait_args args;
 	struct pthread_waiter waiter;
 	pthread_mutex_t* mutex;
 	int retval = 0;
+	struct task_mutexes* m;
     
 	if (copy_from_user(&args, in_args, sizeof(args)))
 		return -EFAULT;
     
 	debug_msg("psynch_mutexwait_trap(%d): mutex=0x%llx, mgen=0x%x\n",
 			current->pid, args.mutex, args.mgen);
-	spin_lock(&task->mutex_wq_lock);
+	m = task_mutexes_get();
+	spin_lock(&m->mutex_wq_lock);
     
 	mutex = mutex_get(task, args.mutex);
     
@@ -74,7 +84,7 @@ int psynch_mutexwait_trap(mach_task_t* task,
 		mutex_put(task, mutex);
 		mutex_put(task, mutex);
 		
-		spin_unlock(&task->mutex_wq_lock);
+		spin_unlock(&m->mutex_wq_lock);
 
 		goto out;
 	}
@@ -82,11 +92,11 @@ int psynch_mutexwait_trap(mach_task_t* task,
 	waiter.wakeup = 0;
 	list_add_tail(&waiter.entry, &mutex->waiting);
 	
-	spin_unlock(&task->mutex_wq_lock);
+	spin_unlock(&m->mutex_wq_lock);
 	
 	retval = wait_event_interruptible(mutex->wq, waiter.wakeup != 0);
 	
-	spin_lock(&task->mutex_wq_lock);
+	spin_lock(&m->mutex_wq_lock);
 	list_del(&waiter.entry);
 	
 	if (waiter.wakeup)
@@ -97,13 +107,13 @@ int psynch_mutexwait_trap(mach_task_t* task,
 	debug_msg("(%d)--> retval: 0x%x\n", current->pid, retval);
 	
 	mutex_put(task, mutex);
-	spin_unlock(&task->mutex_wq_lock);
+	spin_unlock(&m->mutex_wq_lock);
 	
 out:
 	return retval;
 }
 
-int psynch_mutexdrop_trap(mach_task_t* task,
+int psynch_mutexdrop_trap(task_t task,
 		struct psynch_mutexdrop_args* in_args)
 {
 	struct psynch_mutexdrop_args args;
@@ -114,14 +124,16 @@ int psynch_mutexdrop_trap(mach_task_t* task,
 	return psynch_mutexdrop(task, args.mutex, args.mgen, args.ugen);
 }
 
-int psynch_mutexdrop(mach_task_t* task, uint64_t in_mutex, uint32_t mgen,
+int psynch_mutexdrop(task_t task, uint64_t in_mutex, uint32_t mgen,
 		uint32_t ugen)
 {
 	pthread_mutex_t* mutex;
+	struct task_mutexes* m;
 	
 	debug_msg("psynch_mutexdrop(%d): mutex=0x%llx, mgen=0x%x\n",
 			current->pid, in_mutex, mgen);
-	spin_lock(&task->mutex_wq_lock);
+	m = task_mutexes_get();
+	spin_lock(&m->mutex_wq_lock);
     
 	mutex = mutex_get(task, in_mutex);
 	mutex->mgen = mgen;
@@ -140,15 +152,39 @@ int psynch_mutexdrop(mach_task_t* task, uint64_t in_mutex, uint32_t mgen,
 	} else
 		mutex->underlock = true;
 
-	spin_unlock(&task->mutex_wq_lock);
+	spin_unlock(&m->mutex_wq_lock);
 
     return 0;
 }
 
-pthread_mutex_t* mutex_get(mach_task_t* task, uint64_t address)
+struct task_mutexes* task_mutexes_get(void)
+{
+	struct task_mutexes* m;
+
+retry:
+   	m = darling_task_key_get(TASK_KEY_PSYNCH_MUTEX);
+	if (m != NULL)
+		return m;
+
+	m = (struct task_mutexes*) kmalloc(sizeof(*m), GFP_KERNEL);
+	hash_init(m->mutex_wq);
+	spin_lock_init(&m->mutex_wq_lock);
+
+	if (!darling_task_key_set(TASK_KEY_PSYNCH_MUTEX, m, (task_key_dtor) kfree))
+	{
+		kfree(m);
+		goto retry;
+	}
+
+	return m;
+}
+
+pthread_mutex_t* mutex_get(task_t task, uint64_t address)
 {
 	pthread_mutex_t* node;
-	hash_for_each_possible(task->mutex_wq, node, node, address)
+	struct task_mutexes* m = task_mutexes_get();
+
+	hash_for_each_possible(m->mutex_wq, node, node, address)
 	{
 		if (node->pointer != address)
 			continue;
@@ -165,12 +201,12 @@ pthread_mutex_t* mutex_get(mach_task_t* task, uint64_t address)
 
 	init_waitqueue_head(&node->wq);
 	INIT_LIST_HEAD(&node->waiting);
-	hash_add(task->mutex_wq, &node->node, address);
+	hash_add(m->mutex_wq, &node->node, address);
 
 	return node;
 }
 
-void mutex_put(mach_task_t* task, pthread_mutex_t* mutex)
+void mutex_put(task_t task, pthread_mutex_t* mutex)
 {
 	mutex->refcount--;
 
@@ -186,3 +222,4 @@ void mutex_put(mach_task_t* task, pthread_mutex_t* mutex)
 		debug_msg("!!!!!!! refcount is %d", mutex->refcount);
 	}
 }
+

@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015 Lubos Dolezel
+ * Copyright (C) 2015-2017 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -17,17 +17,18 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 #include "psynch_cv.h"
-#include "../mach_includes.h"
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/list.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
-#include "../darling_task.h"
-#include "../debug.h"
+#include <linux/spinlock.h>
+#include <linux/hashtable.h>
+#include "../debug_print.h"
 #include <stdbool.h>
 #include <linux/jiffies.h>
 #include "psynch_mutex.h"
+#include "../task_registry.h"
 
 struct pthread_cv
 {
@@ -45,17 +46,25 @@ struct pthread_waiter
 	int wakeup;
 };
 
-static pthread_cv_t* cv_get(mach_task_t* task, uint64_t address,
-		bool no_create);
-static void cv_put(mach_task_t* task, pthread_cv_t* cv);
+struct task_cvs
+{
+	spinlock_t cv_wq_lock;
+	DECLARE_HASHTABLE(cv_wq, 8);
+};
 
-int psynch_cvwait_trap(mach_task_t* task,
+static pthread_cv_t* cv_get(task_t task, uint64_t address,
+		bool no_create);
+static void cv_put(task_t task, pthread_cv_t* cv);
+static struct task_cvs* task_cvs_get(void);
+
+int psynch_cvwait_trap(task_t task,
 		struct psynch_cvwait_args* in_args)
 {
 	struct psynch_cvwait_args args;
 	struct pthread_waiter waiter;
 	pthread_cv_t* cv;
 	int retval;
+	struct task_cvs* m;
 	
 	if (copy_from_user(&args, in_args, sizeof(args)))
 		return -EFAULT;
@@ -65,7 +74,8 @@ int psynch_cvwait_trap(mach_task_t* task,
 	if (args.mutex != 0)
 		psynch_mutexdrop(task, args.mutex, args.mgen, args.ugen);
 	
-	spin_lock(&task->cv_wq_lock);
+	m = task_cvs_get();
+	spin_lock(&m->cv_wq_lock);
     
 	cv = cv_get(task, args.cv, false);
 	BUG_ON(cv == NULL);
@@ -73,7 +83,7 @@ int psynch_cvwait_trap(mach_task_t* task,
 	waiter.wakeup = 0;
 	list_add_tail(&waiter.entry, &cv->waiting);
 	
-	spin_unlock(&task->cv_wq_lock);
+	spin_unlock(&m->cv_wq_lock);
 	
 	// NOTE: args.usec seems to actually contain nsecs
 	debug_msg("\tWaiting(%p)\n", &waiter);
@@ -89,32 +99,34 @@ int psynch_cvwait_trap(mach_task_t* task,
 	
 	debug_msg("\tWoken up(%p)\n", &waiter);
 	
-	spin_lock(&task->cv_wq_lock);
+	spin_lock(&m->cv_wq_lock);
 	cv_put(task, cv);
-	spin_unlock(&task->cv_wq_lock);
+	spin_unlock(&m->cv_wq_lock);
 	
 	return retval;
 }
 
-int psynch_cvbroad_trap(mach_task_t* task,
+int psynch_cvbroad_trap(task_t task,
 		struct psynch_cvbroad_args* in_args)
 {
 	struct psynch_cvbroad_args args;
 	pthread_cv_t* cv;
 	struct list_head* item;
+	struct task_cvs* m;
 	
 	if (copy_from_user(&args, in_args, sizeof(args)))
 		return -EFAULT;
 	
 	debug_msg("psynch_cvbroad_trap(): cv=%p\n", (void*) args.cv);
-	spin_lock(&task->cv_wq_lock);
+	m = task_cvs_get();
+	spin_lock(&m->cv_wq_lock);
     
 	cv = cv_get(task, args.cv, true);
 	
 	if (cv == NULL)
 	{
 		// Nobody is waiting
-		spin_unlock(&task->cv_wq_lock);
+		spin_unlock(&m->cv_wq_lock);
 		return 0;
 	}
 	
@@ -130,31 +142,33 @@ int psynch_cvbroad_trap(mach_task_t* task,
 	
 	wake_up_interruptible(&cv->wq);
 	cv_put(task, cv);
-	spin_unlock(&task->cv_wq_lock);
+	spin_unlock(&m->cv_wq_lock);
 	
 	return 0x100 /* PTHRW_INC */;
 }
 
-int psynch_cvsignal_trap(mach_task_t* task,
+int psynch_cvsignal_trap(task_t task,
 		struct psynch_cvsignal_args* in_args)
 {
 	struct psynch_cvsignal_args args;
 	pthread_cv_t* cv;
 	struct pthread_waiter* waiter;
+	struct task_cvs* m;
 	
 	if (copy_from_user(&args, in_args, sizeof(args)))
 		return -EFAULT;
 	
 	debug_msg("psynch_cvsignal_trap(): cv=%p\n", (void*)args.cv);
 	
-	spin_lock(&task->cv_wq_lock);
+	m = task_cvs_get();
+	spin_lock(&m->cv_wq_lock);
 	
 	cv = cv_get(task, args.cv, true);
 	
 	if (cv == NULL)
 	{
 		// Nobody is waiting
-		spin_unlock(&task->cv_wq_lock);
+		spin_unlock(&m->cv_wq_lock);
 		return 0;
 	}
 	
@@ -165,15 +179,17 @@ int psynch_cvsignal_trap(mach_task_t* task,
 	
 	wake_up_interruptible(&cv->wq);
 	cv_put(task, cv);
-	spin_unlock(&task->cv_wq_lock);
+	spin_unlock(&m->cv_wq_lock);
 	
 	return 0x100 /* PTHRW_INC */;
 }
 
-pthread_cv_t* cv_get(mach_task_t* task, uint64_t address, bool no_create)
+pthread_cv_t* cv_get(task_t task, uint64_t address, bool no_create)
 {
 	pthread_cv_t* node;
-	hash_for_each_possible(task->cv_wq, node, node, address)
+	struct task_cvs* m = task_cvs_get();
+
+	hash_for_each_possible(m->cv_wq, node, node, address)
 	{
 		if (node->pointer != address)
 			continue;
@@ -191,12 +207,12 @@ pthread_cv_t* cv_get(mach_task_t* task, uint64_t address, bool no_create)
 
 	init_waitqueue_head(&node->wq);
 	INIT_LIST_HEAD(&node->waiting);
-	hash_add(task->cv_wq, &node->node, address);
+	hash_add(m->cv_wq, &node->node, address);
 
 	return node;
 }
 
-void cv_put(mach_task_t* task, pthread_cv_t* cv)
+void cv_put(task_t task, pthread_cv_t* cv)
 {
 	cv->refcount--;
 
@@ -206,3 +222,26 @@ void cv_put(mach_task_t* task, pthread_cv_t* cv)
 		kfree(cv);
 	}
 }
+
+struct task_cvs* task_cvs_get(void)
+{
+	struct task_cvs* m;
+
+retry:
+   	m = darling_task_key_get(TASK_KEY_PSYNCH_CV);
+	if (m != NULL)
+		return m;
+
+	m = (struct task_cvs*) kmalloc(sizeof(*m), GFP_KERNEL);
+	hash_init(m->cv_wq);
+	spin_lock_init(&m->cv_wq_lock);
+
+	if (!darling_task_key_set(TASK_KEY_PSYNCH_CV, m, (task_key_dtor) kfree))
+	{
+		kfree(m);
+		goto retry;
+	}
+
+	return m;
+}
+

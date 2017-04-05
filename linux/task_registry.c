@@ -16,12 +16,14 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
+#include <linux/types.h>
 #include "task_registry.h"
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/printk.h>
 #include <linux/rwlock.h>
+#include <linux/atomic.h>
 
 static rwlock_t my_task_lock, my_thread_lock;
 static struct rb_root all_tasks = RB_ROOT;
@@ -38,6 +40,9 @@ struct registry_entry
 		task_t task;
 		thread_t thread;
 	};
+
+	void* keys[TASK_KEY_COUNT];
+	task_key_dtor dtors[TASK_KEY_COUNT];
 };
 
 void darling_task_init(void)
@@ -46,9 +51,9 @@ void darling_task_init(void)
 	rwlock_init(&my_thread_lock);
 }
 
-task_t darling_task_get_current(void)
+static struct registry_entry* darling_task_get_current_entry(void)
 {
-	task_t ret = NULL;
+	struct registry_entry* ret = NULL;
 	struct rb_node* node;
 	
 	read_lock(&my_task_lock);
@@ -65,13 +70,19 @@ task_t darling_task_get_current(void)
 			node = node->rb_right;
 		else
 		{
-			ret = entry->task;
+			ret = entry;
 			break;
 		}
 	}
 	
 	read_unlock(&my_task_lock);
 	return ret;
+}
+
+task_t darling_task_get_current(void)
+{
+	struct registry_entry* ret = darling_task_get_current_entry();
+	return (ret) ? ret->task : NULL;
 }
 
 thread_t darling_thread_get_current(void)
@@ -236,6 +247,14 @@ void darling_task_deregister(task_t t)
 			node = node->rb_right;
 		else
 		{
+			int i;
+
+			for (i = 0; i < TASK_KEY_COUNT; i++)
+			{
+				if (entry->keys[i] != NULL)
+					entry->dtors[i](entry->keys[i]);
+			}
+
 			rb_erase(node, &all_tasks);
 			kfree(entry);
 			task_count--;
@@ -272,4 +291,26 @@ void darling_thread_deregister(thread_t t)
 	write_unlock(&my_thread_lock);
 }
 
+bool darling_task_key_set(unsigned int key, void* value, task_key_dtor dtor)
+{
+	struct registry_entry* entry;
+	entry = darling_task_get_current_entry();
+
+	if (entry->keys[key] != NULL)
+		return false;
+
+	if (cmpxchg(&entry->keys[key], NULL, value) != NULL)
+		return false;
+
+	entry->dtors[key] = dtor;
+
+	return true;
+}
+
+void* darling_task_key_get(unsigned int key)
+{
+	struct registry_entry* entry;
+	entry = darling_task_get_current_entry();
+	return entry ? entry->keys[key] : NULL;
+}
 

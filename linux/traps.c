@@ -37,6 +37,9 @@
 #include <mach/mach_traps.h>
 #include <duct/duct_post_xnu.h>
 #include "task_registry.h"
+#include "psynch/pthread_kill.h"
+#include "psynch/psynch_cv.h"
+#include "psynch/psynch_mutex.h"
 #include "debug_print.h"
 
 typedef long (*trap_handler)(task_t, ...);
@@ -52,7 +55,18 @@ static struct file_operations mach_chardev_ops = {
 #define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = (trap_handler) impl
 
 static const trap_handler mach_traps[40] = {
+	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
+
+	// PSYNCH
+	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
+	TRAP(NR_psynch_mutexwait_trap, psynch_mutexwait_trap),
+	TRAP(NR_psynch_mutexdrop_trap, psynch_mutexdrop_trap),
+	TRAP(NR_psynch_cvwait_trap, psynch_cvwait_trap),
+	TRAP(NR_psynch_cvsignal_trap, psynch_cvsignal_trap),
+	TRAP(NR_psynch_cvbroad_trap, psynch_cvbroad_trap),
+
+	// MACH IPC
 	TRAP(NR_mach_reply_port, mach_reply_port_entry),
 	TRAP(NR__kernelrpc_mach_port_mod_refs, _kernelrpc_mach_port_mod_refs_entry),
 	TRAP(NR_task_self_trap, task_self_trap_entry),
@@ -71,6 +85,12 @@ static const trap_handler mach_traps[40] = {
 	TRAP(NR__kernelrpc_mach_port_move_member_trap, _kernelrpc_mach_port_move_member_entry),
 	TRAP(NR__kernelrpc_mach_port_extract_member_trap, _kernelrpc_mach_port_extract_member_entry),
 	TRAP(NR__kernelrpc_mach_port_insert_member_trap, _kernelrpc_mach_port_insert_member_entry),
+
+	// MKTIMER
+	TRAP(NR_mk_timer_create_trap, mk_timer_create_entry),
+	TRAP(NR_mk_timer_arm_trap, mk_timer_arm_entry),
+	TRAP(NR_mk_timer_cancel_trap, mk_timer_cancel_entry),
+	TRAP(NR_mk_timer_destroy_trap, mk_timer_destroy_entry),
 };
 #undef TRAP
 
@@ -359,6 +379,43 @@ int semaphore_timedwait_entry(task_t task, struct semaphore_timedwait_args* in_a
 	out.nsec = args.nsec;
 
 	return semaphore_timedwait_trap(&out);
+}
+
+int mk_timer_create_entry(task_t task)
+{
+	return mk_timer_create_trap(NULL);
+}
+
+int mk_timer_arm_entry(task_t task, struct mk_timer_arm_args* in_args)
+{
+	struct mk_timer_arm_trap_args out;
+	copyargs(args, in_args);
+
+	out.name = args.timer_port;
+	out.expire_time = args.expire_time;
+
+	return mk_timer_arm_trap(&out);
+}
+
+int mk_timer_cancel_entry(task_t task, struct mk_timer_cancel_args* in_args)
+{
+	struct mk_timer_cancel_trap_args out;
+	copyargs(args, in_args);
+
+	out.name = args.timer_port;
+	out.result_time = (user_addr_t) args.result_time;
+
+	return mk_timer_cancel_trap(&out);
+}
+
+int mk_timer_destroy_entry(task_t task, struct mk_timer_destroy_args* in_args)
+{
+	struct mk_timer_destroy_trap_args out;
+	copyargs(args, in_args);
+
+	out.name = args.timer_port;
+
+	return mk_timer_destroy_trap(&out);
 }
 
 module_init(mach_init);

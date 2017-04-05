@@ -22,6 +22,12 @@
 typedef struct task *task_t;
 typedef struct thread *thread_t;
 
+enum {
+	TASK_KEY_PSYNCH_MUTEX = 0,
+	TASK_KEY_PSYNCH_CV,
+	TASK_KEY_COUNT = TASK_KEY_PSYNCH_CV + 1
+};
+
 void darling_task_init(void);
 
 task_t darling_task_get_current(void);
@@ -34,6 +40,11 @@ void darling_task_deregister(task_t t); // argument unused
 
 void darling_thread_register(thread_t t);
 void darling_thread_deregister(thread_t t); // argument unused
+
+// Poor man's task-local storage
+typedef void(*task_key_dtor)(void*);
+_Bool darling_task_key_set(unsigned int key, void* value, task_key_dtor dtor);
+void* darling_task_key_get(unsigned int key);
 
 #endif
 

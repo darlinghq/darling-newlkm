@@ -174,6 +174,8 @@ ifneq ($(KERNELRELEASE),)
 		linux/task_registry.o \
 		linux/license.o \
 		linux/psynch/pthread_kill.o \
+		linux/psynch/psynch_mutex.o \
+		linux/psynch/psynch_cv.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \

@@ -20,13 +20,14 @@
 #ifndef PSYNCH_CV_H
 #define PSYNCH_CV_H
 #include "../api.h"
-#include "../ipc_types.h"
 
-int psynch_cvwait_trap(mach_task_t* task,
+typedef struct task *task_t;
+
+int psynch_cvwait_trap(task_t task,
 		struct psynch_cvwait_args* args);
-int psynch_cvbroad_trap(mach_task_t* task,
+int psynch_cvbroad_trap(task_t task,
 		struct psynch_cvbroad_args* args);
-int psynch_cvsignal_trap(mach_task_t* task,
+int psynch_cvsignal_trap(task_t task,
 		struct psynch_cvsignal_args* args);
 
 #endif /* PSYNCH_CV_H */

@@ -19,7 +19,12 @@
 
 #ifndef LKM_API_H
 #define LKM_API_H
-#include <stdint.h>
+
+#ifdef KERNEL
+#	include <linux/types.h>
+#else
+#	include <stdint.h>
+#endif
 
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
