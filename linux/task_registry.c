@@ -124,7 +124,7 @@ void darling_task_register(task_t task)
 	struct registry_entry* entry;
 	struct rb_node **new, *parent = NULL;
 
-	entry = (struct registry_entry*) kmalloc(sizeof(struct registry_entry), GFP_KERNEL);
+	entry = (struct registry_entry*) kzalloc(sizeof(struct registry_entry), GFP_KERNEL);
 	entry->task = task;
 	entry->tid = current->tgid;
 
@@ -179,7 +179,7 @@ void darling_thread_register(thread_t thread)
 	struct registry_entry* entry;
 	struct rb_node **new, *parent = NULL;
 
-	entry = (struct registry_entry*) kmalloc(sizeof(struct registry_entry), GFP_KERNEL);
+	entry = (struct registry_entry*) kzalloc(sizeof(struct registry_entry), GFP_KERNEL);
 	entry->thread = thread;
 	entry->tid = current->pid;
 
@@ -252,7 +252,10 @@ void darling_task_deregister(task_t t)
 			for (i = 0; i < TASK_KEY_COUNT; i++)
 			{
 				if (entry->keys[i] != NULL)
+				{
+					// printk(KERN_NOTICE "ptr %d = %p\n", i, entry->keys[i]);
 					entry->dtors[i](entry->keys[i]);
+				}
 			}
 
 			rb_erase(node, &all_tasks);

@@ -149,7 +149,7 @@
 #endif /* CONFIG_COUNTERS */
 
 // task_t          kernel_task;
-// zone_t          task_zone;
+extern zone_t          task_zone;
 // lck_attr_t      task_lck_attr;
 // lck_grp_t       task_lck_grp;
 // lck_grp_attr_t  task_lck_grp_attr;
@@ -281,7 +281,16 @@ void
 task_deallocate(
     task_t      task)
 {
-        kprintf("- not implemented: task_deallocate()\n");
+        int refc = task_deallocate_internal (task);
+        if (refc > 0) {
+			    printk(KERN_NOTICE "Not freeing task, %d refs left\n", refc);
+                return;
+        }
+
+        ipc_task_terminate (task);
+
+        printk(KERN_NOTICE "Freeing task %p\n", task);
+        duct_zfree(task_zone, task);
 }
 
 /*

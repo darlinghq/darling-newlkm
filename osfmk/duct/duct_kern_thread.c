@@ -372,14 +372,13 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
         /* Cache the task's map */
         new_thread->map = parent_task->map;
 
-#warning TODO: Add thread into task below!
 //
 //         /* Chain the thread onto the task's list */
-//         queue_enter(&parent_task->threads, new_thread, thread_t, task_threads);
-//         parent_task->thread_count++;
+         queue_enter(&parent_task->threads, new_thread, thread_t, task_threads);
+         parent_task->thread_count++;
 //
 //         /* So terminating threads don't need to take the task lock to decrement */
-//         hw_atomic_add(&parent_task->active_thread_count, 1);
+         hw_atomic_add(&parent_task->active_thread_count, 1);
 //
 //         /* Protected by the tasks_threads_lock */
 //         new_thread->thread_id = ++thread_unique_id;
@@ -508,6 +507,17 @@ thread_t current_thread (void)
 		return darling_thread_get_current();
 }
 
+void duct_thread_destroy(thread_t thread)
+{
+	task_t task;
+	task = thread->task;
+	
+	thread->active = FALSE;
+	hw_atomic_add(&task->active_thread_count, -1);
+	
+	duct_thread_deallocate(thread);
+}
+
 void duct_thread_deallocate (thread_t thread)
 {
         task_t                task;
@@ -516,13 +526,13 @@ void duct_thread_deallocate (thread_t thread)
                 return;
         }
 
+        task    = thread->task;
+
         if (thread_deallocate_internal (thread) > 0) {
                 return;
         }
 
         ipc_thread_terminate (thread);
-
-        // task    = thread->task;
 
     // #ifdef MACH_BSD
     //     {
@@ -553,9 +563,17 @@ void duct_thread_deallocate (thread_t thread)
         // lck_mtx_destroy (&thread->mutex, &thread_lck_grp);
         // machine_thread_destroy (thread);
 
-        // WC - todo check below
-        // task_deallocate (task);
+        // Remove itself from thread list
+        task_lock(task);
 
+        queue_remove(&task->threads, thread, thread_t, task_threads);
+        task->thread_count--;
+
+        task_unlock(task);
+
+        task_deallocate (task);
+
+        kprintf("Deallocating thread %p\n", thread);
         duct_zfree (thread_zone, thread);
 }
 

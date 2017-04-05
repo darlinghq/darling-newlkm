@@ -50,10 +50,13 @@ int semaphore_timedwait_entry(task_t task, struct semaphore_timedwait_args* args
 int _kernelrpc_mach_port_move_member_entry(task_t task, struct mach_port_move_member_args* args);
 int _kernelrpc_mach_port_extract_member_entry(task_t task, struct mach_port_extract_member_args* args);
 int _kernelrpc_mach_port_insert_member_entry(task_t task, struct mach_port_insert_member_args* args);
+int _kernelrpc_mach_port_insert_right_entry(task_t task, struct mach_port_insert_right_args* args);
 
 int mk_timer_create_entry(task_t task);
 int mk_timer_arm_entry(task_t task, struct mk_timer_arm_args* args);
 int mk_timer_cancel_entry(task_t task, struct mk_timer_cancel_args* args);
 int mk_timer_destroy_entry(task_t task, struct mk_timer_destroy_args* args);
+
+int thread_death_announce_entry(task_t task);
 
 #endif

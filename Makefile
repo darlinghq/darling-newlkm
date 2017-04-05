@@ -4,7 +4,7 @@ asflags-y := -D__DARLING__ -D__NO_UNDERSCORES__ \
 	-I$(BUILD_ROOT)/miggen/osfmk \
 	-I$(BUILD_ROOT)/osfmk
 
-ccflags-y := -D__DARLING__ \
+ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS/bsd \
 	-DPAGE_SIZE_FIXED \

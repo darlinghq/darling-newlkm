@@ -67,6 +67,16 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR__kernelrpc_mach_port_move_member_trap,
 	NR__kernelrpc_mach_port_insert_member_trap,
 	NR__kernelrpc_mach_port_extract_member_trap,
+	NR_thread_death_announce,
+	NR__kernelrpc_mach_port_insert_right_trap,
+};
+
+struct mach_port_insert_right_args
+{
+	unsigned int task_right_name;
+	unsigned int port_name;
+	unsigned int right_name;
+	int right_type;
 };
 
 struct mach_port_mod_refs_args

@@ -48,7 +48,7 @@ extern kern_return_t duct_thread_create (task_t task, thread_t * new_thread);
 extern thread_t current_thread (void);
 
 extern void duct_thread_deallocate (thread_t thread);
-
+extern void duct_thread_destroy (thread_t thread);
 
 extern kern_return_t thread_set_cthread_self (uint32_t cthread);
 

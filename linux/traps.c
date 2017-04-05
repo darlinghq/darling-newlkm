@@ -35,6 +35,8 @@
 #include <duct/duct_kern_thread.h>
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
+#include <kern/task.h>
+#include <kern/queue.h>
 #include <duct/duct_post_xnu.h>
 #include "task_registry.h"
 #include "psynch/pthread_kill.h"
@@ -57,6 +59,9 @@ static struct file_operations mach_chardev_ops = {
 static const trap_handler mach_traps[40] = {
 	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
+
+	// INTERNAL
+	TRAP(NR_thread_death_announce, thread_death_announce_entry),
 
 	// PSYNCH
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -85,6 +90,7 @@ static const trap_handler mach_traps[40] = {
 	TRAP(NR__kernelrpc_mach_port_move_member_trap, _kernelrpc_mach_port_move_member_entry),
 	TRAP(NR__kernelrpc_mach_port_extract_member_trap, _kernelrpc_mach_port_extract_member_entry),
 	TRAP(NR__kernelrpc_mach_port_insert_member_trap, _kernelrpc_mach_port_insert_member_entry),
+	TRAP(NR__kernelrpc_mach_port_insert_right_trap, _kernelrpc_mach_port_insert_right_entry),
 
 	// MKTIMER
 	TRAP(NR_mk_timer_create_trap, mk_timer_create_entry),
@@ -139,6 +145,8 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		return -LINUX_EINVAL;
 
 	file->private_data = new_task;
+	
+	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
 	// Create a new thread_t
 	ret = duct_thread_create(new_task, &new_thread);
@@ -148,20 +156,41 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		return -LINUX_EINVAL;
 	}
 
+	// debug_msg("mach_dev_open().1 refc %d\n", new_thread->ref_count);
 	darling_task_register(new_task);
 	darling_thread_register(new_thread);
+	
+	task_deallocate(new_task);
+	thread_deallocate(new_thread);
+	
+	// debug_msg("mach_dev_open().2 refc %d\n", new_thread->ref_count);
+	
 	return 0;
 }
 
 int mach_dev_release(struct inode* ino, struct file* file)
 {
+	thread_t thread;
 	task_t my_task = (task_t) file->private_data;
 	
 	darling_task_deregister(my_task);
+	// darling_thread_deregister(NULL);
+	
+	task_lock(my_task);
+	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
+	while (!queue_empty(&my_task->threads))
+	{
+		thread = (thread_t) queue_first(&my_task->threads);
+		
+		// debug_msg("mach_dev_release() - thread refc %d\n", thread->ref_count);
+		task_unlock(my_task);
+		duct_thread_destroy(thread);
+		darling_thread_deregister(thread);
+		task_lock(my_task);
+	}
+	task_unlock(my_task);
 
-	darling_thread_deregister(NULL);
-
-	debug_msg("Destroying XNU task for pid %d\n", linux_current->pid);
+	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
 	duct_task_destroy(my_task);
 
 	return 0;
@@ -173,7 +202,7 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 
 	task_t task = (task_t) file->private_data;
 
-	kprintf("function 0x%x called...\n", ioctl_num);
+	debug_msg("function 0x%x called...\n", ioctl_num);
 
 	ioctl_num -= DARLING_MACH_API_BASE;
 
@@ -277,6 +306,19 @@ int _kernelrpc_mach_port_destroy(task_t task, struct mach_port_destroy_args* in_
 	out.name = args.port_right_name;
 
 	return _kernelrpc_mach_port_destroy_trap(&out);
+}
+
+int _kernelrpc_mach_port_insert_right_entry(task_t task, struct mach_port_insert_right_args* in_args)
+{
+	struct _kernelrpc_mach_port_insert_right_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_name;
+	out.poly = args.right_name;
+	out.polyPoly = args.right_type;
+
+	return _kernelrpc_mach_port_insert_right_trap(&out);
 }
 
 int _kernelrpc_mach_port_move_member_entry(task_t task, struct mach_port_move_member_args* in_args)
@@ -416,6 +458,19 @@ int mk_timer_destroy_entry(task_t task, struct mk_timer_destroy_args* in_args)
 	out.name = args.timer_port;
 
 	return mk_timer_destroy_trap(&out);
+}
+
+int thread_death_announce_entry(task_t task)
+{
+	thread_t thread = darling_thread_get_current();
+	if (thread != NULL)
+	{
+		duct_thread_destroy(thread);
+		darling_thread_deregister(thread);
+		return 0;
+	}
+
+	return -LINUX_ESRCH;
 }
 
 module_init(mach_init);
