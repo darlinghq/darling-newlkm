@@ -220,6 +220,13 @@ __END_DECLS
 
 #include <kern/call_entry.h>
 
+#ifdef __DARLING__
+#include <linux/workqueue.h>
+struct thread_call {
+	struct call_entry tc_call;
+	struct delayed_work tc_work;
+};
+#else
 struct thread_call {
 	struct call_entry 		tc_call;	/* Must be first */
 	uint64_t			tc_submit_count;
@@ -231,6 +238,7 @@ struct thread_call {
 
 	uint64_t			ttd; /* Time to deadline at creation */
 }; 
+#endif
 
 #define THREAD_CALL_ALLOC		0x01
 #define THREAD_CALL_WAIT		0x02
@@ -238,6 +246,10 @@ struct thread_call {
 typedef struct thread_call thread_call_data_t;
 
 extern void		thread_call_initialize(void);
+
+#ifdef __DARLING__
+extern void		thread_call_deinitialize(void);
+#endif
 
 extern void		thread_call_setup(
 					thread_call_t			call,

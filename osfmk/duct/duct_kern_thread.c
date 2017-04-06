@@ -472,7 +472,7 @@ static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_t
         kern_return_t       result;
         thread_t            thread;
 
-        if (task == TASK_NULL || task == kernel_task)
+        if (task == TASK_NULL /*|| task == kernel_task*/) // Lubos: we need to register kthreads to do IPC from them
                 return (KERN_INVALID_ARGUMENT);
 
         result  =

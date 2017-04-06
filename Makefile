@@ -188,6 +188,7 @@ ifneq ($(KERNELRELEASE),)
 		osfmk/duct/duct_kern_task.o \
 		osfmk/duct/duct_kern_thread_act.o \
 		osfmk/duct/duct_kern_thread.o \
+		osfmk/duct/duct_kern_thread_call.o \
 		osfmk/duct/duct_kern_waitqueue.o \
 		osfmk/duct/duct_kern_zalloc.o \
 		osfmk/duct/duct_libsa.o \

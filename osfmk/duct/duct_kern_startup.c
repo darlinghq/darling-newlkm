@@ -46,6 +46,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/locks.h>
 #include <kern/thread.h>
 #include <kern/clock.h>
+#include <kern/thread_call.h>
 #include <libkern/version.h>
 
 extern void compat_init (void);
@@ -154,7 +155,8 @@ void duct_kernel_bootstrap (void)
         //
         // kernel_bootstrap_kprintf ("calling load_context - done\n");
         // load_context(thread);
-
+        
+        thread_call_initialize();
 }
 
 

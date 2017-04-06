@@ -107,12 +107,13 @@ static struct miscdevice mach_dev = {
 };
 
 extern void darling_xnu_init(void);
+extern void darling_xnu_deinit(void);
 static int mach_init(void)
 {
 	int err = 0;
 
-	darling_xnu_init();
 	darling_task_init();
+	darling_xnu_init();
 
 	err = misc_register(&mach_dev);
 	if (err < 0)
@@ -127,6 +128,7 @@ fail:
 }
 static void mach_exit(void)
 {
+	darling_xnu_deinit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 }
@@ -254,6 +256,14 @@ int host_self_trap_entry(task_t task)
 
 int thread_self_trap_entry(task_t task)
 {
+	if (darling_thread_get_current() == NULL)
+	{
+		thread_t thread;
+		duct_thread_create(task, &thread);
+		thread_deallocate(thread);
+
+		darling_thread_register(thread);
+	}
 	return thread_self_trap(NULL);
 }
 

@@ -37,6 +37,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 extern void darling_xnu_init (void);
 
+extern void darling_xnu_deinit (void);
+
 extern void * darling_copy_mach_thread (unsigned long clone_flags, struct task_struct * p, struct pt_regs * regs);
 
 #endif // DARLING_XNU_INIT_H

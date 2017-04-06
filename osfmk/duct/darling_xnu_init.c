@@ -65,6 +65,12 @@ void darling_xnu_init ()
         //machine_startup();
 }
 
+void darling_xnu_deinit (void)
+{
+        thread_call_deinitialize();
+
+        // TODO: add many more!
+}
 
 // WC: should be in duct_model_dep.c
 static void machine_startup ()

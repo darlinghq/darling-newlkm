@@ -117,6 +117,7 @@ disable_ints_and_lock(void)
         return 0;
 }
 
+#if 0
 /*
  *  thread_call_initialize:
  *
@@ -137,6 +138,7 @@ thread_call_setup(
 {
         kprintf("not implemented: thread_call_setup()\n");
 }
+#endif
 
 #ifndef __LP64__
 
@@ -275,6 +277,7 @@ thread_call_enter1(
  *  Returns TRUE if the call was
  *  already on a queue.
  */
+#if 0
 boolean_t
 thread_call_enter_delayed(
         thread_call_t       call,
@@ -283,6 +286,7 @@ thread_call_enter_delayed(
         kprintf("not implemented: thread_call_enter_delayed()\n");
         return 0;
 }
+#endif
 
 boolean_t
 thread_call_enter1_delayed(
@@ -294,6 +298,7 @@ thread_call_enter1_delayed(
         return 0;
 }
 
+#if 0
 /*
  *  thread_call_cancel:
  *
@@ -309,6 +314,7 @@ thread_call_cancel(
         kprintf("not implemented: thread_call_cancel()\n");
         return 0;
 }
+#endif
 
 /*
  * Cancel a thread call.  If it cannot be cancelled (i.e.
