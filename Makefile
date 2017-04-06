@@ -173,6 +173,7 @@ ifneq ($(KERNELRELEASE),)
 		linux/traps.o \
 		linux/task_registry.o \
 		linux/license.o \
+		linux/host_info.o \
 		linux/psynch/pthread_kill.o \
 		linux/psynch/psynch_mutex.o \
 		linux/psynch/psynch_cv.o \

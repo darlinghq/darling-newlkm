@@ -156,8 +156,8 @@ host_info(
 	mach_msg_type_number_t	*count)
 {
 #if defined (__DARLING__)
-    kprintf("not implemented: host_info()\n");
-    return KERN_SUCCESS;
+	extern kern_return_t darling_host_info(host_flavor_t flavor, host_info_t info, mach_msg_type_number_t* count);
+	return darling_host_info(flavor, info, count);
 #else
 	if (host == HOST_NULL)
 		return (KERN_INVALID_ARGUMENT);
@@ -696,23 +696,28 @@ host_page_size(
  */
 extern char	version[];
 
+#ifdef __DARLING__
+#include <generated/utsrelease.h>
+#include <linux/api.h>
+static const char KERNEL_VERSION[] = "Darling Mach (API level " DARLING_MACH_API_VERSION_STR ") on Linux " UTS_RELEASE;
+#endif
+
 kern_return_t
 host_kernel_version(
 	host_t			host,
 	kernel_version_t	out_version)
 {
-#if defined (__DARLING__)
-#warning Implement host_kernel_version?
-    kprintf("not implemented: host_kernel_version()\n");
-    return -1;
-#else
 	if (host == HOST_NULL)
 		return(KERN_INVALID_ARGUMENT);
 
+#if defined (__DARLING__)
+	strncpy(out_version, KERNEL_VERSION, sizeof(KERNEL_VERSION));
+#else
+
 	(void) strncpy(out_version, version, sizeof(kernel_version_t));
+#endif
 
 	return(KERN_SUCCESS);
-#endif
 }
 
 /*
