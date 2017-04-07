@@ -101,7 +101,7 @@ add_custom_target(lkm
 )
 
 add_custom_target(lkm_install
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make install && depmod
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} install && depmod
 	COMMENT "Installing the Linux kernel module"
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
