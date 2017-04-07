@@ -102,10 +102,12 @@ typedef volatile unsigned long	vulong_t;
 /*
  * Deprecation macro
  */
+#ifndef __deprecated
 #if __GNUC__ >= 3
 #define __deprecated __attribute__((deprecated))
 #else
 #define __deprecated /* nothing */
+#endif
 #endif
 
 #endif	/* _MACH_TYPES_H_ */

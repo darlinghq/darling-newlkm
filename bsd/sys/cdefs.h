@@ -151,7 +151,9 @@
  * code using the deprecated functionality.  This may require turning on
  * such wardning with the -Wdeprecated flag.
  */
+#ifndef __deprecated
 #define __deprecated	__attribute__((deprecated))
+#endif
 
 /* __unavailable causes the compiler to error out when encountering
  * code using the tagged function of variable.
