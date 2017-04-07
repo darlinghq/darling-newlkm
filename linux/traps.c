@@ -46,6 +46,11 @@
 
 typedef long (*trap_handler)(task_t, ...);
 
+struct trap_entry {
+	trap_handler handler;
+	const char* name;
+};
+
 static struct file_operations mach_chardev_ops = {
 	.open           = mach_dev_open,
 	.release        = mach_dev_release,
@@ -54,9 +59,9 @@ static struct file_operations mach_chardev_ops = {
 	.owner          = THIS_MODULE
 };
 
-#define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = (trap_handler) impl
+#define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = { (trap_handler) impl, #impl }
 
-static const trap_handler mach_traps[40] = {
+static const struct trap_entry mach_traps[40] = {
 	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
 
@@ -201,20 +206,22 @@ int mach_dev_release(struct inode* ino, struct file* file)
 long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioctl_paramv)
 {
 	const unsigned int num_traps = sizeof(mach_traps) / sizeof(mach_traps[0]);
+	const struct trap_entry* entry;
 
 	task_t task = (task_t) file->private_data;
-
-	debug_msg("function 0x%x called...\n", ioctl_num);
 
 	ioctl_num -= DARLING_MACH_API_BASE;
 
 	if (ioctl_num >= num_traps)
 		return -LINUX_ENOSYS;
 
-	if (!mach_traps[ioctl_num])
+	entry = &mach_traps[ioctl_num];
+	if (!entry->handler)
 		return -LINUX_ENOSYS;
 
-	return mach_traps[ioctl_num](task, ioctl_paramv);
+	debug_msg("function %s (0x%x) called...\n", entry->name, ioctl_num);
+
+	return entry->handler(task, ioctl_paramv);
 }
 
 int mach_get_api_version(task_t task)
@@ -274,7 +281,7 @@ int _kernelrpc_mach_port_allocate_entry(task_t task, struct mach_port_allocate_a
 
 	out.target = args.task_right_name;
 	out.right = args.right_type;
-	out.name = args.out_right_name;
+	out.name = (user_addr_t) args.out_right_name;
 
 	return _kernelrpc_mach_port_allocate_trap(&out);
 }

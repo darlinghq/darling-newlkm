@@ -91,7 +91,10 @@ struct mach_port_allocate_args
 {
 	unsigned int task_right_name;
 	int right_type;
-	unsigned int out_right_name;
+	unsigned int* out_right_name;
+#ifdef __i386__
+	uint32_t pad1;
+#endif
 };
 
 struct mach_msg_overwrite_args
