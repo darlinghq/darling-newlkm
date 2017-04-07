@@ -1,1 +1,0 @@
-#define IPV6FIREWALL 1

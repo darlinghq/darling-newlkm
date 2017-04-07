@@ -1,12 +1,19 @@
-BUILD_ROOT ?= $(src)
+BUILD_ROOT := $(src)
+
+ifndef MIGDIR
+$(error Darling's kernel module is now built differently. \
+	Please run 'make lkm' and 'make lkm_install' inside your CMake build directory)
+endif
+
 
 asflags-y := -D__DARLING__ -D__NO_UNDERSCORES__ \
-	-I$(BUILD_ROOT)/miggen/osfmk \
+	-I$(MIGDIR)/osfmk \
 	-I$(BUILD_ROOT)/osfmk
 
 ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS/bsd \
+	-I$(BUILD_ROOT)/duct/defines \
 	-DPAGE_SIZE_FIXED \
 	-DCONFIG_SCHED_TRADITIONAL \
 	-freorder-blocks \
@@ -34,7 +41,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-Wno-maybe-uninitialized \
 	-D__private_extern__=extern \
 	-D_MODE_T -D_NLINK_T -DVM32_SUPPORT=1 -DMACH_KERNEL_PRIVATE \
-	-I$(BUILD_ROOT)/miggen/bsd \
+	-I$(MIGDIR)/bsd \
 	-I$(BUILD_ROOT)/bsd \
 	-I$(BUILD_ROOT)/osfmk \
 	-I$(BUILD_ROOT)/iokit \
@@ -48,7 +55,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/osfmk/mach_debug \
 	-I$(BUILD_ROOT)/ \
 	-I$(BUILD_ROOT)/linux \
-	-I$(BUILD_ROOT)/miggen/osfmk \
+	-I$(MIGDIR)/osfmk \
 	-DARCH_PRIVATE \
 	-DDRIVER_PRIVATE \
 	-D_KERNEL_BUILD \
@@ -243,23 +250,23 @@ ifneq ($(KERNELRELEASE),)
 		duct/bsd/dummy-sched.o \
 		libkern/gen/OSAtomicOperations.o \
 		libkern/x86_64/OSAtomic.o \
-		miggen/osfmk/mach/task_server.o \
-		miggen/osfmk/mach/clock_server.o \
-		miggen/osfmk/mach/clock_priv_server.o \
-		miggen/osfmk/mach/processor_server.o \
-		miggen/osfmk/mach/host_priv_server.o \
-		miggen/osfmk/mach/host_security_server.o \
-		miggen/osfmk/mach/lock_set_server.o \
-		miggen/osfmk/mach/mach_port_server.o \
-		miggen/osfmk/mach/mach_vm_server.o \
-		miggen/osfmk/mach/mach_host_server.o \
-		miggen/osfmk/mach/processor_set_server.o \
-		miggen/osfmk/mach/memory_object_name_server.o \
-		miggen/osfmk/mach/thread_act_server.o \
-		miggen/osfmk/mach/clock_reply_user.o \
-		miggen/osfmk/device/device_server.o \
-		miggen/osfmk/default_pager/default_pager_object_server.o \
-		miggen/osfmk/UserNotification/UNDReply_server.o \
+		$(MIGDIR_REL)/osfmk/mach/task_server.o \
+		$(MIGDIR_REL)/osfmk/mach/clock_server.o \
+		$(MIGDIR_REL)/osfmk/mach/clock_priv_server.o \
+		$(MIGDIR_REL)/osfmk/mach/processor_server.o \
+		$(MIGDIR_REL)/osfmk/mach/host_priv_server.o \
+		$(MIGDIR_REL)/osfmk/mach/host_security_server.o \
+		$(MIGDIR_REL)/osfmk/mach/lock_set_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_port_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_host_server.o \
+		$(MIGDIR_REL)/osfmk/mach/processor_set_server.o \
+		$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o \
+		$(MIGDIR_REL)/osfmk/mach/thread_act_server.o \
+		$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o \
+		$(MIGDIR_REL)/osfmk/device/device_server.o \
+		$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o \
+		$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o \
 		pexpert/duct/duct_gen_bootargs.o \
 		pexpert/duct/duct_pe_kprintf.o \
 

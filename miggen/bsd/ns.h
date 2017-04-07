@@ -1,1 +1,0 @@
-#define NS 0

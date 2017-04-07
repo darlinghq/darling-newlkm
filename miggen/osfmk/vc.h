@@ -1,1 +1,0 @@
-#define NVC 1

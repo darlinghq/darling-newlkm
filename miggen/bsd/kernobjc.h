@@ -1,1 +1,0 @@
-#define KERNOBJC 1

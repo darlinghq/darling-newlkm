@@ -1,1 +1,0 @@
-#define FDDI 0

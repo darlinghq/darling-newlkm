@@ -1,1 +1,0 @@
-#define NIPSEC 0

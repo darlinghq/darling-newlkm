@@ -1,1 +1,0 @@
-#define NORMA_DEVICE 0

@@ -1,1 +1,0 @@
-#define NCONFIG_GZALLOC 0

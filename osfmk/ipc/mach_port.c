@@ -1726,6 +1726,7 @@ mach_port_set_attributes(
 {
 	ipc_port_t port;
 	kern_return_t kr;
+	kprintf("Set attribs on space %p\n", space);
         
 	if (space == IS_NULL)
 		return KERN_INVALID_TASK;
@@ -1734,21 +1735,21 @@ mach_port_set_attributes(
                 
         case MACH_PORT_LIMITS_INFO: {
                 mach_port_limits_t *mplp = (mach_port_limits_t *)info;
-                
+                kprintf("x1\n");
                 if (count < MACH_PORT_LIMITS_INFO_COUNT)
                         return KERN_FAILURE;
-                
+                kprintf("x2\n");
                 if (mplp->mpl_qlimit > MACH_PORT_QLIMIT_MAX)
                         return KERN_INVALID_VALUE;
-
+		kprintf("x3\n");
 		if (!MACH_PORT_VALID(name))
 			return KERN_INVALID_RIGHT;
-
+		kprintf("x4\n");
                 kr = ipc_port_translate_receive(space, name, &port);
                 if (kr != KERN_SUCCESS)
                         return kr;
                 /* port is locked and active */
-
+		kprintf("x5\n");
                 ipc_mqueue_set_qlimit(&port->ip_messages, mplp->mpl_qlimit);
                 ip_unlock(port);
                 break;

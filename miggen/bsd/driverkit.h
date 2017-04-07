@@ -1,1 +1,0 @@
-#define DRIVERKIT 1

@@ -1,1 +1,0 @@
-#define MACHINE_TIMER_ROUTINES 0

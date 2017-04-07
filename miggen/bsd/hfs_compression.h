@@ -1,1 +1,0 @@
-#define HFS_COMPRESSION 1

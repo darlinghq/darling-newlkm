@@ -1,1 +1,0 @@
-#define ALLCRYPTO 0

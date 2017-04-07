@@ -1,1 +1,0 @@
-#define JOURNALING 1

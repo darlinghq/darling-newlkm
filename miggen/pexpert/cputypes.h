@@ -1,1 +1,0 @@
-#define	arm	1
