@@ -58,5 +58,7 @@ int mk_timer_cancel_entry(task_t task, struct mk_timer_cancel_args* args);
 int mk_timer_destroy_entry(task_t task, struct mk_timer_destroy_args* args);
 
 int thread_death_announce_entry(task_t task);
+int eventfd_machport_attach_entry(task_t task, struct eventfd_machport_attach* args);
+int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* args);
 
 #endif

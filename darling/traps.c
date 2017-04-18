@@ -28,6 +28,7 @@
 #include <linux/dcache.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/eventfd.h>
 #include <linux/syscalls.h>
 #include "traps.h"
 #include <duct/duct_pre_xnu.h>
@@ -37,6 +38,7 @@
 #include <mach/mach_traps.h>
 #include <kern/task.h>
 #include <kern/queue.h>
+#include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
 #include "task_registry.h"
 #include "psynch/pthread_kill.h"
@@ -67,6 +69,8 @@ static const struct trap_entry mach_traps[40] = {
 
 	// INTERNAL
 	TRAP(NR_thread_death_announce, thread_death_announce_entry),
+	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
+	TRAP(NR_eventfd_machport_detach, eventfd_machport_detach_entry),
 
 	// PSYNCH
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -490,5 +494,68 @@ int thread_death_announce_entry(task_t task)
 	return -LINUX_ESRCH;
 }
 
+int eventfd_machport_attach_entry(task_t task, struct eventfd_machport_attach* in_args)
+{
+	struct eventfd_ctx* efd;
+	kern_return_t kr;
+
+	copyargs(args, in_args);
+
+	efd = eventfd_ctx_fdget(args.evfd);
+	if (IS_ERR(efd))
+		return PTR_ERR(efd);
+
+	kr = eventfd_machport_attach_detach(args.port_name, efd, false);
+	if (kr != KERN_SUCCESS)
+	{
+		if (kr == KERN_NAME_EXISTS)
+			return -LINUX_EEXIST;
+
+		return -LINUX_EINVAL;
+	}
+	return 0;
+}
+
+void compat_kevmachportfd_raise(struct eventfd_ctx* ctx)
+{
+	assert(ctx != NULL);
+	eventfd_signal(ctx, 1);
+}
+
+int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* in_args)
+{
+	struct file* file;
+	struct eventfd_ctx* efd;
+	kern_return_t kr;
+	int rv = 0;
+
+	copyargs(args, in_args);
+
+	file = fget(args.evfd);
+	if (file == NULL)
+		return -LINUX_EBADF;
+
+	efd = eventfd_ctx_fileget(file);
+	if (IS_ERR(efd))
+	{
+		rv = -LINUX_EINVAL;
+		goto out;
+	}
+
+	kr = eventfd_machport_attach_detach(args.port_name, efd, true);
+
+	if (kr == KERN_SUCCESS)
+		fput(file); // release the reference we took in eventfd_machport_attach_entry
+	else if (kr == KERN_NOT_RECEIVER)
+		rv = -LINUX_ENOENT; // wrong event fd used for detach (=this fd is not attached)
+	else
+		rv = -LINUX_EINVAL;
+
+out:
+	fput(file);
+	return rv;
+}
+
 module_init(mach_init);
 module_exit(mach_exit);
+

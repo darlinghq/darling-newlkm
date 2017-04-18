@@ -42,8 +42,8 @@
 #include <kern/timer_call.h>
 
 #include <libkern/OSAtomic.h>
-#include <linux/debug_print.h>
-#include <linux/task_registry.h>
+#include <darling/debug_print.h>
+#include <darling/task_registry.h>
 
 static struct workqueue_struct* _thread_call_wq = NULL;
 

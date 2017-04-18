@@ -170,12 +170,32 @@ extern void	io_free(
 	lck_spin_init(&(io)->io_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define io_lock_destroy(io) \
 	lck_spin_destroy(&(io)->io_lock_data, &ipc_lck_grp)
+#ifndef __DARLING__
 #define	io_lock(io) \
 	lck_spin_lock(&(io)->io_lock_data)
 #define	io_lock_try(io) \
 	lck_spin_try_lock(&(io)->io_lock_data)
 #define	io_unlock(io) \
-	lck_spin_unlock(&(io)->io_lock_data)
+	lck_spin_unlock(&(io)->io_lock_data);
+#else
+static inline void io_unlock(ipc_object_t io)
+{
+	// printk(KERN_NOTICE "io_unlock %p\n", io);
+	spin_unlock(&(io)->io_lock_data);
+}
+
+static inline void io_lock(ipc_object_t io)
+{
+	// printk(KERN_NOTICE "io_lock %p\n", io);
+	spin_lock(&(io)->io_lock_data);
+}
+
+static inline int io_lock_try(ipc_object_t io)
+{
+	// printk(KERN_NOTICE "io_lock_try %p\n", io);
+	return spin_trylock(&(io)->io_lock_data);
+}
+#endif
 
 #define _VOLATILE_ volatile
 

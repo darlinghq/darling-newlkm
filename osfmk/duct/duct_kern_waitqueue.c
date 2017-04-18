@@ -41,7 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/mach_param.h>
 #include <kern/thread.h>
 #include <kern/spl.h>
-#include <linux/task_registry.h>
+#include <darling/task_registry.h>
 
 #include "duct_post_xnu.h"
 

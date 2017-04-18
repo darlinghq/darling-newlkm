@@ -54,7 +54,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/osfmk/libsa \
 	-I$(BUILD_ROOT)/osfmk/mach_debug \
 	-I$(BUILD_ROOT)/ \
-	-I$(BUILD_ROOT)/linux \
+	-I$(BUILD_ROOT)/darling \
 	-I$(MIGDIR)/osfmk \
 	-DARCH_PRIVATE \
 	-DDRIVER_PRIVATE \
@@ -175,15 +175,14 @@ ifneq ($(KERNELRELEASE),)
 		osfmk/ipc/ipc_mqueue.o \
 		osfmk/ipc/ipc_port.o \
 		osfmk/kern/sync_sema.o \
-		linux/down_interruptible.o \
-		linux/compat_kevmachportfd.o \
-		linux/traps.o \
-		linux/task_registry.o \
-		linux/license.o \
-		linux/host_info.o \
-		linux/psynch/pthread_kill.o \
-		linux/psynch/psynch_mutex.o \
-		linux/psynch/psynch_cv.o \
+		darling/down_interruptible.o \
+		darling/traps.o \
+		darling/task_registry.o \
+		darling/license.o \
+		darling/host_info.o \
+		darling/psynch/pthread_kill.o \
+		darling/psynch/psynch_mutex.o \
+		darling/psynch/psynch_cv.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \

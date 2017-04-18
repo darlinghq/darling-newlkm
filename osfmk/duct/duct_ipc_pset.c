@@ -56,6 +56,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 kern_return_t duct_filt_machport_attach (struct compat_knote * kn, xnu_wait_queue_t * waitqp)
 {
+#if 0
         printk (KERN_NOTICE "- duct_filt_machport_attach () called\n");
         mach_port_name_t        name    = (mach_port_name_t) kn->kevent.ident;
         // wait_queue_link_t       wql     = wait_queue_link_allocate();
@@ -75,6 +76,7 @@ kern_return_t duct_filt_machport_attach (struct compat_knote * kn, xnu_wait_queu
         ips_reference (pset);
         ips_unlock (pset);
         return kr;
+#endif
 }
 
 kern_return_t duct_filt_machport_process (struct compat_knote * kn)
@@ -195,9 +197,69 @@ kern_return_t duct_filt_machport_process (struct compat_knote * kn)
         return KERN_SUCCESS;
 }
 
+#if 0
 wait_queue_head_t * duct_wait_queue_link_fdctx (xnu_wait_queue_t waitq, void * fdctx)
 {
         waitq->fdctx    = fdctx;
 
         return &waitq->linux_waitqh;
 }
+#endif
+
+static kern_return_t waitq_detach(xnu_wait_queue_t waitq, struct eventfd_ctx* fdctx)
+{
+	if (fdctx == waitq->fdctx)
+	{
+		waitq->fdctx = NULL;
+		return KERN_SUCCESS;
+	}
+	else
+	{
+		return KERN_NOT_RECEIVER;
+	}
+}
+
+static kern_return_t waitq_attach(xnu_wait_queue_t waitq, struct eventfd_ctx* fdctx)
+{
+	if (waitq->fdctx == NULL)
+	{
+		waitq->fdctx = fdctx;
+		return KERN_SUCCESS;
+	}
+	else
+	{
+		printk(KERN_WARNING "Attempt to attach second eventfd to Mach port(set) - not supported yet!\n");
+		return KERN_NAME_EXISTS;
+	}
+}
+
+kern_return_t eventfd_machport_attach_detach(mach_port_name_t name, struct eventfd_ctx* fdctx, bool detach)
+{
+	ipc_pset_t pset = IPS_NULL;
+	kern_return_t kr;
+	xnu_wait_queue_t waitq = NULL;
+
+	kr = ipc_object_translate(current_space(), name, MACH_PORT_RIGHT_PORT_SET, (ipc_object_t *) &pset);
+
+	if (kr == KERN_SUCCESS && pset != IPS_NULL)
+	{
+		waitq = &(pset->ips_messages.imq_set_queue.wqs_wait_queue);
+
+		kr = detach ? waitq_detach(waitq, fdctx) : waitq_attach(waitq, fdctx);
+
+		if (kr == KERN_SUCCESS)
+		{
+			if (detach)
+				ips_release(pset);
+			else
+				ips_reference(pset);
+		}
+
+		io_unlock((ipc_object_t) pset);
+		printk(KERN_NOTICE "eventfd_machport_attach_detach: portset is now unlocked\n");
+	}
+    
+	return kr;
+}
+
+

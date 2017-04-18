@@ -87,7 +87,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/resource.h>
 #include <linux/wait.h>
 #include <linux/cpumask.h>
-#include <linux/down_interruptible.h>
+#include <darling/down_interruptible.h>
 
 #include <linux/mutex.h>
 #include <linux/rbtree.h>

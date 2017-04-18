@@ -45,7 +45,7 @@ int pthread_kill_trap(task_t task,
 
 	thread = port_name_to_thread(args.thread_port);
 
-	if (thread == THREAD_NULL)
+	if (thread == THREAD_NULL || !thread->linux_task)
 		return -LINUX_ESRCH;
 		
 	rcu_read_lock();

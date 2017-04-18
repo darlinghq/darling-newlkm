@@ -698,7 +698,7 @@ extern char	version[];
 
 #ifdef __DARLING__
 #include <generated/utsrelease.h>
-#include <linux/api.h>
+#include <darling/api.h>
 static const char KERNEL_VERSION[] = "Darling Mach (API level " DARLING_MACH_API_VERSION_STR ") on Linux " UTS_RELEASE;
 #endif
 

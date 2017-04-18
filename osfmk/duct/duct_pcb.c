@@ -32,7 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 */
 
-#include <linux/task_registry.h>
+#include <darling/task_registry.h>
 #include "duct.h"
 #include "duct_pre_xnu.h"
 #include "duct_pcb.h"

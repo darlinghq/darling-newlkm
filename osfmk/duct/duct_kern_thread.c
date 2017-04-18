@@ -44,7 +44,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/ipc_tt.h>
 
 #include "duct_post_xnu.h"
-#include <linux/task_registry.h>
+#include <darling/task_registry.h>
 
 static struct zone          *thread_zone;
 static lck_grp_attr_t       thread_lck_grp_attr;

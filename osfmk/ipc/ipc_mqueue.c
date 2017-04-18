@@ -70,7 +70,7 @@
  */
     
 #if defined (__DARLING__)
-#include <linux/task_registry.h>
+#include <darling/task_registry.h>
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
 #endif
@@ -359,6 +359,7 @@ ipc_mqueue_changed(
         xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, IPC_MQUEUE_RECEIVE);
 
         if (walked_waitq->fdctx) {
+                printk(KERN_NOTICE "Raising kevent eventfd %p\n", walked_waitq->fdctx);
                 compat_kevmachportfd_raise (walked_waitq->fdctx);
         }
 
