@@ -333,3 +333,9 @@ task_t duct_current_task (void)
 {
         return (current_task_fast ());
 }
+
+void task_reference_wrapper(task_t t)
+{
+	task_reference(t);
+}
+

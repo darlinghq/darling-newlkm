@@ -36,6 +36,7 @@
 #include <duct/duct_kern_thread.h>
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
+#include <mach/task_special_ports.h>
 #include <kern/task.h>
 #include <kern/queue.h>
 #include <duct/duct_ipc_pset.h>
@@ -71,6 +72,7 @@ static const struct trap_entry mach_traps[40] = {
 	TRAP(NR_thread_death_announce, thread_death_announce_entry),
 	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
 	TRAP(NR_eventfd_machport_detach, eventfd_machport_detach_entry),
+	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
 
 	// PSYNCH
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -142,13 +144,18 @@ static void mach_exit(void)
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 }
 
+extern kern_return_t task_get_special_port(task_t, int which, ipc_port_t*);
+extern kern_return_t task_set_special_port(task_t, int which, ipc_port_t);
+
 int mach_dev_open(struct inode* ino, struct file* file)
 {
 	kern_return_t ret;
-	task_t new_task;
+	task_t new_task, parent_task;
 	thread_t new_thread;
 	
 	debug_msg("Setting up new XNU task for pid %d\n", linux_current->pid);
+
+	darling_task_fork_child_done();
 
 	// Create a new task_t
 	ret = duct_task_create_internal(NULL, false, true, &new_task);
@@ -156,6 +163,21 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		return -LINUX_EINVAL;
 
 	file->private_data = new_task;
+	
+	parent_task = darling_task_get(linux_current->real_parent->tgid);
+	if (parent_task != NULL)
+	{
+		ipc_port_t bootstrap_port;
+		task_get_bootstrap_port(parent_task, &bootstrap_port);
+		
+		debug_msg("Setting bootstrap port from parent: %p\n", bootstrap_port);
+		if (bootstrap_port != NULL)
+			task_set_bootstrap_port(new_task, bootstrap_port);
+		
+		task_deallocate(parent_task);
+	}
+	else
+		debug_msg("This task has no parent\n");
 	
 	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
@@ -554,6 +576,13 @@ int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* i
 out:
 	fput(file);
 	return rv;
+}
+
+int fork_wait_for_child_entry(task_t task)
+{
+	// Wait until the fork() child re-opens /dev/mach
+	darling_task_fork_wait_for_child();
+	return 0;
 }
 
 module_init(mach_init);

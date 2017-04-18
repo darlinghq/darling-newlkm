@@ -24,11 +24,14 @@
 #include <linux/printk.h>
 #include <linux/rwlock.h>
 #include <linux/atomic.h>
+#include <linux/semaphore.h>
 
 static rwlock_t my_task_lock, my_thread_lock;
 static struct rb_root all_tasks = RB_ROOT;
 static struct rb_root all_threads = RB_ROOT;
 static unsigned int task_count = 0;
+
+static struct registry_entry* darling_task_get_entry_unlocked(int pid);
 
 struct registry_entry
 {
@@ -43,6 +46,8 @@ struct registry_entry
 
 	void* keys[TASK_KEY_COUNT];
 	task_key_dtor dtors[TASK_KEY_COUNT];
+	
+	struct semaphore sem_fork;
 };
 
 void darling_task_init(void)
@@ -53,10 +58,16 @@ void darling_task_init(void)
 
 static struct registry_entry* darling_task_get_current_entry(void)
 {
+	read_lock(&my_task_lock);
+	struct registry_entry* e = darling_task_get_entry_unlocked(current->tgid);
+	read_unlock(&my_task_lock);
+	return e;
+}
+
+static struct registry_entry* darling_task_get_entry_unlocked(int pid)
+{
 	struct registry_entry* ret = NULL;
 	struct rb_node* node;
-	
-	read_lock(&my_task_lock);
 	
 	node = all_tasks.rb_node;
 	
@@ -64,9 +75,9 @@ static struct registry_entry* darling_task_get_current_entry(void)
 	{
 		struct registry_entry* entry = container_of(node, struct registry_entry, node);
 		
-		if (current->tgid < entry->tid)
+		if (pid < entry->tid)
 			node = node->rb_left;
-		else if (current->tgid > entry->tid)
+		else if (pid > entry->tid)
 			node = node->rb_right;
 		else
 		{
@@ -75,13 +86,25 @@ static struct registry_entry* darling_task_get_current_entry(void)
 		}
 	}
 	
-	read_unlock(&my_task_lock);
 	return ret;
 }
 
 task_t darling_task_get_current(void)
 {
 	struct registry_entry* ret = darling_task_get_current_entry();
+	return (ret) ? ret->task : NULL;
+}
+
+extern void task_reference_wrapper(task_t);
+task_t darling_task_get(int pid)
+{
+	read_lock(&my_task_lock);
+
+	struct registry_entry* ret = darling_task_get_entry_unlocked(pid);
+	if (ret != NULL)
+		task_reference_wrapper(ret->task);
+
+	read_unlock(&my_task_lock);
 	return (ret) ? ret->task : NULL;
 }
 
@@ -127,6 +150,8 @@ void darling_task_register(task_t task)
 	entry = (struct registry_entry*) kzalloc(sizeof(struct registry_entry), GFP_KERNEL);
 	entry->task = task;
 	entry->tid = current->tgid;
+
+	sema_init(&entry->sem_fork, 0);
 
 	write_lock(&my_task_lock);
 	new = &all_tasks.rb_node;
@@ -315,5 +340,22 @@ void* darling_task_key_get(unsigned int key)
 	struct registry_entry* entry;
 	entry = darling_task_get_current_entry();
 	return entry ? entry->keys[key] : NULL;
+}
+
+void darling_task_fork_wait_for_child(void)
+{
+	struct registry_entry* e = darling_task_get_current_entry();
+
+	down(&e->sem_fork);
+}
+
+void darling_task_fork_child_done(void)
+{
+	read_lock(&my_task_lock);
+	struct registry_entry* entry = darling_task_get_entry_unlocked(current->real_parent->tgid);
+	read_unlock(&my_task_lock);
+
+	if (entry != NULL)
+		up(&entry->sem_fork);
 }
 

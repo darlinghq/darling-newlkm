@@ -61,4 +61,6 @@ int thread_death_announce_entry(task_t task);
 int eventfd_machport_attach_entry(task_t task, struct eventfd_machport_attach* args);
 int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* args);
 
+int fork_wait_for_child_entry(task_t task);
+
 #endif

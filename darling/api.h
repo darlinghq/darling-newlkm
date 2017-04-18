@@ -71,6 +71,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR__kernelrpc_mach_port_insert_right_trap,
 	NR_eventfd_machport_attach,
 	NR_eventfd_machport_detach,
+	NR_fork_wait_for_child,
 };
 
 struct eventfd_machport_attach

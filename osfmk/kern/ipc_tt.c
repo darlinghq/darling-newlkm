@@ -868,22 +868,7 @@ task_get_special_port(
 		break;
 
 	    case TASK_BOOTSTRAP_PORT:
-		
-    #if defined (__DARLING__)
-        // printk ( KERN_NOTICE "- task_get_special_port(comm): %s pid: %d, task->itk_bootstrap: 0x%p\n",
-        //          linux_current->comm, task_pid_vnr (linux_current), task->itk_bootstrap );
-
-        if (strcmp (linux_current->comm, "launchd") != 0 && task->itk_bootstrap == NULL) {
-                // foreign process not decending from launchd
-                port    = ipc_port_copy_send (launchd_bootstrap_port);
-
-                printk ( KERN_NOTICE "- task_get_special_port(%s): returning launchd bootstrap port 0x%p\n",
-                         linux_current->comm, launchd_bootstrap_port);
-        }
-        else
-    #endif
-	    port = ipc_port_copy_send(task->itk_bootstrap);
-		
+		port = ipc_port_copy_send(task->itk_bootstrap);
 		break;
 
 	    case TASK_SEATBELT_PORT:
@@ -953,17 +938,6 @@ task_set_special_port(
 
 	    case TASK_BOOTSTRAP_PORT:
 		
-    #if defined (__DARLING__)
-        // printk ( KERN_NOTICE "- task_set_special_port: comm: %s pid: %d, port: 0x%p\n",
-        //          linux_current->comm, task_pid_vnr (linux_current), port);
-
-        if (!strcmp (linux_current->comm, "launchd") && port != 0) {
-                // launchd process updating bootstrap port
-                printk (KERN_NOTICE "- saving launchd boostrap port: 0x%p\n", port);
-                launchd_bootstrap_port      = port;
-        }
-        // task_pid_vnr (linux_current) == 1
-    #endif
 	
 		whichp = &task->itk_bootstrap;
 		break;

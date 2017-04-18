@@ -31,12 +31,18 @@ enum {
 void darling_task_init(void);
 
 task_t darling_task_get_current(void);
+
+// Adds reference to the returned task!
+task_t darling_task_get(int pid);
 thread_t darling_thread_get_current(void);
 
 thread_t darling_thread_get(unsigned int tid);
 
 void darling_task_register(task_t t);
 void darling_task_deregister(task_t t); // argument unused
+
+void darling_task_fork_wait_for_child(void);
+void darling_task_fork_child_done(void);
 
 void darling_thread_register(thread_t t);
 void darling_thread_deregister(thread_t t); // argument unused
