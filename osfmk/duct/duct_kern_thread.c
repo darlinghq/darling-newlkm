@@ -300,6 +300,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 //     }
 
         new_thread->task = parent_task;
+        new_thread->ref_count = 2;
 
         thread_lock_init(new_thread);
         // wake_lock_init(new_thread);

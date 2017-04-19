@@ -47,6 +47,7 @@
 #include "psynch/psynch_cv.h"
 #include "psynch/psynch_mutex.h"
 #include "debug_print.h"
+#include "evprocfd.h"
 
 typedef long (*trap_handler)(task_t, ...);
 
@@ -76,8 +77,7 @@ static const struct trap_entry mach_traps[40] = {
 	// KQUEUE
 	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
 	TRAP(NR_eventfd_machport_detach, eventfd_machport_detach_entry),
-	TRAP(NR_eventfd_proc_attach, eventfd_proc_attach_entry),
-	TRAP(NR_eventfd_proc_detach, eventfd_proc_detach_entry),
+	TRAP(NR_evproc_create, evproc_create_entry),
 
 	// PSYNCH
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -156,7 +156,9 @@ int mach_dev_open(struct inode* ino, struct file* file)
 {
 	kern_return_t ret;
 	task_t new_task, parent_task, old_task;
-	thread_t new_thread, old_thread;
+	thread_t new_thread;
+	int fd_old = -1;
+	int ppid_fork = -1;
 	
 	debug_msg("Setting up new XNU task for pid %d\n", linux_current->pid);
 
@@ -176,7 +178,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		// 2) Find the old fd used before execve and close it
 		
 		ipc_port_t bootstrap_port;
-		int fd, fd_old = -1;
+		int fd;
 		struct files_struct* files;
 		
 		task_get_bootstrap_port(old_task, &bootstrap_port);
@@ -185,7 +187,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		if (bootstrap_port != NULL)
 			task_set_bootstrap_port(new_task, bootstrap_port);
 		
-		// find the old fd and close it
+		// find the old fd and close it (later)
 		files = linux_current->files;
 		
 		spin_lock(&files->file_lock);
@@ -205,28 +207,18 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		}
 		
 		spin_unlock(&files->file_lock);
-		
-		darling_task_deregister(old_task);
-		
-		old_thread = darling_thread_get_current();
-		if (old_thread != NULL)
-			darling_thread_deregister(old_thread);
-		
-		if (fd_old != -1)
-		{
-			debug_msg("Closing old fd before execve: %d\n", fd_old);
-			sys_close(fd_old);
-		}
-		else
-			debug_msg("Old fd not found, this is strange\n");
 	}
 	else
 	{
+		unsigned int ppid;
+
 		// fork case:
 		// 1) Take over parent's bootstrap port
 		// 2) Signal the parent that it can continue running now
 		
-		parent_task = darling_task_get(linux_current->real_parent->tgid);
+		ppid = linux_current->real_parent->tgid;
+
+		parent_task = darling_task_get(ppid);
 		if (parent_task != NULL)
 		{
 			ipc_port_t bootstrap_port;
@@ -238,6 +230,8 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		
 			task_deallocate(parent_task);
 			darling_task_fork_child_done();
+
+			ppid_fork = ppid;
 		}
 		else
 		{
@@ -256,14 +250,27 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		return -LINUX_EINVAL;
 	}
 
-	// debug_msg("mach_dev_open().1 refc %d\n", new_thread->ref_count);
+	debug_msg("thread %p refc %d at #1\n", new_thread, new_thread->ref_count);
 	darling_task_register(new_task);
 	darling_thread_register(new_thread);
 	
+	debug_msg("thread refc %d at #2\n", new_thread->ref_count);
 	task_deallocate(new_task);
 	thread_deallocate(new_thread);
 	
-	// debug_msg("mach_dev_open().2 refc %d\n", new_thread->ref_count);
+	// execve case only:
+	// We do this after running darling_task_register & darling_thread_register
+	// and avoid calling deregister beforehand, so that death notifications don't fire
+	// in case of execve.
+	if (fd_old != -1)
+	{
+		debug_msg("Closing old fd before execve: %d\n", fd_old);
+		sys_close(fd_old);
+	}
+	
+	// fork case only
+	if (ppid_fork != -1)
+		darling_task_post_notification(ppid_fork, NOTE_FORK, task_pid_vnr(linux_current));
 	
 	return 0;
 }
@@ -652,16 +659,26 @@ int fork_wait_for_child_entry(task_t task)
 	return 0;
 }
 
-int eventfd_proc_attach_entry(task_t task, struct eventfd_proc_attach* args)
+int evproc_create_entry(task_t task, struct evproc_create* in_args)
 {
-	// TODO
-	return -LINUX_ENOTSUPP;
-}
+	struct pid* pidobj;
+	unsigned int pid = 0;
 
-int eventfd_proc_detach_entry(task_t task, struct eventfd_proc_detach* args)
-{
-	// TODO
-	return -LINUX_ENOTSUPP;
+	copyargs(args, in_args);
+
+	// Convert virtual PID to global PID
+	rcu_read_lock();
+
+	pidobj = find_vpid(args.pid);
+	if (pidobj != NULL)
+		pid = pid_nr(pidobj);
+
+	rcu_read_unlock();
+
+	if (pid == 0)
+		return -LINUX_ESRCH;
+
+	return evprocfd_create(pid, args.flags, NULL);
 }
 
 module_init(mach_init);

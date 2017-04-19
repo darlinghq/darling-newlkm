@@ -72,20 +72,20 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_eventfd_machport_attach,
 	NR_eventfd_machport_detach,
 	NR_fork_wait_for_child,
-	NR_eventfd_proc_attach,
-	NR_eventfd_proc_detach,
+	NR_evproc_create,
 };
 
-struct eventfd_proc_attach
+struct evproc_create
 {
-	unsigned int target_task;
-	unsigned int evfd;
+	unsigned int pid;
+	unsigned int flags;
 };
 
-struct eventfd_proc_detach
+// What is read from the fd
+struct evproc_event
 {
-	unsigned int target_task;
-	unsigned int evfd;
+	unsigned int event;
+	unsigned int extra;
 };
 
 struct eventfd_machport_attach

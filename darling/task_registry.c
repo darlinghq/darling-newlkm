@@ -18,6 +18,7 @@
  */
 #include <linux/types.h>
 #include "task_registry.h"
+#include "evprocfd.h"
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
@@ -25,6 +26,10 @@
 #include <linux/rwlock.h>
 #include <linux/atomic.h>
 #include <linux/semaphore.h>
+#include <linux/list.h>
+#include <linux/eventfd.h>
+#include <linux/mutex.h>
+#include "debug_print.h"
 
 static rwlock_t my_task_lock, my_thread_lock;
 static struct rb_root all_tasks = RB_ROOT;
@@ -48,12 +53,49 @@ struct registry_entry
 	task_key_dtor dtors[TASK_KEY_COUNT];
 	
 	struct semaphore sem_fork;
+	struct list_head proc_notification;
+	struct mutex mut_proc_notification;
+};
+
+struct proc_notification
+{
+	struct list_head list;
+	struct evprocfd_ctx* efd;
 };
 
 void darling_task_init(void)
 {
 	rwlock_init(&my_task_lock);
 	rwlock_init(&my_thread_lock);
+}
+
+static void darling_task_post_notification_internal(struct registry_entry* entry, unsigned int event, unsigned int extra)
+{
+	struct list_head *pos, *tmp;
+
+	debug_msg("Posting notification 0x%x for task %p\n", event, entry->task);
+	
+	mutex_lock(&entry->mut_proc_notification);
+	
+	list_for_each_safe(pos, tmp, &entry->proc_notification)
+	{
+		struct proc_notification* dn = list_entry(pos, struct proc_notification, list);
+		evprocfd_notify(dn->efd, event, extra);
+	}
+	
+	mutex_unlock(&entry->mut_proc_notification);
+}
+
+void darling_task_post_notification(unsigned int pid, unsigned int event, unsigned int extra)
+{
+	struct registry_entry* e;
+	read_lock(&my_task_lock);
+
+	e = darling_task_get_entry_unlocked(pid);
+	
+	read_unlock(&my_task_lock);
+	if (e != NULL)
+		darling_task_post_notification_internal(e, event, extra);
 }
 
 static struct registry_entry* darling_task_get_current_entry(void)
@@ -110,7 +152,12 @@ task_t darling_task_get(int pid)
 
 thread_t darling_thread_get_current(void)
 {
-	return darling_thread_get(current->pid);
+	thread_t t = darling_thread_get(current->pid);
+	
+	if (!t)
+		debug_msg("No current thread in registry!\n");
+	
+	return t;
 }
 
 thread_t darling_thread_get(unsigned int pid)
@@ -152,6 +199,8 @@ void darling_task_register(task_t task)
 	entry->tid = current->tgid;
 
 	sema_init(&entry->sem_fork, 0);
+	INIT_LIST_HEAD(&entry->proc_notification);
+	mutex_init(&entry->mut_proc_notification);
 
 	write_lock(&my_task_lock);
 	new = &all_tasks.rb_node;
@@ -167,13 +216,13 @@ void darling_task_register(task_t task)
 			new = &(*new)->rb_right;
 		else // Tree already contains this tgid
 		{
+			debug_msg("Replacing task %p -> %p\n", this->task, task);
 			if (task != NULL)
 			{
-				// Overwrite existing task entry
-				//printk(KERN_WARNING "darling_task_register() called twice with "
-				//		"non-null task?!\n");
-
 				this->task = task;
+				
+				// exec case
+				darling_task_post_notification_internal(this, NOTE_EXEC, 0);
 			}
 			else
 			{
@@ -225,15 +274,15 @@ void darling_thread_register(thread_t thread)
 				if (this->thread != thread)
 				{
 					// Overwrite existing thread entry
-					//printk(KERN_WARNING "darling_thread_register() called twice with "
-					//		"non-null task?!\n");
-
+					debug_msg("Overwriting thread entry %p -> %p\n", this->thread, thread);
 					this->thread = thread;
 				}
 			}
 			else
 			{
-				// Remove task from tree
+				debug_msg("Erasing thread %p from tree\n", entry->thread);
+				
+				// Remove thread from tree
 				rb_erase(*new, &all_threads);
 				kfree(this);
 			}
@@ -250,6 +299,30 @@ void darling_thread_register(thread_t thread)
 	write_unlock(&my_thread_lock);
 }
 
+void darling_task_free(struct registry_entry* entry)
+{
+	int i;
+	struct list_head *pos, *tmp;
+
+	darling_task_post_notification_internal(entry, NOTE_EXIT, current->exit_code);
+
+	list_for_each_safe(pos, tmp, &entry->proc_notification)
+	{
+		struct proc_notification* dn = list_entry(pos, struct proc_notification, list);
+		kfree(dn);
+	}
+
+	for (i = 0; i < TASK_KEY_COUNT; i++)
+	{
+		if (entry->keys[i] != NULL)
+		{
+			// printk(KERN_NOTICE "ptr %d = %p\n", i, entry->keys[i]);
+			entry->dtors[i](entry->keys[i]);
+		}
+	}
+
+	kfree(entry);
+}
 
 void darling_task_deregister(task_t t)
 {
@@ -268,21 +341,12 @@ void darling_task_deregister(task_t t)
 			node = node->rb_right;
 		else
 		{
-			int i;
 			if (entry->task != t)
 				break;
 
-			for (i = 0; i < TASK_KEY_COUNT; i++)
-			{
-				if (entry->keys[i] != NULL)
-				{
-					// printk(KERN_NOTICE "ptr %d = %p\n", i, entry->keys[i]);
-					entry->dtors[i](entry->keys[i]);
-				}
-			}
-
 			rb_erase(node, &all_tasks);
-			kfree(entry);
+			darling_task_free(entry);
+
 			task_count--;
 			break;
 		}
@@ -293,28 +357,23 @@ void darling_task_deregister(task_t t)
 
 void darling_thread_deregister(thread_t t)
 {
-	struct rb_node *node, *parent = NULL;
+	struct rb_node *node;
 	write_lock(&my_thread_lock);
 
-	node = all_threads.rb_node;
+	node = rb_first(&all_threads);
 
 	while (node)
 	{
 		struct registry_entry* entry = container_of(node, struct registry_entry, node);
 		
-		if (current->pid < entry->tid)
-			node = node->rb_left;
-		else if (current->pid > entry->tid)
-			node = node->rb_right;
-		else
+		if (entry->thread == t)
 		{
-			if (entry->thread == t)
-			{
-				rb_erase(node, &all_threads);
-				kfree(entry);
-			}
+			debug_msg("deregistering thread %p\n", t);
+			rb_erase(node, &all_threads);
+			kfree(entry);
 			break;
 		}
+		node = rb_next(node);
 	}
 
 	write_unlock(&my_thread_lock);
@@ -358,5 +417,65 @@ void darling_task_fork_child_done(void)
 
 	if (entry != NULL)
 		up(&entry->sem_fork);
+}
+
+_Bool darling_task_notify_register(unsigned int pid, struct evprocfd_ctx* efd)
+{
+	struct proc_notification* dn;
+	struct registry_entry* e;
+	_Bool rv = false;
+
+	read_lock(&my_task_lock);
+
+   	e = darling_task_get_entry_unlocked(pid);
+   	
+   	read_unlock(&my_task_lock);
+	if (e == NULL)
+		goto out;
+
+	dn = (struct proc_notification*) kmalloc(sizeof(*dn), GFP_KERNEL);
+	dn->efd = efd;
+
+	mutex_lock(&e->mut_proc_notification);
+	list_add(&dn->list, &e->proc_notification);
+	mutex_unlock(&e->mut_proc_notification);
+	
+	rv = true;
+
+out:
+	return rv;
+}
+
+_Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
+{
+	struct registry_entry* e;
+	_Bool rv = false;
+	struct list_head* next;
+
+	read_lock(&my_task_lock);
+
+	e = darling_task_get_entry_unlocked(pid);
+
+	read_unlock(&my_task_lock);
+	if (e == NULL)
+		goto out;
+
+	mutex_lock(&e->mut_proc_notification);
+	list_for_each(next, &e->proc_notification)
+	{
+		struct proc_notification* dn = list_entry(next, struct proc_notification, list);
+
+		if (dn->efd == efd)
+		{
+			rv = true;
+			list_del(&dn->list);
+			kfree(dn);
+			break;
+		}
+	}
+	mutex_unlock(&e->mut_proc_notification);
+
+out:
+	return rv;
 }
 

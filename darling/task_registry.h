@@ -44,9 +44,12 @@ void darling_task_deregister(task_t t);
 void darling_task_fork_wait_for_child(void);
 void darling_task_fork_child_done(void);
 
-struct eventfd_ctx;
-void darling_task_notify_death(struct eventfd_ctx* efd);
-void darling_task_notify_death_cancel(struct eventfd_ctx* efd);
+struct evprocfd_ctx;
+_Bool darling_task_notify_register(unsigned int pid, struct evprocfd_ctx* efd);
+_Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd);
+
+// NOTE_EXEC and NOTE_EXIT are detected internally, only use this to deliver other events
+void darling_task_post_notification(unsigned int pid, unsigned int event, unsigned int extra);
 
 void darling_thread_register(thread_t t);
 void darling_thread_deregister(thread_t t);
