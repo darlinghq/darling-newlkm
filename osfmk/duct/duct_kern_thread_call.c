@@ -172,6 +172,9 @@ thread_call_enter_delayed(
 	arm_time = now.tv_nsec + now.tv_sec * NSEC_PER_SEC;
 	diffns = deadline - arm_time;
 
+	if (diffns < 0)
+		diffns = 0;
+
 	debug_msg("... delayed by %lld ns\n", diffns);
 
 	return queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns)) == 0;
