@@ -29,6 +29,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/eventfd.h>
+#include <linux/fdtable.h>
 #include <linux/syscalls.h>
 #include "traps.h"
 #include <duct/duct_pre_xnu.h>
@@ -70,9 +71,13 @@ static const struct trap_entry mach_traps[40] = {
 
 	// INTERNAL
 	TRAP(NR_thread_death_announce, thread_death_announce_entry),
+	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
+
+	// KQUEUE
 	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
 	TRAP(NR_eventfd_machport_detach, eventfd_machport_detach_entry),
-	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
+	TRAP(NR_eventfd_proc_attach, eventfd_proc_attach_entry),
+	TRAP(NR_eventfd_proc_detach, eventfd_proc_detach_entry),
 
 	// PSYNCH
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -150,12 +155,10 @@ extern kern_return_t task_set_special_port(task_t, int which, ipc_port_t);
 int mach_dev_open(struct inode* ino, struct file* file)
 {
 	kern_return_t ret;
-	task_t new_task, parent_task;
-	thread_t new_thread;
+	task_t new_task, parent_task, old_task;
+	thread_t new_thread, old_thread;
 	
 	debug_msg("Setting up new XNU task for pid %d\n", linux_current->pid);
-
-	darling_task_fork_child_done();
 
 	// Create a new task_t
 	ret = duct_task_create_internal(NULL, false, true, &new_task);
@@ -164,20 +167,84 @@ int mach_dev_open(struct inode* ino, struct file* file)
 
 	file->private_data = new_task;
 	
-	parent_task = darling_task_get(linux_current->real_parent->tgid);
-	if (parent_task != NULL)
+	// Are we being opened after fork or execve?
+	old_task = darling_task_get_current();
+	if (old_task != NULL)
 	{
-		ipc_port_t bootstrap_port;
-		task_get_bootstrap_port(parent_task, &bootstrap_port);
+		// execve case:
+		// 1) Take over the previously used bootstrap port
+		// 2) Find the old fd used before execve and close it
 		
-		debug_msg("Setting bootstrap port from parent: %p\n", bootstrap_port);
+		ipc_port_t bootstrap_port;
+		int fd, fd_old = -1;
+		struct files_struct* files;
+		
+		task_get_bootstrap_port(old_task, &bootstrap_port);
+		
+		debug_msg("Setting bootstrap port from old task: %p\n", bootstrap_port);
 		if (bootstrap_port != NULL)
 			task_set_bootstrap_port(new_task, bootstrap_port);
 		
-		task_deallocate(parent_task);
+		// find the old fd and close it
+		files = linux_current->files;
+		
+		spin_lock(&files->file_lock);
+		
+		for (fd = 0; fd < files_fdtable(files)->max_fds; fd++)
+		{
+			struct file* f = fcheck_files(files, fd);
+			
+			if (!f)
+				continue;
+			
+			if (f != file && f->f_op == &mach_chardev_ops)
+			{
+				fd_old = fd;
+				break;
+			}
+		}
+		
+		spin_unlock(&files->file_lock);
+		
+		darling_task_deregister(old_task);
+		
+		old_thread = darling_thread_get_current();
+		if (old_thread != NULL)
+			darling_thread_deregister(old_thread);
+		
+		if (fd_old != -1)
+		{
+			debug_msg("Closing old fd before execve: %d\n", fd_old);
+			sys_close(fd_old);
+		}
+		else
+			debug_msg("Old fd not found, this is strange\n");
 	}
 	else
-		debug_msg("This task has no parent\n");
+	{
+		// fork case:
+		// 1) Take over parent's bootstrap port
+		// 2) Signal the parent that it can continue running now
+		
+		parent_task = darling_task_get(linux_current->real_parent->tgid);
+		if (parent_task != NULL)
+		{
+			ipc_port_t bootstrap_port;
+			task_get_bootstrap_port(parent_task, &bootstrap_port);
+		
+			debug_msg("Setting bootstrap port from parent: %p\n", bootstrap_port);
+			if (bootstrap_port != NULL)
+				task_set_bootstrap_port(new_task, bootstrap_port);
+		
+			task_deallocate(parent_task);
+			darling_task_fork_child_done();
+		}
+		else
+		{
+			// PID 1 case (or manually run mldr)
+			debug_msg("This task has no Darling parent\n");
+		}
+	}
 	
 	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
@@ -583,6 +650,18 @@ int fork_wait_for_child_entry(task_t task)
 	// Wait until the fork() child re-opens /dev/mach
 	darling_task_fork_wait_for_child();
 	return 0;
+}
+
+int eventfd_proc_attach_entry(task_t task, struct eventfd_proc_attach* args)
+{
+	// TODO
+	return -LINUX_ENOTSUPP;
+}
+
+int eventfd_proc_detach_entry(task_t task, struct eventfd_proc_detach* args)
+{
+	// TODO
+	return -LINUX_ENOTSUPP;
 }
 
 module_init(mach_init);

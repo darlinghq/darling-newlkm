@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		4
+#define DARLING_MACH_API_VERSION		5
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -72,6 +72,20 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_eventfd_machport_attach,
 	NR_eventfd_machport_detach,
 	NR_fork_wait_for_child,
+	NR_eventfd_proc_attach,
+	NR_eventfd_proc_detach,
+};
+
+struct eventfd_proc_attach
+{
+	unsigned int target_task;
+	unsigned int evfd;
+};
+
+struct eventfd_proc_detach
+{
+	unsigned int target_task;
+	unsigned int evfd;
 };
 
 struct eventfd_machport_attach

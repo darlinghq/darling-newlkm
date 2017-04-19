@@ -39,13 +39,17 @@ thread_t darling_thread_get_current(void);
 thread_t darling_thread_get(unsigned int tid);
 
 void darling_task_register(task_t t);
-void darling_task_deregister(task_t t); // argument unused
+void darling_task_deregister(task_t t);
 
 void darling_task_fork_wait_for_child(void);
 void darling_task_fork_child_done(void);
 
+struct eventfd_ctx;
+void darling_task_notify_death(struct eventfd_ctx* efd);
+void darling_task_notify_death_cancel(struct eventfd_ctx* efd);
+
 void darling_thread_register(thread_t t);
-void darling_thread_deregister(thread_t t); // argument unused
+void darling_thread_deregister(thread_t t);
 
 // Poor man's task-local storage
 typedef void(*task_key_dtor)(void*);

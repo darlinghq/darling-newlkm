@@ -167,13 +167,11 @@ void darling_task_register(task_t task)
 			new = &(*new)->rb_right;
 		else // Tree already contains this tgid
 		{
-			kfree(entry);
-
 			if (task != NULL)
 			{
 				// Overwrite existing task entry
-				printk(KERN_WARNING "darling_task_register() called twice with "
-						"non-null task?!\n");
+				//printk(KERN_WARNING "darling_task_register() called twice with "
+				//		"non-null task?!\n");
 
 				this->task = task;
 			}
@@ -222,15 +220,13 @@ void darling_thread_register(thread_t thread)
 			new = &(*new)->rb_right;
 		else // Tree already contains this tid
 		{
-			kfree(entry);
-
 			if (thread != NULL)
 			{
 				if (this->thread != thread)
 				{
 					// Overwrite existing thread entry
-					printk(KERN_WARNING "darling_thread_register() called twice with "
-							"non-null task?!\n");
+					//printk(KERN_WARNING "darling_thread_register() called twice with "
+					//		"non-null task?!\n");
 
 					this->thread = thread;
 				}
@@ -273,6 +269,8 @@ void darling_task_deregister(task_t t)
 		else
 		{
 			int i;
+			if (entry->task != t)
+				break;
 
 			for (i = 0; i < TASK_KEY_COUNT; i++)
 			{
@@ -310,8 +308,11 @@ void darling_thread_deregister(thread_t t)
 			node = node->rb_right;
 		else
 		{
-			rb_erase(node, &all_threads);
-			kfree(entry);
+			if (entry->thread == t)
+			{
+				rb_erase(node, &all_threads);
+				kfree(entry);
+			}
 			break;
 		}
 	}
