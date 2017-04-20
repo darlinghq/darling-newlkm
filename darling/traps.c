@@ -168,6 +168,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		return -LINUX_EINVAL;
 
 	file->private_data = new_task;
+	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
 	
 	// Are we being opened after fork or execve?
 	old_task = darling_task_get_current();
@@ -216,7 +217,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		// 1) Take over parent's bootstrap port
 		// 2) Signal the parent that it can continue running now
 		
-		ppid = linux_current->real_parent->tgid;
+		ppid = linux_current->parent->tgid;
 
 		parent_task = darling_task_get(ppid);
 		if (parent_task != NULL)
@@ -277,11 +278,16 @@ int mach_dev_open(struct inode* ino, struct file* file)
 
 int mach_dev_release(struct inode* ino, struct file* file)
 {
-	thread_t thread;
+	thread_t thread, cur_thread;
 	task_t my_task = (task_t) file->private_data;
 	
 	darling_task_deregister(my_task);
 	// darling_thread_deregister(NULL);
+	
+	cur_thread = darling_thread_get_current();
+	
+	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
+	duct_task_destroy(my_task);
 	
 	task_lock(my_task);
 	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
@@ -290,15 +296,24 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		thread = (thread_t) queue_first(&my_task->threads);
 		
 		// debug_msg("mach_dev_release() - thread refc %d\n", thread->ref_count);
-		task_unlock(my_task);
-		duct_thread_destroy(thread);
-		darling_thread_deregister(thread);
-		task_lock(my_task);
+		
+		//if (thread != cur_thread)
+		//{
+			task_unlock(my_task);
+			duct_thread_destroy(thread);
+			darling_thread_deregister(thread);
+			task_lock(my_task);
+		//}
+		//else
+		//	queue_remove(&my_task->threads, thread, thread_t, task_threads);
 	}
 	task_unlock(my_task);
 
-	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
-	duct_task_destroy(my_task);
+	//debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
+	//duct_task_destroy(my_task);
+	
+	//duct_thread_destroy(cur_thread);
+	//darling_thread_deregister(cur_thread);
 
 	return 0;
 }
