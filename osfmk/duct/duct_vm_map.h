@@ -52,4 +52,6 @@ extern void duct_vm_map_copy_discard (vm_map_copy_t copy);
 
 extern kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr,vm_map_copy_t copy);
 
+extern int darling_is_task_64bit(void);
+
 #endif // DUCT_VM_MAP_H

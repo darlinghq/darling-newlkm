@@ -160,7 +160,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	int fd_old = -1;
 	int ppid_fork = -1;
 	
-	debug_msg("Setting up new XNU task for pid %d\n", linux_current->pid);
+	debug_msg("Setting up new XNU task for pid %d\n", linux_current->tgid);
 
 	// Create a new task_t
 	ret = duct_task_create_internal(NULL, false, true, &new_task);
@@ -281,12 +281,21 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	thread_t thread, cur_thread;
 	task_t my_task = (task_t) file->private_data;
 	
+	// close(/dev/mach) may happen on any thread, even on a thread that
+	// has never seen any ioctl() calls into LKM.
+	if (!darling_thread_get_current())
+	{
+		debug_msg("No current thread!\n");
+		// return -LINUX_EINVAL;
+		thread_self_trap_entry(my_task);
+	}
+	
 	darling_task_deregister(my_task);
 	// darling_thread_deregister(NULL);
 	
 	cur_thread = darling_thread_get_current();
 	
-	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
+	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->tgid, my_task->ref_count);
 	duct_task_destroy(my_task);
 	
 	task_lock(my_task);

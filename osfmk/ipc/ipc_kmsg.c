@@ -72,6 +72,7 @@
 
 #if defined (__DARLING__)
 #include <duct/duct.h>
+#include <duct/duct_vm_map.h>
 #include <duct/duct_pre_xnu.h>
 #endif
 
@@ -2357,7 +2358,7 @@ ipc_kmsg_copyin_body(
     mach_msg_descriptor_t	*user_addr, *kern_addr;
     mach_msg_type_number_t	dsc_count;
 #if defined (__DARLING__)
-    boolean_t 			is_task_64bit = FALSE;
+    boolean_t 			is_task_64bit = darling_is_task_64bit();
 #else
     boolean_t 			is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
 #endif

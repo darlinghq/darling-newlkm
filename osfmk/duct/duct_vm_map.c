@@ -4,6 +4,7 @@ Copyright (c) 2014-2017, Wenqi Chen
 Shanghai Mifu Infotech Co., Ltd
 B112-113, IF Industrial Park, 508 Chunking Road, Shanghai 201103, China
 
+Copyright (C) 2017 Lubos Dolezel
 
 All rights reserved.
 
@@ -197,7 +198,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                           boolean_t src_destroy, boolean_t src_volatile,
                                           vm_map_copy_t * copy_result, boolean_t use_maxprot )
 {
-        printk ( KERN_NOTICE "- BUG: vm_map_copyin_common to current_map: %p from src_map: %p, addr: %p, len: 0x%llx destroy: %d\n",
+        printk ( KERN_NOTICE "- vm_map_copyin_common to current_map: %p from src_map: %p, addr: %p, len: 0x%llx destroy: %d\n",
                  current_map (), src_map, (void*) src_addr, len, src_destroy );
 
         // dump_stack ();
@@ -209,302 +210,124 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                 return KERN_SUCCESS;
         }
 
-        // printk (KERN_NOTICE "- msg_ool_size_small: 0x%x\n", msg_ool_size_small);
-
-        //
-        // /*
-        //  * If the copy is sufficiently small, use a kernel buffer instead
-        //  * of making a virtual copy.  The theory being that the cost of
-        //  * setting up VM (and taking C-O-W faults) dominates the copy costs
-        //  * for small regions.
-        //  */
-        // if ((len < msg_ool_size_small) && !use_maxprot)
-        //     return vm_map_copyin_kernel_buffer(src_map, src_addr, len,
-        //                        src_destroy, copy_result);
-        //
-
-        assert (src_map == current_map ());
-        assert (len > msg_ool_size_small);
+        // assert (src_map == current_map ());
+        // assert (len > msg_ool_size_small);
         copy            = (vm_map_copy_t) duct_zalloc (vm_map_copy_zone);
 
         if (copy == NULL) {
                 return KERN_RESOURCE_SHORTAGE;
         }
 
-        copy->type      = VM_MAP_COPY_LINUX_VMA_LIST;
+        copy->type      = VM_MAP_COPY_KERNEL_BUFFER;
         // copy->map       = src_map;
         // copy->offset    = src_start;
         copy->size      = len;
-        // printk ( KERN_NOTICE "- copy: 0x%p, sizeof vm_area_struct: %d\n",
-        //          copy, sizeof(struct vm_area_struct) );
+        copy->offset    = 0;
 
-#warning IMPLEMENT MEMORY COPY!
-		return KERN_FAILURE;
-#if 0
         switch (copy->type) {
-            #if defined (__DARLING__)
-            #else
-                case VM_MAP_COPY_ENTRY_LIST:
-                case VM_MAP_COPY_OBJECT:
+                // TODO: this could hopefully be optimized by calling find_vma
+                // and transferring the pages
                 case VM_MAP_COPY_KERNEL_BUFFER:
-                        // printk (KERN_NOTICE "- copy->type not support\n");
-                        copy->cpy_kdata = duct_kalloc(len);
-
-                        if (copy_from_user(copy->cpy_kdata, (void __user *) src_addr, len)) {
-                                duct_kfree (copy->cpy_kdata);
-                                duct_zfree (vm_map_copy_zone, copy);
-                                return KERN_NO_SPACE;
-                        }
-                        return KERN_SUCCESS;
-            #endif
-                case VM_MAP_COPY_LINUX_VMA_LIST:
                 {
-                        // WC assert that we destroy source so that we don't
-                        // need to write_protect pages now
-                        assert (src_destroy == TRUE);
+                        copy->cpy_kdata = vmalloc_user(len);
+                        copy->cpy_kalloc_size = len;
 
-                        struct vm_area_struct     * vma     = NULL;
-                        // CPH, cut to get vma (in our case, there is only one vma)
-                        down_write (&linux_current->mm->mmap_sem);
+                        if (src_addr) {
+                            if (copy_from_user(copy->cpy_kdata, (void __user *) src_addr, len)) {
+                                    printk(KERN_ERR "Failed to copy memory\n");
+                                    vfree (copy->cpy_kdata);
+                                    duct_zfree (vm_map_copy_zone, copy);
+                                    return KERN_NO_SPACE;
+                            }
+                        }
 
-                        cut_clean_vma (linux_current->mm, src_addr, len, &vma);
+                        if (src_destroy && src_addr)
+                            vm_munmap(src_addr, len);
 
-                        // up_write (&linux_current->mm->mmap_sem);
-
-                        assert (vma->vm_file == NULL);
-                        assert (vma->vm_start == src_addr);
-                        assert (vma->vm_end == src_addr + len);
-
-                        int              nr_pages    = vma_pages (vma);
-                        struct page   ** pages       = duct_kalloc (sizeof(struct page *) * nr_pages);
-
-                        // down_write (&linux_current->mm->mmap_sem);
-
-                        int              nr_pages_ret   =
-                        get_user_pages (NULL, linux_current->mm, vma->vm_start, nr_pages, 0, 0, pages, NULL);
-
-                        assert (nr_pages_ret == nr_pages);
-						copy->c_u.c_p.pages = pages;
-						copy->c_u.c_p.page_count = nr_pages;
-
-						atomic_set(&copy->c_u.c_p.mapping_refcount, 1);
-
-                        // CPH, follow_page() doesn't work without get_user_pages aboe
-                        // anon_vma_prepare (vma);
-
-                        // int             nr              = 0;
-                        // unsigned long   scan_addr       = src_addr;
-                        // while (scan_addr < vma->vm_end) {
-                        //         struct page       * page;
-                        //         page    = follow_page (vma, scan_addr, FOLL_GET);
-                        //
-                        //         if (IS_ERR_OR_NULL (page)) {
-                        //                 scan_addr  += LINUX_PAGE_SIZE;
-                        //                 nr         ++;
-                        //                 continue;
-                        //         }
-                        //
-                        //         if (PageAnon (page) /* || page_trans_compound_anon (page) */) {
-                        //                 // printk (KERN_NOTICE "- PageAnon\n");
-                        //                 flush_anon_page (vma, page, scan_addr);
-                        //                 flush_dcache_page (page);
-                        //         }
-                        //
-                        //         if (nr < 20) {
-                        //                 printk (KERN_NOTICE "- page[%d]: 0x%p\n", nr, page);
-                        //         }
-                        //
-                        //         put_page (page);
-                        //
-                        //         scan_addr  += LINUX_PAGE_SIZE;
-                        //         nr         ++;
-                        // }
-
-                        up_write (&linux_current->mm->mmap_sem);
-
-                        // if (src_destroy) {
-                        //         do_munmap(copy->map->linux_mm, src_start, len);
-                        // }
-
-                        printk (KERN_NOTICE "- returned copy: 0x%p\n", copy);
-                        *copy_result    = copy;
+                        printk(KERN_NOTICE "- copying OK\n");
+                        *copy_result = copy;
                         return KERN_SUCCESS;
                 }
+                default:
+                {
+                    printk(KERN_ERR "Unknown copyin type %d\n", copy->type);
+                    return KERN_FAILURE;
+                }
         }
-#endif
-
-        // initialise list head
-        // vm_map_copy_first_entry (copy)  = vm_map_copy_to_entry (copy);
-        // vm_map_copy_last_entry (copy)   = vm_map_copy_to_entry (copy);
-        //
-        // copy->cpy_hdr.nentries          = 0;
-        // copy->cpy_hdr.entries_pageable  = TRUE;
-
-        // WC - todo
-        // vm_map_store_init (&(copy->cpy_hdr));
-
-        // down_write (&linux_mm->mmap_sem);
-        // vma     = find_vma (mm, copy->offset);
-        // assert (vma != 0);
-        // assert (vma->vm_file == 0);
-
-        // up_write (&linux_mm->mmap_sem);
-
-
-        return 0;
 }
 
 void duct_vm_map_copy_discard (vm_map_copy_t copy)
 {
+        printk(KERN_NOTICE "vm_map_copy_discard\n");
         if (copy == VM_MAP_COPY_NULL)   return;
 
         switch (copy->type) {
-                case VM_MAP_COPY_LINUX_VMA_LIST:
+                case VM_MAP_COPY_KERNEL_BUFFER:
                 {
-                        // vm_size_t i;
-                        // for (i = 0; i < copy->c_u.c_p.page_count; i++) {
-                        //         put_page(copy->c_u.c_p.pages[i]);
-                        // }
-                        //
-                        // duct_kfree (copy->c_u.c_p.pages);
-                        // break;
+                    vfree(copy->cpy_kdata);
+                    break;
                 }
-
-            #if defined (__DARLING__)
-				// TODO: atomic_dec on mapping_refcount, free if zero
-            #else
-                // case VM_MAP_COPY_ENTRY_LIST:
-                //         while (vm_map_copy_first_entry(copy) !=
-                //                vm_map_copy_to_entry(copy)) {
-                //                    vm_map_entry_t    entry = vm_map_copy_first_entry(copy);
-                //
-                //                    vm_map_copy_entry_unlink(copy, entry);
-                //                    vm_object_deallocate(entry->object.vm_object);
-                //                    vm_map_copy_entry_dispose(copy, entry);
-                //         }
-                //         break;
-
-                // case VM_MAP_COPY_OBJECT:
-                //         vm_object_deallocate(copy->cpy_object);
-                //         break;
-                //
-                // case VM_MAP_COPY_KERNEL_BUFFER:
-                //
-                //         /*
-                //          * The vm_map_copy_t and possibly the data buffer were
-                //          * allocated by a single call to kalloc(), i.e. the
-                //          * vm_map_copy_t was not allocated out of the zone.
-                //          */
-                //         kfree(copy, copy->cpy_kalloc_size);
-                //         return;
-            #endif
         }
 
         duct_zfree (vm_map_copy_zone, copy);
 }
 
-static int special_mapping_fault(struct vm_area_struct *vma,
-                struct vm_fault *vmf)
-{
-    pgoff_t pgoff;
-    struct page **pages;
-
-    /*
-     * special mappings have no vm_file, and in that case, the mm
-     * uses vm_pgoff internally. So we have to subtract it from here.
-     * We are allowed to do this because we are the mm; do not copy
-     * this code into drivers!
-     */
-    pgoff = vmf->pgoff - vma->vm_pgoff;
-
-    for (pages = vma->vm_private_data; pgoff && *pages; ++pages)
-        pgoff--;
-
-    if (*pages) {
-        struct page *page = *pages;
-        get_page(page);
-        vmf->page = page;
-        return 0;
-    }
-
-    return VM_FAULT_SIGBUS;
-}
-
-static void special_mapping_close(struct vm_area_struct *vma)
-{
-    printk (KERN_NOTICE "duct_vm_map / special_mapping_open()");
-	vm_map_copy_t copy = (vm_map_copy_t) vma->vm_private_data;
-	if (!atomic_dec_and_test(&copy->c_u.c_p.mapping_refcount))
-	{
-		// TODO: free pages
-	}
-}
-
-static void special_mapping_open(struct vm_area_struct *vma)
-{
-    printk (KERN_NOTICE "duct_vm_map / special_mapping_open()");
-	vm_map_copy_t copy = (vm_map_copy_t) vma->vm_private_data;
-	atomic_inc(&copy->c_u.c_p.mapping_refcount);
-}
-
-static const struct vm_operations_struct special_mapping_vmops = {
-	.open = special_mapping_open,
-    .close = special_mapping_close,
-    .fault = special_mapping_fault,
-};
-
 
 kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr, vm_map_copy_t copy)
 {
-        printk ( KERN_NOTICE "- BUG: vm_map_copyout (current_map: 0x%p) to dst_map: 0x%p, addr: 0x%p, copy: 0x%p\n",
+        printk ( KERN_NOTICE "- vm_map_copyout (current_map: 0x%p) to dst_map: 0x%p, addr: 0x%p, copy: 0x%p\n",
                  current_map (), dst_map, (void*) dst_addr, copy );
-#if 0
-		down_write (&linux_current->mm->mmap_sem);
+        switch (copy->type)
+        {
+            case VM_MAP_COPY_KERNEL_BUFFER:
+            {
+                int rv;
+                unsigned long addr = vm_mmap(NULL, *dst_addr, copy->size, PROT_READ | PROT_WRITE,
+                                             MAP_ANONYMOUS | MAP_PRIVATE, 0);
 
+                if (IS_ERR((void*) addr))
+                {
+                    printk(KERN_ERR "Cannot vm_mmap %llu bytes\n", copy->size);
+                    return KERN_NO_SPACE;
+                }
 
-        int ret;
-        struct vm_area_struct *vma;
-        struct mm_struct *mm = linux_current->mm;
-        unsigned long addr = *dst_addr;
-        struct page **pages = copy->c_u.c_p.pages;
-        unsigned long len = copy->size;
-        unsigned long vm_flags = VM_READ | VM_MAYWRITE;
+                /*
+                 * If we could do split_vma in a kernel module,
+                 * we could use remap_vmalloc_range to avoid a copy. Sigh.
 
-        vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
-        if (unlikely(vma == NULL))
-            return KERN_RESOURCE_SHORTAGE;
+                struct vm_area_struct* vma;
 
-        INIT_LIST_HEAD(&vma->anon_vma_chain);
-        vma->vm_mm = mm;
-        vma->vm_start = addr;
-        vma->vm_end = addr + len;
+                down_write (&linux_current->mm->mmap_sem);
+                vma = find_vma(linux_current->mm, addr);
+                if (vma == NULL)
+                {
+                    up_write (&linux_current->mm->mmap_sem);
+                    vm_munmap(addr, copy->size);
+                    return KERN_NO_SPACE;
+                }
+                */
 
-        vma->vm_flags = vm_flags | mm->def_flags | VM_DONTEXPAND;
-        vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+                if (copy_to_user((void *) addr, copy->cpy_kdata, copy->size))
+                {
+                    printk(KERN_ERR "Cannot copy_to_user() to a newly allocated anon range!\n");
+                    vm_munmap(addr, copy->size);
+                    return KERN_FAILURE;
+                }
+                *dst_addr = addr;
 
-        vma->vm_ops = &special_mapping_vmops;
-        vma->vm_private_data = pages;
-
-        ret = security_file_mmap(NULL, 0, 0, 0, vma->vm_start, 1);
-        if (ret)
-            goto out;
-
-        ret = insert_vm_struct(mm, vma);
-        if (ret)
-            goto out;
-
-        mm->total_vm += len >> PAGE_SHIFT;
-
-        perf_event_mmap(vma);
-		up_write (&linux_current->mm->mmap_sem);
-
-        return 0;
-
-out:
-		up_write (&linux_current->mm->mmap_sem);
-        kmem_cache_free(vm_area_cachep, vma);
-        return ret;
-#endif
-#warning IMPLEMENT MEMORY COPYOUT
-		return KERN_FAILURE;
+                return KERN_SUCCESS;
+            }
+            default:
+                return KERN_FAILURE;
+        }
 }
+
+int darling_is_task_64bit(void)
+{
+#if __x86_64__ || __arm64__
+    return !test_thread_flag(TIF_IA32);
+#else
+    return 0;
+#endif
+}
+
