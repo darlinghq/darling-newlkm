@@ -230,7 +230,6 @@ int mach_dev_open(struct inode* ino, struct file* file)
 				task_set_bootstrap_port(new_task, bootstrap_port);
 		
 			task_deallocate(parent_task);
-			darling_task_fork_child_done();
 
 			ppid_fork = ppid;
 		}
@@ -271,7 +270,10 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	
 	// fork case only
 	if (ppid_fork != -1)
+	{
+		darling_task_fork_child_done();
 		darling_task_post_notification(ppid_fork, NOTE_FORK, task_pid_vnr(linux_current));
+	}
 	
 	return 0;
 }
