@@ -406,7 +406,7 @@ void darling_task_fork_wait_for_child(void)
 {
 	struct registry_entry* e = darling_task_get_current_entry();
 
-	down(&e->sem_fork);
+	down_interruptible(&e->sem_fork);
 }
 
 void darling_task_fork_child_done(void)
@@ -415,6 +415,7 @@ void darling_task_fork_child_done(void)
 	struct registry_entry* entry = darling_task_get_entry_unlocked(current->real_parent->tgid);
 	read_unlock(&my_task_lock);
 
+	debug_msg("task_fork_child_done - notify entry %p\n", entry);
 	if (entry != NULL)
 		up(&entry->sem_fork);
 }

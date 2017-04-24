@@ -220,6 +220,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		ppid = linux_current->parent->tgid;
 
 		parent_task = darling_task_get(ppid);
+		debug_msg("- Fork case detected, ppid=%d, parent_task=%p\n", ppid, parent_task);
 		if (parent_task != NULL)
 		{
 			ipc_port_t bootstrap_port;

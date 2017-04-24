@@ -79,6 +79,7 @@ int evprocfd_create(unsigned int pid, unsigned int flags, struct file** file)
 	// register with task registry
 	if (!darling_task_notify_register(pid, ctx))
 	{
+		debug_msg("!!! cannot register to monitor PID %d\n", pid);
 		kfree(ctx);
 		return -ESRCH;
 	}
