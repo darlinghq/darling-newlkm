@@ -170,7 +170,7 @@ int evprocfd_release(struct inode* inode, struct file* file)
 	{
 		struct evprocfd_event_entry* e = list_entry(next, struct evprocfd_event_entry, list);
 		if (e->file)
-			put_filp(e->file);
+			fput(e->file);
 		kfree(e);
 	}
 
