@@ -464,6 +464,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
     //
     // DTRACE_PROC1(lwp__create, thread_t, *out_thread);
 
+        task_unlock(parent_task);
         return (KERN_SUCCESS);
 }
 

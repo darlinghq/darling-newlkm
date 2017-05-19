@@ -299,7 +299,6 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	cur_thread = darling_thread_get_current();
 	
 	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->tgid, my_task->ref_count);
-	duct_task_destroy(my_task);
 	
 	task_lock(my_task);
 	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
@@ -320,6 +319,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		//	queue_remove(&my_task->threads, thread, thread_t, task_threads);
 	}
 	task_unlock(my_task);
+	duct_task_destroy(my_task);
 
 	//debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
 	//duct_task_destroy(my_task);
