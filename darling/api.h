@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		5
+#define DARLING_MACH_API_VERSION		6
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
