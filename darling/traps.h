@@ -64,5 +64,7 @@ int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* a
 int fork_wait_for_child_entry(task_t task);
 
 int evproc_create_entry(task_t task, struct evproc_create* args);
+int task_for_pid_entry(task_t task, struct task_for_pid* args);
+int pid_for_task_entry(task_t task, struct pid_for_task* args);
 
 #endif

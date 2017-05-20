@@ -38,7 +38,10 @@
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/task_special_ports.h>
+#include <ipc/ipc_port.h>
+#include <vm/vm_protos.h>
 #include <kern/task.h>
+#include <kern/ipc_tt.h>
 #include <kern/queue.h>
 #include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
@@ -113,6 +116,9 @@ static const struct trap_entry mach_traps[40] = {
 	TRAP(NR_mk_timer_arm_trap, mk_timer_arm_entry),
 	TRAP(NR_mk_timer_cancel_trap, mk_timer_cancel_entry),
 	TRAP(NR_mk_timer_destroy_trap, mk_timer_destroy_entry),
+	
+	// TASKS
+	TRAP(NR_task_for_pid_trap, task_for_pid_entry),
 };
 #undef TRAP
 
@@ -706,6 +712,63 @@ int evproc_create_entry(task_t task, struct evproc_create* in_args)
 		return -LINUX_ESRCH;
 
 	return evprocfd_create(pid, args.flags, NULL);
+}
+
+int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
+{
+	struct pid* pidobj;
+	unsigned int pid;
+	task_t task_out;
+	int port_name;
+	ipc_port_t sright;
+
+	copyargs(args, in_args);
+
+	// Convert virtual PID to global PID
+	rcu_read_lock();
+
+	pidobj = find_vpid(args.pid);
+	if (pidobj != NULL)
+		pid = pid_nr(pidobj);
+
+	rcu_read_unlock();
+
+	if (pid == 0)
+		return KERN_FAILURE;
+	
+	// Lookup task in task registry
+	task_out = darling_task_get(args.pid);
+	if (task_out == NULL)
+		return KERN_FAILURE;
+	
+	// Turn it into a send right
+	sright = convert_task_to_port(task_out);
+	port_name = ipc_port_copyout_send(sright, task->itk_space);
+	
+	if (copy_to_user(args.task_port, &port_name, sizeof(port_name)))
+		return KERN_INVALID_ADDRESS;
+
+	return KERN_SUCCESS;
+}
+
+int pid_for_task_entry(task_t task, struct pid_for_task* in_args)
+{
+	task_t that_task;
+	int pid;
+	
+	copyargs(args, in_args);
+	
+	that_task = port_name_to_task(args.task_port);
+	if (that_task == NULL)
+		return -LINUX_ESRCH;
+	
+	pid = that_task->audit_token.val[5]; // contains vpid
+	task_deallocate(that_task);
+
+	if (copy_to_user(args.pid, &pid, sizeof(pid)))
+		return KERN_INVALID_ADDRESS;
+	
+	return KERN_SUCCESS;
 }
 
 module_init(mach_init);

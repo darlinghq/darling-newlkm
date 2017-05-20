@@ -73,6 +73,8 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_eventfd_machport_detach,
 	NR_fork_wait_for_child,
 	NR_evproc_create,
+	NR_task_for_pid_trap,
+	NR_pid_for_task_trap,
 };
 
 struct evproc_create
@@ -313,6 +315,18 @@ struct mk_timer_cancel_args
 struct mk_timer_destroy_args
 {
 	unsigned int timer_port;
+};
+
+struct task_for_pid
+{
+	unsigned int pid;
+	unsigned int* task_port;
+};
+
+struct pid_for_task
+{
+	unsigned int task_port;
+	unsigned int* pid;
 };
 
 #pragma pack (pop)
