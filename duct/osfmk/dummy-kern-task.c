@@ -460,7 +460,29 @@ task_threads(
 }
 
 
+static kern_return_t signal_to_task(task_t task, int signal)
+{
+	struct pid* pidobj;
+	kern_return_t rv;
+	int vpid = task->audit_token.val[5];
 
+	rcu_read_lock();
+
+	pidobj = find_vpid(vpid);
+	if (pidobj != NULL)
+	{
+		kill_pgrp(pidobj, signal, 0);
+		rv = KERN_SUCCESS;
+	}
+	else
+	{
+		kprintf("Failure: cannot translate VPID %d to global PID\n", vpid);
+		rv = KERN_FAILURE;
+	}
+
+	rcu_read_unlock();
+	return rv;
+}
 
 /*
  *  task_suspend:
@@ -474,8 +496,7 @@ kern_return_t
 task_suspend(
     register task_t     task)
 {
-        kprintf("not implemented: task_suspend()\n");
-        return 0;
+	return signal_to_task(task, LINUX_SIGSTOP);
 }
 
 /*
@@ -489,8 +510,7 @@ kern_return_t
 task_resume(
     register task_t task)
 {
-        kprintf("not implemented: task_resume()\n");
-        return 0;
+	return signal_to_task(task, LINUX_SIGCONT);
 }
 
 kern_return_t

@@ -717,7 +717,7 @@ int evproc_create_entry(task_t task, struct evproc_create* in_args)
 int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 {
 	struct pid* pidobj;
-	unsigned int pid;
+	unsigned int pid = 0;
 	task_t task_out;
 	int port_name;
 	ipc_port_t sright;
