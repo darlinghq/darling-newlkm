@@ -148,6 +148,8 @@
 #include <pmc/pmc.h>
 #endif /* CONFIG_COUNTERS */
 
+#include <duct/duct_post_xnu.h>
+
 // task_t          kernel_task;
 extern zone_t          task_zone;
 // lck_attr_t      task_lck_attr;
@@ -455,8 +457,110 @@ task_threads(
     thread_act_array_t      *threads_out,
     mach_msg_type_number_t  *count)
 {
-        kprintf("not implemented: task_threads()\n");
-        return 0;
+	mach_msg_type_number_t	actual;
+	thread_t				*thread_list;
+	thread_t				thread;
+	vm_size_t				size, size_needed;
+	void					*addr;
+	unsigned int			i, j;
+
+	if (task == TASK_NULL)
+		return (KERN_INVALID_ARGUMENT);
+
+	size = 0; addr = NULL;
+
+	for (;;) {
+		printk(KERN_DEBUG "Before lock\n");
+		task_lock(task);
+		printk(KERN_DEBUG "After lock\n");
+		if (!task->active) {
+			task_unlock(task);
+
+			if (size != 0)
+				kfree(addr, size);
+
+			return (KERN_FAILURE);
+		}
+
+		actual = task->thread_count;
+
+		/* do we have the memory we need? */
+		size_needed = actual * sizeof (mach_port_t);
+		if (size_needed <= size)
+			break;
+
+		/* unlock the task and allocate more memory */
+		task_unlock(task);
+
+		if (size != 0)
+			kfree(addr, size);
+
+		assert(size_needed > 0);
+		size = size_needed;
+
+		addr = kalloc(size);
+		if (addr == 0)
+			return (KERN_RESOURCE_SHORTAGE);
+	}
+
+	/* OK, have memory and the task is locked & active */
+	thread_list = (thread_t *)addr;
+
+	i = j = 0;
+
+	for (thread = (thread_t)queue_first(&task->threads); i < actual;
+				++i, thread = (thread_t)queue_next(&thread->task_threads)) {
+		thread_reference_internal(thread);
+		thread_list[j++] = thread;
+	}
+
+	assert(queue_end(&task->threads, (queue_entry_t)thread));
+
+	actual = j;
+	size_needed = actual * sizeof (mach_port_t);
+
+	/* can unlock task now that we've got the thread refs */
+	task_unlock(task);
+
+	if (actual == 0) {
+		/* no threads, so return null pointer and deallocate memory */
+
+		*threads_out = NULL;
+		*count = 0;
+
+		if (size != 0)
+			kfree(addr, size);
+	}
+	else {
+		/* if we allocated too much, must copy */
+
+		if (size_needed < size) {
+			void *newaddr;
+
+			newaddr = kalloc(size_needed);
+			if (newaddr == 0) {
+				for (i = 0; i < actual; ++i)
+					thread_deallocate(thread_list[i]);
+				kfree(addr, size);
+				return (KERN_RESOURCE_SHORTAGE);
+			}
+
+			bcopy(addr, newaddr, size_needed);
+			kfree(addr, size);
+			thread_list = (thread_t *)newaddr;
+		}
+
+		*threads_out = thread_list;
+		*count = actual;
+
+		/* do the conversion that Mig should handle */
+
+		for (i = 0; i < actual; ++i)
+			((ipc_port_t *) thread_list)[i] = convert_thread_to_port(thread_list[i]);
+	}
+
+	printk(KERN_DEBUG "Going to return success\n");
+	return (KERN_SUCCESS);
 }
 
 
@@ -464,7 +568,12 @@ static kern_return_t signal_to_task(task_t task, int signal)
 {
 	struct pid* pidobj;
 	kern_return_t rv;
-	int vpid = task->audit_token.val[5];
+	int vpid;
+
+	if (task == TASK_NULL)
+		return KERN_INVALID_ARGUMENT;
+
+	vpid = task->audit_token.val[5];
 
 	rcu_read_lock();
 
