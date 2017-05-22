@@ -3567,7 +3567,7 @@ ipc_kmsg_copyout_body(
     mach_msg_return_t 		mr = MACH_MSG_SUCCESS;
 
 #if defined (__DARLING__)
-        boolean_t       is_task_64bit  = FALSE;
+        boolean_t       is_task_64bit  = darling_is_task_64bit();
 #else
     boolean_t 			is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
 #endif
@@ -3645,7 +3645,7 @@ ipc_kmsg_copyout_size(
     send_size = kmsg->ikm_header->msgh_size;
 
 #if defined (__DARLING__)
-        boolean_t       is_task_64bit   = FALSE;
+        boolean_t       is_task_64bit   = darling_is_task_64bit();
 #else
     boolean_t is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
 #endif
