@@ -108,7 +108,7 @@ kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach
 
         if (! flags & VM_FLAGS_ANYWHERE)    map_flags  |= MAP_FIXED;
 
-        down_write (&linux_current->mm->mmap_sem);
+        // down_write (&linux_current->mm->mmap_sem);
 
         /* WC - todo: should potentially be just a vm_brk with prot flags */
         // printk (KERN_NOTICE "mmap: requested addr: 0x%x\n", map_addr);
@@ -124,7 +124,7 @@ kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach
         // printk (KERN_NOTICE "mmap: result: 0x%x\n", result);
 
 
-        up_write (&linux_current->mm->mmap_sem);
+        // up_write (&linux_current->mm->mmap_sem);
 
 
 #else
