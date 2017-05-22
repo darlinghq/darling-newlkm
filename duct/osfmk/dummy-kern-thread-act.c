@@ -84,6 +84,10 @@
 
 #include <security/mac_mach_internal.h>
 
+#include <asm/ptrace.h>
+#include <asm/barrier.h>
+#include <linux/thread_info.h>
+
 void            act_abort(thread_t);
 void            install_special_handler_locked(thread_t);
 void            special_handler_continue(void);
@@ -163,16 +167,17 @@ kern_return_t
 thread_suspend(
     register thread_t   thread)
 {
-        kprintf("not implemented: thread_suspend()\n");
-        return 0;
+	smp_store_mb(thread->linux_task->state, TASK_STOPPED);
+	return KERN_SUCCESS;
 }
 
 kern_return_t
 thread_resume(
     register thread_t   thread)
 {
-        kprintf("not implemented: thread_resume()\n");
-        return 0;
+	smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
+	wake_up_process(thread->linux_task);
+	return KERN_SUCCESS;
 }
 
 /*
@@ -241,8 +246,47 @@ thread_get_state(
     thread_state_t          state,          /* pointer to OUT array */
     mach_msg_type_number_t  *state_count)   /*IN/OUT*/
 {
-        kprintf("not implemented: thread_get_state()\n");
-        return 0;
+	struct task_struct* ltask = thread->linux_task;
+
+#ifdef __x86_64__
+	switch (flavor)
+	{
+		// The following flavors automatically select 32 or 64-bit state
+		// based on process type.
+		case x86_THREAD_STATE:
+			flavor = test_thread_flag(TIF_IA32) ? x86_THREAD_STATE32 : x86_THREAD_STATE64;
+			break;
+		case x86_FLOAT_STATE:
+			flavor = test_thread_flag(TIF_IA32) ? x86_FLOAT_STATE32 : x86_FLOAT_STATE64;
+			break;
+	}
+
+	// TODO: check state_count
+	switch (flavor)
+	{
+		case x86_THREAD_STATE32:
+			break;
+		case x86_FLOAT_STATE32:
+			break;
+		case x86_THREAD_STATE64:
+		{
+			struct pt_regs* regs = task_pt_regs(ltask);
+			break;
+		}
+		case x86_FLOAT_STATE64:
+		{
+			// xfpregs_get
+			//struct fpu* fpu = &target->thread.fpu;
+			//fpu__activate_fpstate_read(fpu);
+			//fpstate_sanitize_xstate(fpu);
+			// OR
+			const struct fxregs_state* fx = &ltask->thread.fpu.state.fxsave;
+			break;
+		}
+	}
+#else
+	return KERN_FAILURE;
+#endif
 }
 
 /*
