@@ -354,7 +354,7 @@ typedef	struct
   mach_msg_size_t	msgh_size;
   mach_port_t		msgh_remote_port;
   mach_port_t		msgh_local_port;
-  mach_msg_size_t 	msgh_reserved;
+  mach_port_name_t 	msgh_reserved;
   mach_msg_id_t		msgh_id;
 } mach_msg_header_t;
 

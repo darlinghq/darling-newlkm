@@ -443,6 +443,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
 
         new_thread->active = TRUE;
+        new_thread->linux_task = linux_current;
         *out_thread = new_thread;
 
     // {
