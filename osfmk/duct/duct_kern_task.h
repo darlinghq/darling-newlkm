@@ -41,7 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 extern void duct_task_init (void);
 
-extern kern_return_t duct_task_create_internal (task_t  parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task);
+extern kern_return_t duct_task_create_internal (task_t  parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task, struct task_struct* ltask);
 
 extern void duct_task_destroy(task_t task);
 

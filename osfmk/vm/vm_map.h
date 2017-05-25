@@ -337,7 +337,7 @@ struct _vm_map {
  	boolean_t		jit_entry_exists;
 
 #if defined (__DARLING__)
-    struct mm_struct      * linux_mm;
+    struct task_struct* linux_task;
 #endif
 } ;
 

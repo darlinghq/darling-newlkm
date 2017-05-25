@@ -110,7 +110,7 @@ void * darling_copy_mach_thread (unsigned long clone_flags, struct task_struct *
                 task        = curr_task;
         }
         else {
-                duct_task_create_internal (curr_task, 0 /* inherit_memory */, 0 /* is64bit */, &task);
+                duct_task_create_internal (curr_task, 0 /* inherit_memory */, 0 /* is64bit */, &task, NULL);
 
                 if (result != KERN_SUCCESS) {
                         printk (KERN_NOTICE "duct_task_create_internal failed.  Code: %d\n", result);

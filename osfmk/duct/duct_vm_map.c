@@ -119,7 +119,13 @@ void duct_vm_map_init (void)
 #endif
 }
 
-vm_map_t duct_vm_map_create (struct mm_struct * linux_mm)
+void vm_map_deallocate(vm_map_t map)
+{
+	if (map != NULL)
+		duct_zfree(vm_map_zone, map);
+}
+
+vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 {
 #if defined (__DARLING__)
 #else
@@ -172,10 +178,8 @@ vm_map_t duct_vm_map_create (struct mm_struct * linux_mm)
 #endif
 
 #if defined (__DARLING__)
-        // CPH, as linux will flush task_struct->mm in execve(), don't save linux_mm here
-        // Reference: macho_load_binary() -> flush_old_exec(bprm) in bsd/compat/binfmt_macho.c
-        // and flush_old_exec() and exec_mmap() in fs/exec.c
-        // result->linux_mm   = linux_mm;
+		result->linux_task = linux_task;
+        result->ref_count = 1;
 #endif
 
         return(result);

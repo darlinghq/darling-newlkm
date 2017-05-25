@@ -169,7 +169,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	debug_msg("Setting up new XNU task for pid %d\n", linux_current->tgid);
 
 	// Create a new task_t
-	ret = duct_task_create_internal(NULL, false, true, &new_task);
+	ret = duct_task_create_internal(NULL, false, true, &new_task, linux_current);
 	if (ret != KERN_SUCCESS)
 		return -LINUX_EINVAL;
 

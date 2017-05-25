@@ -41,7 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern void duct_vm_map_init (void);
 
 /* WC - different interface */
-extern vm_map_t duct_vm_map_create (struct mm_struct * linux_mm);
+extern vm_map_t duct_vm_map_create (struct task_struct * linux_task);
 
 extern kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src_addr, vm_map_size_t len,
                                                  boolean_t src_destroy, boolean_t src_volatile,

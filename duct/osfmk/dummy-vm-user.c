@@ -118,6 +118,10 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_protos.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+#include "access_process_vm.h"
+#endif
+
 vm_size_t        upl_offset_to_pagelist = 0;
 
 #if	VM_CPM
@@ -303,8 +307,7 @@ mach_vm_read(
 	pointer_t		*data,
 	mach_msg_type_number_t	*data_size)
 {
-        kprintf("not implemented: mach_vm_read()\n");
-        return 0;
+	return vm_read(map, addr, size, data, data_size);
 }
 /*
  * vm_read -
@@ -324,8 +327,62 @@ vm_read(
 	pointer_t		*data,
 	mach_msg_type_number_t	*data_size)
 {
-        kprintf("not implemented: vm_read()\n");
-        return 0;
+	struct task_struct* ltask = map->linux_task;
+	void* buf;
+	int rd;
+	const bool big = size > 1024*1024;
+	unsigned long uaddress = 0;
+	kern_return_t rv = KERN_SUCCESS;
+
+	if (size > 20*1024*1024)
+		return KERN_INVALID_ARGUMENT;
+
+	buf = (big) ? vmalloc(size) : kmalloc(size, GFP_KERNEL);
+
+	*data = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	rd = access_process_vm(ltask, addr, buf, size, 0);
+#else
+	// Older kernels don't export access_process_vm(),
+	// so we need to fall back to our own copy in access_process_vm.h
+	rd = __access_process_vm(ltask, addr, buf, size, 0);
+#endif
+
+	if (rd <= 0)
+	{
+		rv = KERN_INVALID_ADDRESS;
+		*data_size = 0;
+		goto err;
+	}
+
+	*data_size = rd;
+
+	if (rd > 0)
+	{
+		uaddress = vm_mmap(NULL, 0, rd, PROT_READ,
+			MAP_ANONYMOUS | MAP_PRIVATE, 0);
+
+		if (IS_ERR((void*) uaddress))
+		{
+			printk(KERN_ERR "- vm_read(): failed to do vm_mmap with err %d\n", (int)uaddress);
+			rv = KERN_FAILURE;
+			goto err;
+		}
+		if (copy_to_user((void __user*) uaddress, buf, rd))
+		{
+			vm_munmap(uaddress, rd);
+
+			printk(KERN_ERR "- vm_read(): failed to copy_to_user() into a vm_mapped() area\n");
+			rv = KERN_FAILURE;
+			goto err;
+		}
+	}
+	*data = uaddress;
+
+err:
+	(big) ? vfree(buf) : kfree(buf, size);
+
+	return rv;
 }
 /* 
  * mach_vm_read_list -
@@ -429,8 +486,7 @@ mach_vm_write(
 	pointer_t			data,
 	__unused mach_msg_type_number_t	size)
 {
-        kprintf("not implemented: mach_vm_write()\n");
-        return 0;
+	return vm_write(map, address, data, size);
 }
 /*
  * vm_write -
@@ -449,6 +505,7 @@ vm_write(
 	pointer_t			data,
 	__unused mach_msg_type_number_t	size)
 {
+	// TODO: FOLL_WRITE for access_process_vm
         kprintf("not implemented: vm_write()\n");
         return 0;
 }

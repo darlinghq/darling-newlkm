@@ -36,6 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_pre_xnu.h"
 #include "duct_kern_task.h"
 #include "duct_kern_zalloc.h"
+#include "duct_vm_map.h"
 // #include "duct_machine_routines.h"
 
 #include <kern/mach_param.h>
@@ -84,9 +85,9 @@ void duct_task_init (void)
          * Create the kernel task as the first task.
          */
     #ifdef __LP64__
-        if (duct_task_create_internal(TASK_NULL, FALSE, TRUE, &kernel_task) != KERN_SUCCESS)
+        if (duct_task_create_internal(TASK_NULL, FALSE, TRUE, &kernel_task, NULL) != KERN_SUCCESS)
     #else
-        if (duct_task_create_internal(TASK_NULL, FALSE, FALSE, &kernel_task) != KERN_SUCCESS)
+        if (duct_task_create_internal(TASK_NULL, FALSE, FALSE, &kernel_task, NULL) != KERN_SUCCESS)
     #endif
             panic("task_init\n");
 
@@ -105,13 +106,13 @@ void duct_task_destroy(task_t task)
         if (task == TASK_NULL) {
                 return;
         }
-        
+
         ipc_space_terminate (task->itk_space);
         task_deallocate(task);
 
 }
 
-kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task)
+kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task, struct task_struct* ltask)
 {
         task_t            new_task;
 
@@ -195,6 +196,11 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         queue_init(&new_task->lock_set_list);
         new_task->semaphores_owned = 0;
         new_task->lock_sets_owned = 0;
+
+        if (ltask != NULL)
+        {
+            new_task->map = duct_vm_map_create(ltask);
+        }
 
     #if CONFIG_MACF_MACH
         new_task->label = labelh_new(1);
