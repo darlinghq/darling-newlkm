@@ -53,6 +53,7 @@ lck_attr_t      task_lck_attr;
 lck_grp_t       task_lck_grp;
 lck_grp_attr_t  task_lck_grp_attr;
 
+extern void duct_vm_map_deallocate(vm_map_t map);
 
 void duct_task_init (void)
 {
@@ -94,7 +95,7 @@ void duct_task_init (void)
 
 #if defined (__DARLING__)
 #else
-        vm_map_deallocate(kernel_task->map);
+        duct_vm_map_deallocate(kernel_task->map);
         kernel_task->map = kernel_map;
         lck_spin_init(&dead_task_statistics_lock, &task_lck_grp, &task_lck_attr);
 #endif

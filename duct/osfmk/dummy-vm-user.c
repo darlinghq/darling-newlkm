@@ -118,10 +118,6 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_protos.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
-#include "access_process_vm.h"
-#endif
-
 vm_size_t        upl_offset_to_pagelist = 0;
 
 #if	VM_CPM
@@ -307,8 +303,46 @@ mach_vm_read(
 	pointer_t		*data,
 	mach_msg_type_number_t	*data_size)
 {
+	kern_return_t	error;
+	vm_map_copy_t	ipc_address;
+
+	if (map == VM_MAP_NULL)
+		return(KERN_INVALID_ARGUMENT);
+#ifdef __DARLING__
+	if (size > 30*1024*1024)
+		return KERN_INVALID_ARGUMENT;
+#endif
+
+	if ((mach_msg_type_number_t) size != size)
+		return KERN_INVALID_ARGUMENT;
+	
+	error = vm_map_copyin(map,
+			(vm_map_address_t)addr,
+			(vm_map_size_t)size,
+			FALSE,	/* src_destroy */
+			&ipc_address);
+
+	if (KERN_SUCCESS == error) {
+		*data = (pointer_t) ipc_address;
+		*data_size = (mach_msg_type_number_t) size;
+		assert(*data_size == size);
+	}
+	return(error);
+}
+
+/*
+kern_return_t
+mach_vm_read(
+	vm_map_t		map,
+	mach_vm_address_t	addr,
+	mach_vm_size_t	size,
+	pointer_t		*data,
+	mach_msg_type_number_t	*data_size)
+{
 	return vm_read(map, addr, size, data, data_size);
 }
+*/
+
 /*
  * vm_read -
  * Read/copy a range from one address space and return it to the caller.
@@ -327,17 +361,60 @@ vm_read(
 	pointer_t		*data,
 	mach_msg_type_number_t	*data_size)
 {
+	kern_return_t	error;
+	vm_map_copy_t	ipc_address;
+
+	if (map == VM_MAP_NULL)
+		return(KERN_INVALID_ARGUMENT);
+#ifdef __DARLING__
+	if (size > 30*1024*1024)
+		return KERN_INVALID_ARGUMENT;
+#endif
+
+	if (size > (unsigned)(mach_msg_type_number_t) -1) {
+		/*
+		 * The kernel could handle a 64-bit "size" value, but
+		 * it could not return the size of the data in "*data_size"
+		 * without overflowing.
+		 * Let's reject this "size" as invalid.
+		 */
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	error = vm_map_copyin(map,
+			(vm_map_address_t)addr,
+			(vm_map_size_t)size,
+			FALSE,	/* src_destroy */
+			&ipc_address);
+
+	if (KERN_SUCCESS == error) {
+		*data = (pointer_t) ipc_address;
+		*data_size = (mach_msg_type_number_t) size;
+		assert(*data_size == size);
+	}
+	return(error);
+}
+/*
+kern_return_t
+vm_read(
+	vm_map_t		map,
+	vm_address_t		addr,
+	vm_size_t		size,
+	pointer_t		*data,
+	mach_msg_type_number_t	*data_size)
+{
 	struct task_struct* ltask = map->linux_task;
 	void* buf;
 	int rd;
-	const bool big = size > 1024*1024;
+	//const bool big = size > 1024*1024;
 	unsigned long uaddress = 0;
 	kern_return_t rv = KERN_SUCCESS;
 
 	if (size > 20*1024*1024)
 		return KERN_INVALID_ARGUMENT;
 
-	buf = (big) ? vmalloc(size) : kmalloc(size, GFP_KERNEL);
+	buf = vmalloc_user(size);
+	printk(KERN_DEBUG " - allocated %d bytes at %p\n", size, buf);
 
 	*data = 0;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
@@ -359,8 +436,9 @@ vm_read(
 
 	if (rd > 0)
 	{
-		uaddress = vm_mmap(NULL, 0, rd, PROT_READ,
+		uaddress = vm_mmap(NULL, 0, rd, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE, 0);
+		printk(KERN_ERR "- mmapped user memory at %p\n", (void *)uaddress);
 
 		if (IS_ERR((void*) uaddress))
 		{
@@ -380,10 +458,21 @@ vm_read(
 	*data = uaddress;
 
 err:
-	(big) ? vfree(buf) : kfree(buf, size);
+	//if (big)
+	//{
+		printk(KERN_DEBUG "- using vfree\n");
+		vfree(buf);
+	//}
+	//else
+	//{
+	//	printk(KERN_DEBUG "- using kfree\n");
+	//	kfree(buf, size);
+	//}
 
 	return rv;
 }
+*/
+
 /* 
  * mach_vm_read_list -
  * Read/copy a list of address ranges from specified map.

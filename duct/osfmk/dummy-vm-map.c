@@ -1581,14 +1581,12 @@ vm_map_reference(
  *	destroying it if no references remain.
  *	The map should not be locked.
  */
-#if 0
 void
 vm_map_deallocate(
 	register vm_map_t	map)
 {
-		kprintf("not implemented: vm_map_deallocate()\n");
+		// kprintf("not implemented: vm_map_deallocate()\n");
 }
-#endif
 
 void
 vm_map_disable_NX(vm_map_t map)

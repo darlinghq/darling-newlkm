@@ -1287,7 +1287,9 @@ convert_port_to_map(
 	}
 		
 	map = task->map;
+#ifndef __DARLING__
 	vm_map_reference_swap(map);
+#endif
 	task_unlock(task);
 	return map;
 }

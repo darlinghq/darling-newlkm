@@ -39,6 +39,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_kern_kalloc.h"
 
 #include <vm/vm_map.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+#include "access_process_vm.h"
+#endif
 
 #undef kfree
 extern void kfree (const void * objp);
@@ -119,7 +122,7 @@ void duct_vm_map_init (void)
 #endif
 }
 
-void vm_map_deallocate(vm_map_t map)
+void duct_vm_map_deallocate(vm_map_t map)
 {
 	if (map != NULL)
 		duct_zfree(vm_map_zone, map);
@@ -237,7 +240,18 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                         copy->cpy_kalloc_size = len;
 
                         if (src_addr) {
-                            if (copy_from_user(copy->cpy_kdata, (void __user *) src_addr, len)) {
+
+							struct task_struct* ltask = src_map->linux_task;
+							int rd;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+							rd = access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
+#else
+							// Older kernels don't export access_process_vm(),
+							// so we need to fall back to our own copy in access_process_vm.h
+							rd = __access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
+#endif
+                            if (rd != len) {
                                     printk(KERN_ERR "Failed to copy memory\n");
                                     vfree (copy->cpy_kdata);
                                     duct_zfree (vm_map_copy_zone, copy);

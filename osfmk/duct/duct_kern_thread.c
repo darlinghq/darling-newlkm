@@ -492,7 +492,7 @@ static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_t
         // if (from_user)
         //     extmod_statistics_incr_thread_create(task);
         //
-        task_unlock(task);
+        //task_unlock(task);
         lck_mtx_unlock(&tasks_threads_lock);
 
         *new_thread     = thread;
