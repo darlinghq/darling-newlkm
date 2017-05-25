@@ -253,12 +253,13 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
 #endif
                             if (rd != len) {
                                     printk(KERN_ERR "Failed to copy memory\n");
-                                    vfree (copy->cpy_kdata);
-                                    duct_zfree (vm_map_copy_zone, copy);
+                                    // vfree (copy->cpy_kdata);
+                                    // duct_zfree (vm_map_copy_zone, copy);
                                     return KERN_NO_SPACE;
                             }
                         }
 
+                        // FIXME: This disregards src_map!
                         if (src_destroy && src_addr)
                             vm_munmap(src_addr, len);
 
@@ -290,6 +291,42 @@ void duct_vm_map_copy_discard (vm_map_copy_t copy)
         duct_zfree (vm_map_copy_zone, copy);
 }
 
+kern_return_t
+vm_map_copy_overwrite(
+	vm_map_t	dst_map,
+	vm_map_offset_t	dst_addr,
+	vm_map_copy_t	copy,
+	boolean_t	interruptible)
+{
+	struct task_struct* ltask = dst_map->linux_task;
+
+	switch (copy->type)
+	{
+		case VM_MAP_COPY_KERNEL_BUFFER:
+		{
+			int wr;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+			wr = access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE);
+#else
+			// Older kernels don't export access_process_vm(),
+			// so we need to fall back to our own copy in access_process_vm.h
+			wr = __access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE);
+#endif
+			if (wr != copy->size) {
+					printk(KERN_ERR "Failed to copy memory\n");
+					return KERN_INVALID_ADDRESS;
+			}
+
+            vfree (copy->cpy_kdata);
+            duct_zfree (vm_map_copy_zone, copy);
+
+			return KERN_SUCCESS;
+		}
+		default:
+			return KERN_FAILURE;
+	}
+}
 
 kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr, vm_map_copy_t copy)
 {
@@ -332,6 +369,8 @@ kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr
                     return KERN_FAILURE;
                 }
                 *dst_addr = addr;
+				vfree (copy->cpy_kdata);
+				duct_zfree (vm_map_copy_zone, copy);
 
                 return KERN_SUCCESS;
             }

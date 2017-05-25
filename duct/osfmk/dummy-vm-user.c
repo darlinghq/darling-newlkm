@@ -575,7 +575,11 @@ mach_vm_write(
 	pointer_t			data,
 	__unused mach_msg_type_number_t	size)
 {
-	return vm_write(map, address, data, size);
+	if (map == VM_MAP_NULL)
+		return KERN_INVALID_ARGUMENT;
+
+	return vm_map_copy_overwrite(map, (vm_map_address_t)address,
+		(vm_map_copy_t) data, FALSE /* interruptible XXX */);
 }
 /*
  * vm_write -
@@ -594,9 +598,11 @@ vm_write(
 	pointer_t			data,
 	__unused mach_msg_type_number_t	size)
 {
-	// TODO: FOLL_WRITE for access_process_vm
-        kprintf("not implemented: vm_write()\n");
-        return 0;
+	if (map == VM_MAP_NULL)
+		return KERN_INVALID_ARGUMENT;
+
+	return vm_map_copy_overwrite(map, (vm_map_address_t)address,
+		(vm_map_copy_t) data, FALSE /* interruptible XXX */);
 }
 /*
  * mach_vm_copy -

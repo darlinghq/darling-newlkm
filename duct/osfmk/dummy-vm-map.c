@@ -911,7 +911,7 @@ vm_map_copy_copy(
  *		returned.
  */
 
-
+#if 0
 kern_return_t
 vm_map_copy_overwrite(
 	vm_map_t	dst_map,
@@ -922,6 +922,7 @@ vm_map_copy_overwrite(
         kprintf("not implemented: vm_map_copy_overwrite()\n");
         return 0;
 }
+#endif
 
 /*
  *	Routine: vm_map_copy_overwrite_unaligned	[internal use only]
