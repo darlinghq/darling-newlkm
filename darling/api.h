@@ -75,6 +75,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_evproc_create,
 	NR_task_for_pid_trap,
 	NR_pid_for_task_trap,
+	NR_set_dyld_info,
 };
 
 struct evproc_create
@@ -327,6 +328,12 @@ struct pid_for_task
 {
 	unsigned int task_port;
 	unsigned int* pid;
+};
+
+struct set_dyld_info_args
+{
+	uint64_t all_images_address;
+	uint32_t all_images_length;
 };
 
 #pragma pack (pop)

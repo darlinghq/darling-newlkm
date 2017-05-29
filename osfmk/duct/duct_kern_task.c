@@ -46,6 +46,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "duct_post_xnu.h"
 
+#include <vm/vm_map.h>
+#include <darling/task_registry.h>
 
 task_t            kernel_task;
 zone_t            task_zone;
@@ -346,3 +348,62 @@ void task_reference_wrapper(task_t t)
 	task_reference(t);
 }
 
+kern_return_t
+task_info(
+    task_t                  task,
+    task_flavor_t           flavor,
+    task_info_t             task_info_out,
+    mach_msg_type_number_t  *task_info_count)
+{
+	kern_return_t error = KERN_SUCCESS;
+
+	switch (flavor) {
+	case TASK_DYLD_INFO:
+	{
+		task_dyld_info_t info;
+
+		/*
+		 * We added the format field to TASK_DYLD_INFO output.  For
+		 * temporary backward compatibility, accept the fact that
+		 * clients may ask for the old version - distinquished by the
+		 * size of the expected result structure.
+		 */
+#define TASK_LEGACY_DYLD_INFO_COUNT \
+		offsetof(struct task_dyld_info, all_image_info_format)/sizeof(natural_t)
+
+		if (*task_info_count < TASK_LEGACY_DYLD_INFO_COUNT) {
+			error = KERN_INVALID_ARGUMENT;
+			break;
+		}
+
+		// DARLING:
+		// This call may block, waiting for Darling to provide this information
+		// shortly after startup.
+
+		struct task_struct* ltask = task->map->linux_task;
+		darling_task_get_dyld_info(ltask->pid,
+				&task->all_image_info_addr,
+				&task->all_image_info_size);
+
+		info = (task_dyld_info_t)task_info_out;
+		info->all_image_info_addr = task->all_image_info_addr;
+		info->all_image_info_size = task->all_image_info_size;
+
+		/* only set format on output for those expecting it */
+		if (*task_info_count >= TASK_DYLD_INFO_COUNT) {
+			bool is64bit = ltask->mm->task_size >= 0x100000000ull;
+			info->all_image_info_format = task_has_64BitAddr(task) ?
+				                 TASK_DYLD_ALL_IMAGE_INFO_64 : 
+				                 TASK_DYLD_ALL_IMAGE_INFO_32 ;
+			*task_info_count = TASK_DYLD_INFO_COUNT;
+		} else {
+			*task_info_count = TASK_LEGACY_DYLD_INFO_COUNT;
+		}
+		break;
+	}
+	default:
+        kprintf("not implemented: task_info(flavor=%d)\n", flavor);
+	}
+
+	return error;
+}

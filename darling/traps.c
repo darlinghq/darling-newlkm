@@ -76,6 +76,7 @@ static const struct trap_entry mach_traps[40] = {
 	// INTERNAL
 	TRAP(NR_thread_death_announce, thread_death_announce_entry),
 	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
+	TRAP(NR_set_dyld_info, set_dyld_info_entry),
 
 	// KQUEUE
 	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
@@ -769,6 +770,16 @@ int pid_for_task_entry(task_t task, struct pid_for_task* in_args)
 		return KERN_INVALID_ADDRESS;
 	
 	return KERN_SUCCESS;
+}
+
+// This call exists only because we do Mach-O loading in user space.
+// On XNU, this information is readily available in the kernel.
+int set_dyld_info_entry(task_t task, struct set_dyld_info_args* in_args)
+{
+	copyargs(args, in_args);
+
+	darling_task_set_dyld_info(args.all_images_address, args.all_images_length);
+	return 0;
 }
 
 module_init(mach_init);

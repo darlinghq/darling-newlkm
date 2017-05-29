@@ -55,6 +55,8 @@ struct registry_entry
 	struct semaphore sem_fork;
 	struct list_head proc_notification;
 	struct mutex mut_proc_notification;
+	struct completion proc_dyld_info;
+	unsigned long proc_dyld_info_allimg_loc, proc_dyld_info_allimg_len;
 };
 
 struct proc_notification
@@ -201,6 +203,7 @@ void darling_task_register(task_t task)
 	sema_init(&entry->sem_fork, 0);
 	INIT_LIST_HEAD(&entry->proc_notification);
 	mutex_init(&entry->mut_proc_notification);
+	init_completion(&entry->proc_dyld_info);
 
 	write_lock(&my_task_lock);
 	new = &all_tasks.rb_node;
@@ -478,5 +481,35 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 
 out:
 	return rv;
+}
+
+void darling_task_set_dyld_info(unsigned long all_img_location, unsigned long all_img_length)
+{
+	struct registry_entry* e = darling_task_get_current_entry();
+
+	e->proc_dyld_info_allimg_loc = all_img_location;
+	e->proc_dyld_info_allimg_len = all_img_length;
+
+	complete_all(&e->proc_dyld_info);
+}
+
+void darling_task_get_dyld_info(unsigned int pid, unsigned long long* all_img_location, unsigned long long* all_img_length)
+{
+	struct registry_entry* e;
+
+	*all_img_location = *all_img_length = 0;
+	read_lock(&my_task_lock);
+
+	e = darling_task_get_entry_unlocked(pid);
+	if (e != NULL)
+	{
+		if (wait_for_completion_interruptible(&e->proc_dyld_info) == 0)
+		{
+			*all_img_location = e->proc_dyld_info_allimg_loc;
+			*all_img_length = e->proc_dyld_info_allimg_len;
+		}
+	}
+
+	read_unlock(&my_task_lock);
 }
 

@@ -738,6 +738,7 @@ task_set_info(
         return 0;
 }
 
+#if 0
 kern_return_t
 task_info(
     task_t                  task,
@@ -748,6 +749,7 @@ task_info(
         kprintf("not implemented: task_info()\n");
         return 0;
 }
+#endif
 
 void
 task_vtimer_set(
