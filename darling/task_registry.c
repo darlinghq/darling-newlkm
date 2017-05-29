@@ -57,6 +57,7 @@ struct registry_entry
 	struct mutex mut_proc_notification;
 	struct completion proc_dyld_info;
 	unsigned long proc_dyld_info_allimg_loc, proc_dyld_info_allimg_len;
+	bool do_sigstop;
 };
 
 struct proc_notification
@@ -491,6 +492,13 @@ void darling_task_set_dyld_info(unsigned long all_img_location, unsigned long al
 	e->proc_dyld_info_allimg_len = all_img_length;
 
 	complete_all(&e->proc_dyld_info);
+
+	// POSIX_SPAWN_START_SUSPENDED implementation.
+	if (e->do_sigstop)
+	{
+		e->do_sigstop = false;
+		kill_pgrp(task_pid(current), SIGSTOP, 0);
+	}
 }
 
 void darling_task_get_dyld_info(unsigned int pid, unsigned long long* all_img_location, unsigned long long* all_img_length)
@@ -511,5 +519,12 @@ void darling_task_get_dyld_info(unsigned int pid, unsigned long long* all_img_lo
 	}
 
 	read_unlock(&my_task_lock);
+}
+
+// Will send SIGSTOP at next darling_task_set_dyld_info() call
+void darling_task_mark_start_suspended(void)
+{
+	struct registry_entry* e = darling_task_get_current_entry();
+	e->do_sigstop = true;
 }
 

@@ -68,5 +68,6 @@ int task_for_pid_entry(task_t task, struct task_for_pid* args);
 int pid_for_task_entry(task_t task, struct pid_for_task* args);
 
 int set_dyld_info_entry(task_t task, struct set_dyld_info_args* args);
+int stop_after_exec_entry(task_t task);
 
 #endif

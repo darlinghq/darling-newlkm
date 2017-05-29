@@ -69,7 +69,7 @@ static struct file_operations mach_chardev_ops = {
 
 #define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = { (trap_handler) impl, #impl }
 
-static const struct trap_entry mach_traps[40] = {
+static const struct trap_entry mach_traps[60] = {
 	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
 
@@ -77,6 +77,7 @@ static const struct trap_entry mach_traps[40] = {
 	TRAP(NR_thread_death_announce, thread_death_announce_entry),
 	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
 	TRAP(NR_set_dyld_info, set_dyld_info_entry),
+	TRAP(NR_stop_after_exec, stop_after_exec_entry),
 
 	// KQUEUE
 	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
@@ -779,6 +780,13 @@ int set_dyld_info_entry(task_t task, struct set_dyld_info_args* in_args)
 	copyargs(args, in_args);
 
 	darling_task_set_dyld_info(args.all_images_address, args.all_images_length);
+	return 0;
+}
+
+// Needed for POSIX_SPAWN_START_SUSPENDED
+int stop_after_exec_entry(task_t task)
+{
+	darling_task_mark_start_suspended();
 	return 0;
 }
 

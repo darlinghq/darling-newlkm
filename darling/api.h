@@ -76,6 +76,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_task_for_pid_trap,
 	NR_pid_for_task_trap,
 	NR_set_dyld_info,
+	NR_stop_after_exec,
 };
 
 struct evproc_create
