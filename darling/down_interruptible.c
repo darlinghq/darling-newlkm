@@ -1,5 +1,12 @@
 #include <linux/semaphore.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/signal.h>
+#else
 #include <linux/sched.h>
+#define __set_current_state(state_value)  \
+        __set_task_state(current, state_value)
+#endif
 
 // Copied from kernel/locking/semaphore.c because down_interruptible_timeout()
 // doesn't exist.
@@ -25,7 +32,7 @@ static inline int __down_common(struct semaphore *sem, long state,
                         goto interrupted;
                 if (unlikely(timeout <= 0))
                         goto timed_out;
-                __set_task_state(task, state);
+                __set_current_state(state);
                 raw_spin_unlock_irq(&sem->lock);
                 timeout = schedule_timeout(timeout);
                 raw_spin_lock_irq(&sem->lock);

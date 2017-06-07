@@ -21,7 +21,13 @@
 #include "evprocfd.h"
 #include <linux/rbtree.h>
 #include <linux/slab.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/signal.h>
+#else
 #include <linux/sched.h>
+#endif
+#include <linux/completion.h>
 #include <linux/printk.h>
 #include <linux/rwlock.h>
 #include <linux/atomic.h>
