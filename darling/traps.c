@@ -741,11 +741,12 @@ int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 
 	rcu_read_unlock();
 
+	printk(KERN_DEBUG "- task_for_pid(): pid %d -> %d\n", args.pid, pid);
 	if (pid == 0)
 		return KERN_FAILURE;
 	
 	// Lookup task in task registry
-	task_out = darling_task_get(args.pid);
+	task_out = darling_task_get(pid);
 	if (task_out == NULL)
 		return KERN_FAILURE;
 	
