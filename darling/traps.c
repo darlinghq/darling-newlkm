@@ -356,6 +356,12 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 
 	debug_msg("function %s (0x%x) called...\n", entry->name, ioctl_num);
 
+	if (!darling_thread_get_current())
+	{
+		debug_msg("New thread! Registering.\n");
+		thread_self_trap_entry(task);
+	}
+
 	return entry->handler(task, ioctl_paramv);
 }
 
