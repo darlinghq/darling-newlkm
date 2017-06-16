@@ -751,6 +751,7 @@ int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 		return KERN_FAILURE;
 	
 	// Turn it into a send right
+	task_reference(task_out);
 	sright = convert_task_to_port(task_out);
 	port_name = ipc_port_copyout_send(sright, task->itk_space);
 	

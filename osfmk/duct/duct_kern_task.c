@@ -402,7 +402,8 @@ task_info(
 		break;
 	}
 	default:
-        kprintf("not implemented: task_info(flavor=%d)\n", flavor);
+		kprintf("not implemented: task_info(flavor=%d)\n", flavor);
+		error = KERN_FAILURE;
 	}
 
 	return error;
