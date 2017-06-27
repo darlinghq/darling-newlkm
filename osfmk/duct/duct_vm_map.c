@@ -53,8 +53,10 @@ static zone_t    vm_map_zone;        /* zone for vm_map structures */
 //                      * allocations */
 static zone_t    vm_map_copy_zone;    /* zone for vm_map_copy structures */
 extern vm_size_t msg_ool_size_small;
+extern vm_map_t kernel_map;
 
 extern int duct_print_map (struct mm_struct * mm, unsigned long start, size_t len);
+extern kern_return_t vm_deallocate(vm_map_t map, mach_vm_offset_t start, mach_vm_size_t size);
 
 void duct_vm_map_init (void)
 {
@@ -71,6 +73,8 @@ void duct_vm_map_init (void)
     vm_map_copy_zone = duct_zinit ((vm_map_size_t) sizeof(struct vm_map_copy),
                  16 * 1024, PAGE_SIZE, "VM map copies");
     duct_zone_change (vm_map_copy_zone, Z_NOENCRYPT, TRUE);
+
+    kernel_map = duct_vm_map_create(NULL);
 
 #if defined (__DARLING__)
 #else
@@ -128,6 +132,7 @@ void duct_vm_map_deallocate(vm_map_t map)
 		duct_zfree(vm_map_zone, map);
 }
 
+// Calling with a NULL task makes other funcs consider the map a kernel map
 vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 {
 #if defined (__DARLING__)
@@ -239,29 +244,39 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                         copy->cpy_kdata = vmalloc_user(len);
                         copy->cpy_kalloc_size = len;
 
-                        if (src_addr) {
+                        if (src_map->linux_task != NULL) { // if this is not a kernel map
+                            if (src_addr) {
 
-							struct task_struct* ltask = src_map->linux_task;
-							int rd;
+                                struct task_struct* ltask = src_map->linux_task;
+                                int rd;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
-							rd = access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
+                                rd = access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
 #else
-							// Older kernels don't export access_process_vm(),
-							// so we need to fall back to our own copy in access_process_vm.h
-							rd = __access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
+                                // Older kernels don't export access_process_vm(),
+                                // so we need to fall back to our own copy in access_process_vm.h
+                                rd = __access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
 #endif
-                            if (rd != len) {
-                                    printk(KERN_ERR "Failed to copy memory\n");
-                                    // vfree (copy->cpy_kdata);
-                                    // duct_zfree (vm_map_copy_zone, copy);
-                                    return KERN_NO_SPACE;
+                                if (rd != len) {
+                                        printk(KERN_ERR "Failed to copy memory\n");
+                                        // vfree (copy->cpy_kdata);
+                                        // duct_zfree (vm_map_copy_zone, copy);
+                                        return KERN_NO_SPACE;
+                                }
+                            }
+
+                            // FIXME: This disregards src_map!
+                            if (src_destroy && src_addr)
+                                vm_munmap(src_addr, len);
+                        }
+                        else { // it is a kernel map
+                            if (src_addr) {
+                                memcpy(copy->cpy_kdata, (void *) src_addr, len);
+
+                                if (src_destroy)
+                                    vm_deallocate(src_map, src_addr, len);
                             }
                         }
-
-                        // FIXME: This disregards src_map!
-                        if (src_destroy && src_addr)
-                            vm_munmap(src_addr, len);
 
                         printk(KERN_NOTICE "- copying OK\n");
                         *copy_result = copy;

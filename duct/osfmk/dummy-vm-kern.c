@@ -252,14 +252,14 @@ kmem_alloc_pageable(
  *  and return the physical pages associated with that region.
  */
 
-void
-kmem_free(
-    vm_map_t    map,
-    vm_offset_t addr,
-    vm_size_t   size)
-{
-        kprintf("not implemented: kmem_free()\n");
-}
+// void
+// kmem_free(
+//     vm_map_t    map,
+//     vm_offset_t addr,
+//     vm_size_t   size)
+// {
+//         kprintf("not implemented: kmem_free()\n");
+// }
 
 /*
  *  Allocate new pages in an object.

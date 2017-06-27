@@ -478,3 +478,65 @@ int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, in
 
         return autoremove_wake_function (lwait, mode, sync, key);
 }
+
+/*
+ *	Routine:	wait_queue_member_locked
+ *	Purpose:
+ *		Indicate if this set queue is a member of the queue
+ *	Conditions:
+ *		The wait queue is locked
+ *		The set queue is just that, a set queue
+ */
+static boolean_t
+wait_queue_member_locked(
+	wait_queue_t wq,
+	wait_queue_set_t wq_set)
+{
+	wait_queue_element_t wq_element;
+	queue_t q;
+
+	assert(wait_queue_held(wq));
+	assert(wait_queue_is_set(wq_set));
+
+	q = &wq->wq_queue;
+
+	wq_element = (wait_queue_element_t) queue_first(q);
+	while (!queue_end(q, (queue_entry_t)wq_element)) {
+		WAIT_QUEUE_ELEMENT_CHECK(wq, wq_element);
+		if ((wq_element->wqe_type == WAIT_QUEUE_LINK) ||
+		    (wq_element->wqe_type == WAIT_QUEUE_LINK_NOALLOC)) {
+			wait_queue_link_t wql = (wait_queue_link_t)wq_element;
+
+			if (wql->wql_setqueue == wq_set)
+				return TRUE;
+		}
+		wq_element = (wait_queue_element_t)
+			     queue_next((queue_t) wq_element);
+	}
+	return FALSE;
+}
+	
+
+/*
+ *	Routine:	wait_queue_member
+ *	Purpose:
+ *		Indicate if this set queue is a member of the queue
+ *	Conditions:
+ *		The set queue is just that, a set queue
+ */
+boolean_t
+wait_queue_member(
+	wait_queue_t wq,
+	wait_queue_set_t wq_set)
+{
+	boolean_t ret;
+
+	if (!wait_queue_is_set(wq_set))
+		return FALSE;
+
+	wait_queue_lock(wq);
+	ret = wait_queue_member_locked(wq, wq_set);
+	wait_queue_unlock(wq);
+
+	return ret;
+}

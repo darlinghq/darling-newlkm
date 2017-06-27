@@ -40,14 +40,21 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define BAD_ADDR(x)     ((unsigned long)(x) >= TASK_SIZE)
 
+#undef vmalloc
+#undef vfree
 
 kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach_vm_size_t size, int flags)
 {
-        assert (current_map () == map);
+        // assert (current_map () == map);
         vm_map_offset_t map_addr;
         vm_map_size_t    map_size;
         kern_return_t    result;
         boolean_t    anywhere;
+
+        if (map->linux_task == NULL) { // kernel allocation
+            *addr = (mach_vm_offset_t) vmalloc(size);
+            return (*addr) ? KERN_SUCCESS : KERN_NO_SPACE;
+        }
 
         /* filter out any kernel-only flags */
            if (flags & ~VM_FLAGS_USER_ALLOCATE)
@@ -145,3 +152,19 @@ kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach
         *addr = map_addr;
         return(result);
 }
+
+kern_return_t
+mach_vm_deallocate(
+	vm_map_t		map,
+	mach_vm_offset_t	start,
+	mach_vm_size_t	size)
+{
+    if (map->linux_task == NULL) { // kernel allocation
+        vfree((void *) start);
+        return KERN_SUCCESS;
+    }
+
+    vm_munmap(start, size);
+    return KERN_SUCCESS;
+}
+

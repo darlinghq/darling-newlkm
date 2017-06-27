@@ -106,3 +106,13 @@ kern_return_t duct_copyoutmap (vm_map_t map, void * fromdata, vm_map_offset_t to
 #endif
         return KERN_SUCCESS;
 }
+
+void
+kmem_free(
+    vm_map_t    map,
+    vm_offset_t addr,
+    vm_size_t   size)
+{
+	vfree(addr);
+}
+

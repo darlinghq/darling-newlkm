@@ -152,23 +152,22 @@ vm_allocate(
 	vm_size_t	size,
 	int		flags)
 {
-        kprintf("not implemented: vm_allocate()\n");
-        return 0;
+        return mach_vm_allocate(map, (mach_vm_offset_t*) addr, size, flags);
 }
 /*
  *	mach_vm_deallocate -
  *	deallocates the specified range of addresses in the
  *	specified address map.
  */
-kern_return_t
-mach_vm_deallocate(
-	vm_map_t		map,
-	mach_vm_offset_t	start,
-	mach_vm_size_t	size)
-{
-        kprintf("not implemented: mach_vm_deallocate()\n");
-        return 0;
-}
+// kern_return_t
+// mach_vm_deallocate(
+// 	vm_map_t		map,
+// 	mach_vm_offset_t	start,
+// 	mach_vm_size_t	size)
+// {
+//         kprintf("not implemented: mach_vm_deallocate()\n");
+//         return 0;
+// }
 /*
  *	vm_deallocate -
  *	deallocates the specified range of addresses in the
@@ -181,8 +180,7 @@ vm_deallocate(
 	vm_offset_t		start,
 	vm_size_t		size)
 {
-        kprintf("not implemented: vm_deallocate()\n");
-        return 0;
+	return mach_vm_deallocate(map, start, size);
 }
 /*
  *	mach_vm_inherit -

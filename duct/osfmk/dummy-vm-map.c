@@ -781,7 +781,7 @@ vm_map_unwire(
         register vm_map_offset_t        end,
         boolean_t               user_wire)
 {
-        kprintf("not implemented: vm_map_unwire()\n");
+        // kprintf("not implemented: vm_map_unwire()\n");
         return 0;
 }
 
@@ -793,7 +793,7 @@ vm_map_wire(
         register vm_prot_t      access_type,
         boolean_t               user_wire)
 {
-        kprintf("not implemented: vm_map_wire()\n");
+        // kprintf("not implemented: vm_map_wire()\n");
         return 0;
 }
 

@@ -262,6 +262,8 @@ ipc_init(void)
     // else {
         msg_ool_size_small = MSG_OOL_SIZE_SMALL_MAX;
     // }
+	extern vm_map_t duct_vm_map_create(struct task_struct* t);
+    ipc_kernel_map = duct_vm_map_create(NULL);
 #else
 	kern_return_t retval;
 	vm_offset_t min;

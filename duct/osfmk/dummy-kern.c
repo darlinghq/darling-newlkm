@@ -170,14 +170,14 @@ vm_offset_t vm_kernel_top;
 
 
 
-boolean_t
-wait_queue_member(
-        wait_queue_t wq,
-        wait_queue_set_t wq_set)
-{
-        kprintf("not implemented: wait_queue_member()\n");
-        return 0;
-}
+// boolean_t
+// wait_queue_member(
+//         wait_queue_t wq,
+//         wait_queue_set_t wq_set)
+// {
+//         kprintf("not implemented: wait_queue_member()\n");
+//         return 0;
+// }
 
 kern_return_t
 wait_queue_set_unlink_all_nofree(
