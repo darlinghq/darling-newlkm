@@ -333,7 +333,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	//debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
 	//duct_task_destroy(my_task);
 	
-	duct_thread_destroy(cur_thread);
+	//duct_thread_destroy(cur_thread);
 	darling_thread_deregister(cur_thread);
 
 	return 0;
