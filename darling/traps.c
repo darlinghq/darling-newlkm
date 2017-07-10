@@ -78,6 +78,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
 	TRAP(NR_set_dyld_info, set_dyld_info_entry),
 	TRAP(NR_stop_after_exec, stop_after_exec_entry),
+	TRAP(NR_kernel_printk, kernel_printk_entry),
 
 	// KQUEUE
 	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
@@ -343,6 +344,7 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 {
 	const unsigned int num_traps = sizeof(mach_traps) / sizeof(mach_traps[0]);
 	const struct trap_entry* entry;
+	long rv;
 
 	task_t task = (task_t) file->private_data;
 
@@ -363,7 +365,10 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 		thread_self_trap_entry(task);
 	}
 
-	return entry->handler(task, ioctl_paramv);
+	rv = entry->handler(task, ioctl_paramv);
+
+	debug_msg("...%s returned %ld\n", entry->name, rv);
+	return rv;
 }
 
 int mach_get_api_version(task_t task)
@@ -796,6 +801,16 @@ int set_dyld_info_entry(task_t task, struct set_dyld_info_args* in_args)
 int stop_after_exec_entry(task_t task)
 {
 	darling_task_mark_start_suspended();
+	return 0;
+}
+
+int kernel_printk_entry(task_t task, struct kernel_printk_args* in_args)
+{
+	copyargs(args, in_args);
+
+	args.buf[sizeof(args.buf)-1] = '\0';
+	debug_msg("%s\n", args.buf);
+
 	return 0;
 }
 

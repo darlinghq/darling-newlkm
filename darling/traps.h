@@ -69,5 +69,6 @@ int pid_for_task_entry(task_t task, struct pid_for_task* args);
 
 int set_dyld_info_entry(task_t task, struct set_dyld_info_args* args);
 int stop_after_exec_entry(task_t task);
+int kernel_printk_entry(task_t task, struct kernel_printk_args* args);
 
 #endif
