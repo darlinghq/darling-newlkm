@@ -57,6 +57,7 @@
 #if defined (__DARLING__)
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
+#include <linux/delay.h>
 #endif
 
 #include <mach_ldebug.h>
@@ -902,7 +903,7 @@ mutex_pause(uint32_t collisions)
 	back_off = collision_backoffs[collisions];
 
 #if defined (__DARLING__)
-     kprintf ("BUG - mutex_pause () not yet implemented\n");
+    usleep_range(back_off, back_off);
 #else
 	wait_result = assert_wait_timeout((event_t)mutex_pause, THREAD_UNINT, back_off, NSEC_PER_USEC);
 	assert(wait_result == THREAD_WAITING);
