@@ -871,20 +871,7 @@ ipc_mqueue_receive_on_thread(
 				queue_enter(q, wql, wait_queue_link_t, wql_preposts);
 				imq_unlock(mqueue);
 				splx(s);
-#if defined (__DARLING__)
-                printk (KERN_NOTICE "- unable to obtain port_mq(0x%p) lock, to schedule 1s\n", port_mq);
-                {{
-                struct linux_semaphore  lsem;
-                sema_init (&lsem, 0);
-
-                uint64_t        nsecs   = 1000000000;
-                unsigned long   jiffies = nsecs_to_jiffies (nsecs);
-
-                int     downret     = down_timeout (&lsem, jiffies);
-                }}
-#else
 				mutex_pause(0);
-#endif
 				s = splsched();
 				imq_lock(mqueue);
 				goto search_set; /* start again at beginning - SMP */
