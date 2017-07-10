@@ -64,10 +64,7 @@ mig(osfmk/mach/host_notify_reply.defs)
 
 file(RELATIVE_PATH MIGDIR_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 
-add_custom_target(lkm
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL}
-	COMMENT "Building the Linux kernel module"
-	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+add_custom_target(lkm_generate
 	DEPENDS
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/upl.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/host_notify_reply.h
@@ -98,6 +95,14 @@ add_custom_target(lkm
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/device/device_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/default_pager/default_pager_object_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/UserNotification/UNDReply_server.c
+)
+
+add_custom_target(lkm
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL}
+	COMMENT "Building the Linux kernel module"
+	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+	DEPENDS
+		lkm_generate
 )
 
 add_custom_target(lkm_install
