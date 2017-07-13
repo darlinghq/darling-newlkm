@@ -325,14 +325,6 @@ extern int get_zleak_state(void);
 #endif	/* CONFIG_ZLEAKS */
 
 /* These functions used for leak detection both in zalloc.c and mbuf.c */
-<<<<<<< HEAD
-#if defined (__DARLING__)
-extern uint32_t fastbacktrace(uintptr_t* bt, uint32_t max_frames);
-#else
-extern uint32_t fastbacktrace(uintptr_t* bt, uint32_t max_frames) __attribute__((noinline));
-#endif
-=======
->>>>>>> xnu-3789.41.3
 extern uintptr_t hash_mix(uintptr_t);
 extern uint32_t hashbacktrace(uintptr_t *, uint32_t, uint32_t);
 extern uint32_t hashaddr(uintptr_t, uint32_t);

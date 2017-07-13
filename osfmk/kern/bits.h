@@ -31,13 +31,21 @@
 #ifndef __BITS_H__
 #define __BITS_H__
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_kern_kalloc.h>
+#endif
+
 #include <kern/kalloc.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 typedef unsigned int			uint;
 
+#ifndef BIT
 #define BIT(b)				(1ULL << (b))
+#endif
 
 #define mask(width)			(BIT(width) - 1)
 #define extract(x, shift, width)	((((uint64_t)(x)) >> (shift)) & mask(width))
@@ -128,7 +136,11 @@ inline static bool
 atomic_bit_set(bitmap_t *map, int n, int mem_order)
 {
 	bitmap_t prev;
+#ifdef __DARLING__
+	prev = __atomic_fetch_or(map, BIT(n), mem_order);
+#else
 	prev = __c11_atomic_fetch_or(map, BIT(n), mem_order);
+#endif
 	return bit_test(prev, n);
 }
 
@@ -136,7 +148,11 @@ inline static bool
 atomic_bit_clear(bitmap_t *map, int n, int mem_order)
 {
 	bitmap_t prev;
+#ifdef __DARLING__
+	prev = __atomic_fetch_and(map, ~BIT(n), mem_order);
+#else
 	prev = __c11_atomic_fetch_and(map, ~BIT(n), mem_order);
+#endif
 	return bit_test(prev, n);
 }
 
@@ -145,6 +161,14 @@ atomic_bit_clear(bitmap_t *map, int n, int mem_order)
 #define BITMAP_SIZE(n)	(size_t)(BITMAP_LEN(n) << 3)		/* Round to 64bit bitmap_t, then convert to bytes */
 #define bitmap_bit(n)	bits(n, 5, 0)
 #define bitmap_index(n)	bits(n, 63, 6)
+
+#ifdef __DARLING__
+#define bitmap_zero xnu_bitmap_zero
+#define bitmap_full xnu_bitmap_full
+#define bitmap_set  xnu_bitmap_set
+#define bitmap_zero xnu_bitmap_zero
+#define bitmap_clear xnu_bitmap_clear
+#endif
 
 inline static bitmap_t *
 bitmap_zero(bitmap_t *map, uint nbits)

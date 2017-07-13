@@ -17,8 +17,6 @@ set(MIG_SERVER_HEADER_SUFFIX "_server.h")
 
 mig(osfmk/device/device.defs)
 mig(osfmk/UserNotification/UNDReply.defs)
-mig(osfmk/default_pager/default_pager_alerts.defs)
-mig(osfmk/default_pager/default_pager_object.defs)
 mig(osfmk/clock_reply.defs)
 mig(osfmk/audit_triggers.defs)
 mig(osfmk/kextd/kextd_mach.defs)
@@ -39,10 +37,8 @@ mig(osfmk/mach/mach_vm.defs)
 mig(osfmk/mach/memory_object_control.defs)
 mig(osfmk/mach/memory_object_default.defs)
 mig(osfmk/mach/memory_object.defs)
-mig(osfmk/mach/memory_object_name.defs)
 mig(osfmk/mach/processor.defs)
 mig(osfmk/mach/processor_set.defs)
-mig(osfmk/mach/security.defs)
 mig(osfmk/mach/task_access.defs)
 mig(osfmk/mach/task.defs)
 mig(osfmk/mach/thread_act.defs)
@@ -57,7 +53,6 @@ mig(osfmk/mach/memory_object_default.defs)
 mig(osfmk/mach/memory_object_control.defs)
 mig(osfmk/mach/memory_object.defs)
 mig(osfmk/mach/upl.defs)
-mig(osfmk/mach/security.defs)
 mig(osfmk/mach/mach_notify.defs)
 mig(osfmk/mach/vm32_map.defs)
 mig(osfmk/mach/host_notify_reply.defs)
@@ -70,7 +65,6 @@ add_custom_target(lkm_generate
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/host_notify_reply.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/vm32_map_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_notify.h
-		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/security.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_control.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_default_server.h
@@ -89,11 +83,9 @@ add_custom_target(lkm_generate
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_vm_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_host_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/processor_set_server.c
-		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_name_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/thread_act_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/clock_reply_user.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/device/device_server.c
-		${CMAKE_CURRENT_BINARY_DIR}/osfmk/default_pager/default_pager_object_server.c
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/UserNotification/UNDReply_server.c
 )
 

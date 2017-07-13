@@ -703,6 +703,10 @@ extern void task_atm_reset(task_t task);
 extern void task_bank_reset(task_t task);
 extern void task_bank_init(task_t task);
 
+#ifdef __DARLING__
+#define task_pid xnu_task_pid
+#endif
+
 extern int task_pid(task_t task);
 extern boolean_t task_has_assertions(task_t task);
 /* End task_policy */

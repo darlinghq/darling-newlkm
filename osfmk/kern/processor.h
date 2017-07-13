@@ -97,8 +97,10 @@ struct processor_set {
 	decl_simple_lock_data(,sched_lock)	/* lock for above */
 #endif
 
+#ifndef __DARLING__
 #if defined(CONFIG_SCHED_TRADITIONAL) || defined(CONFIG_SCHED_MULTIQ)
 	struct run_queue	pset_runq;      /* runq for this processor set */
+#endif
 #endif
 
 #if defined(CONFIG_SCHED_TRADITIONAL)
@@ -174,8 +176,10 @@ struct processor {
 	uint64_t			deadline;		/* current deadline */
 	boolean_t               first_timeslice;                /* has the quantum expired since context switch */
 
+#ifndef __DARLING__
 #if defined(CONFIG_SCHED_TRADITIONAL) || defined(CONFIG_SCHED_MULTIQ)
 	struct run_queue	runq;			/* runq for this processor */
+#endif
 #endif
 
 #if defined(CONFIG_SCHED_TRADITIONAL)

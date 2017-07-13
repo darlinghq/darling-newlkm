@@ -34,7 +34,6 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-Wno-unused-parameter \
 	-Wno-missing-prototypes \
 	-Wno-unused-variable \
-	-D__STDC_VERSION__=199901L \
 	-D__LITTLE_ENDIAN__=1 \
 	-Wno-declaration-after-statement \
 	-Wno-undef \
@@ -130,7 +129,8 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-DCONFIG_KERNEL_0DAY_SYSCALL_HANDLER \
 	-DEVENTMETER \
 	-DCONFIG_APP_PROFILE=0 \
-	-DDEBUG
+	-DDEBUG \
+	-std=gnu11
 
 miggen_cflags := -include $(BUILD_ROOT)/osfmk/duct/duct.h -include $(BUILD_ROOT)/osfmk/duct/duct_pre_xnu.h
 CFLAGS_task_server.o := $(miggen_cflags)
@@ -183,7 +183,7 @@ ifneq ($(KERNELRELEASE),)
 		darling/task_registry.o \
 		darling/license.o \
 		darling/host_info.o \
-		darling/evprocfd.o 
+		darling/evprocfd.o \
 		darling/evpsetfd.o \
 		darling/psynch/pthread_kill.o \
 		darling/psynch/psynch_mutex.o \

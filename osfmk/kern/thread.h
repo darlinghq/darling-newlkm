@@ -533,7 +533,6 @@ struct thread {
 
 	/*** Machine-dependent state ***/
 	struct machine_thread   machine;
-};
 
 
 #if	SCHED_TRACE_THREAD_WAKEUPS
@@ -598,15 +597,20 @@ extern kern_return_t	thread_terminate_internal(
 #if defined (__DARLING__)
 extern void			thread_start(
 							thread_t			thread);
+
+extern void			thread_start_in_assert_wait(
+							thread_t			thread,
+							event_t             event,
+							wait_interrupt_t    interruptible);
 #else
 extern void			thread_start(
 							thread_t			thread) __attribute__ ((noinline));
-#endif
 
 extern void			thread_start_in_assert_wait(
 							thread_t			thread,
 							event_t             event,
 							wait_interrupt_t    interruptible) __attribute__ ((noinline));
+#endif
 
 extern void			thread_terminate_enqueue(
 						thread_t		thread);

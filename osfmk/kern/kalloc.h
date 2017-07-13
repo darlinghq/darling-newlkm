@@ -86,10 +86,12 @@ extern vm_size_t
 kalloc_bucket_size(
 		vm_size_t 			   size);
 
+#ifndef __DARLING__
 #define kalloc(size)					\
 	({ static vm_allocation_site_t site __attribute__((section("__DATA, __data"))); \
 	vm_size_t tsize = (size);			\
 	kalloc_canblock(&tsize, TRUE, &site); })
+#endif
 
 #define kalloc_tag(size, tag)			\
 	({ static vm_allocation_site_t site __attribute__((section("__DATA, __data"))) \
@@ -103,10 +105,12 @@ kalloc_bucket_size(
 	vm_size_t tsize = (size);			\
 	kalloc_canblock(&tsize, TRUE, &site); })
 
+#ifndef __DARLING__
 #define kalloc_noblock(size)			\
 	({ static vm_allocation_site_t site __attribute__((section("__DATA, __data"))); \
 	vm_size_t tsize = (size);			\
 	kalloc_canblock(&tsize, FALSE, &site); })
+#endif
 
 #define kalloc_noblock_tag(size, tag)	\
 	({ static vm_allocation_site_t site __attribute__((section("__DATA, __data"))) \

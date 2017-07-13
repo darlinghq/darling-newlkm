@@ -73,7 +73,11 @@ __BEGIN_DECLS
 extern void	Assert(
 	const char	*file,
 	int		line,
+#ifdef __DARLING__
+	const char	*expression);
+#else
 	const char	*expression) __attribute__((noinline));
+#endif
 
 extern int kext_assertions_enable;
 
