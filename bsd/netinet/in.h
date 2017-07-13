@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -71,15 +71,9 @@
 #include <Availability.h>
 #endif
 
-#ifndef _IN_ADDR_T
-#define _IN_ADDR_T
-typedef	__uint32_t	in_addr_t;	/* base type for internet address */
-#endif
+#include <sys/_types/_in_addr_t.h>
 
-#ifndef _IN_PORT_T
-#define _IN_PORT_T
-typedef	__uint16_t	in_port_t;
-#endif
+#include <sys/_types/_in_port_t.h>
 
 /*
  * POSIX 1003.1-2003
@@ -389,6 +383,35 @@ struct sockaddr_in {
 	char		sin_zero[8];
 };
 
+#ifdef PRIVATE
+/*
+ * sockaddr_in with scope ID field; this is used internally to keep
+ * track of scoped route entries in the routing table.  The fact that
+ * such a value is embedded in the structure is an artifact of the
+ * current implementation which could change in future.
+ */
+struct sockaddr_inifscope {
+	__uint8_t	sin_len;
+	sa_family_t	sin_family;
+	in_port_t	sin_port;
+	struct	in_addr sin_addr;
+	/*
+	 * To avoid possible conflict with an overlaid sockaddr_inarp
+	 * having sin_other set to SIN_PROXY, we use the first 4-bytes
+	 * of sin_zero since sin_srcaddr is one of the unused fields
+	 * in sockaddr_inarp.
+	 */
+	union {
+		char	sin_zero[8];
+		struct {
+			__uint32_t	ifscope;
+		} _in_index;
+	} un;
+#define	sin_scope_id	un._in_index.ifscope
+};
+
+#endif /* PRIVATE */
+
 #define INET_ADDRSTRLEN                 16
 
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
@@ -482,7 +505,7 @@ struct ip_opts {
 #define	MCAST_UNBLOCK_SOURCE		85   /* unblock a source */
 
 #ifdef PRIVATE
-#define	IP_FORCE_OUT_IFP	69   /* deprecated; use IP_BOUND_IF instead */
+#define	IP_FORCE_OUT_IFP	69   /* not implemented; use IP_BOUND_IF instead */
 #define	IP_NO_IFT_CELLULAR	6969 /* for internal use only */
 #define	IP_NO_IFT_PDP		IP_NO_IFT_CELLULAR /* deprecated */
 #define	IP_OUT_IF		9696 /* for internal use only */
@@ -570,7 +593,7 @@ struct __msfilterreq {
 	struct sockaddr_storage	*msfr_srcs;
 };
 
-#ifdef XNU_KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 struct __msfilterreq32 {
 	uint32_t		 msfr_ifindex;	/* interface index */
 	uint32_t		 msfr_fmode;	/* filter mode for group */
@@ -588,7 +611,7 @@ struct __msfilterreq64 {
 	struct sockaddr_storage	 msfr_group;	/* group address */
 	user64_addr_t		 msfr_srcs;
 };
-#endif /* XNU_KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 #endif /* __MSFILTERREQ_DEFINED */
 
 #pragma pack()
@@ -659,8 +682,7 @@ struct in_pktinfo {
  */
 #define	IPPROTO_MAXID	(IPPROTO_AH + 1)	/* don't list to IPPROTO_MAX */
 
-#ifdef KERNEL_PRIVATE
-
+#ifdef BSD_KERNEL_PRIVATE
 #define	CTL_IPPROTO_NAMES { \
 	{ "ip", CTLTYPE_NODE }, \
 	{ "icmp", CTLTYPE_NODE }, \
@@ -715,8 +737,7 @@ struct in_pktinfo {
 	{ 0, 0 }, \
 	{ "ipsec", CTLTYPE_NODE }, \
 }
-
-#endif /* KERNEL_PRIVATE */
+#endif /* BSD_KERNEL_PRIVATE */
 
 /*
  * Names for IP sysctl objects
@@ -741,7 +762,7 @@ struct in_pktinfo {
 #define	IPCTL_GIF_TTL		16	/* default TTL for gif encap packet */
 #define	IPCTL_MAXID		17
 
-#ifdef KERNEL_PRIVATE
+#ifdef BSD_KERNEL_PRIVATE
 
 #define	IPCTL_NAMES { \
 	{ 0, 0 }, \
@@ -762,35 +783,99 @@ struct in_pktinfo {
 	{ "keepfaith", CTLTYPE_INT }, \
 	{ "gifttl", CTLTYPE_INT }, \
 }
-#endif /* KERNEL_PRIVATE */
-
+#endif /* BSD_KERNEL_PRIVATE */
 #endif	/* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
-
 
 /* INET6 stuff */
 #define __KAME_NETINET_IN_H_INCLUDED_
 #include <netinet6/in6.h>
 #undef __KAME_NETINET_IN_H_INCLUDED_
 
+#ifdef PRIVATE
+/* 
+ * Minimal sized structure to hold an IPv4 or IPv6 socket address
+ * as sockaddr_storage can waste memory
+ */
+union sockaddr_in_4_6 {
+	struct sockaddr         sa;
+	struct sockaddr_in      sin;
+	struct sockaddr_in6     sin6;
+};
+
+/*
+ * Recommended DiffServ Code Point values
+ */
+
+#define	_DSCP_DF	0	/* RFC 2474 */
+
+#define	_DSCP_CS0	0	/* RFC 2474 */
+#define	_DSCP_CS1	8	/* RFC 2474 */
+#define	_DSCP_CS2	16	/* RFC 2474 */
+#define	_DSCP_CS3	24	/* RFC 2474 */
+#define	_DSCP_CS4	32	/* RFC 2474 */
+#define	_DSCP_CS5	40	/* RFC 2474 */
+#define	_DSCP_CS6	48	/* RFC 2474 */
+#define	_DSCP_CS7	56	/* RFC 2474 */
+
+#define	_DSCP_EF	46	/* RFC 2474 */
+#define	_DSCP_VA	44	/* RFC 5865 */
+
+#define	_DSCP_AF11	10	/* RFC 2597 */
+#define	_DSCP_AF12	12	/* RFC 2597 */
+#define	_DSCP_AF13	14	/* RFC 2597 */
+#define	_DSCP_AF21	18	/* RFC 2597 */
+#define	_DSCP_AF22	20	/* RFC 2597 */
+#define	_DSCP_AF23	22	/* RFC 2597 */
+#define	_DSCP_AF31	26	/* RFC 2597 */
+#define	_DSCP_AF32	28	/* RFC 2597 */
+#define	_DSCP_AF33	30	/* RFC 2597 */
+#define	_DSCP_AF41	34	/* RFC 2597 */
+#define	_DSCP_AF42	36	/* RFC 2597 */
+#define	_DSCP_AF43	38	/* RFC 2597 */
+
+#define	_DSCP_52	52	/* Wi-Fi WMM Certification: Sigma */
+
+#define	_MAX_DSCP	63	/* coded on 6 bits */
+
+#endif /* PRIVATE */
+
 #ifdef KERNEL
-#ifdef KERNEL_PRIVATE
-struct ifnet; struct mbuf;	/* forward declarations for Standard C */
+#ifdef BSD_KERNEL_PRIVATE
+#include <mach/boolean.h>
 
-extern int in_broadcast(struct in_addr, struct ifnet *);
-extern int in_canforward(struct in_addr);
+struct ip;
+struct ifnet;
+struct mbuf;
 
-#define	in_cksum(m, l)		inet_cksum(m, 0, 0, l)
-#define	in_cksum_skip(m, l, o)	inet_cksum(m, 0, o, (l) - (o))
-
-extern u_int16_t inet_cksum(struct mbuf *m, unsigned int proto,
-    unsigned int offset, unsigned int transport_len);
-extern u_short in_addword(u_short, u_short);
-extern u_short in_pseudo(u_int, u_int, u_int);
-
-extern int in_localaddr(struct in_addr);
+extern boolean_t in_broadcast(struct in_addr, struct ifnet *);
+extern boolean_t in_canforward(struct in_addr);
 extern u_int32_t in_netof(struct in_addr);
 
-extern int inaddr_local(struct in_addr);
+extern uint16_t inet_cksum(struct mbuf *, uint32_t, uint32_t, uint32_t);
+extern uint16_t in_addword(uint16_t, uint16_t);
+extern uint16_t in_pseudo(uint32_t, uint32_t, uint32_t);
+extern uint16_t in_pseudo64(uint64_t, uint64_t, uint64_t);
+extern uint16_t in_cksum_hdr_opt(const struct ip *);
+extern uint16_t ip_cksum_hdr_dir(struct mbuf *, uint32_t, int);
+extern uint32_t in_finalize_cksum(struct mbuf *, uint32_t, uint32_t);
+extern uint16_t b_sum16(const void *buf, int len);
+
+#define	in_cksum(_m, _l)			\
+	inet_cksum(_m, 0, 0, _l)
+#define	ip_cksum_hdr_in(_m, _l)			\
+	ip_cksum_hdr_dir(_m, _l, 0)
+#define	ip_cksum_hdr_out(_m, _l)		\
+	ip_cksum_hdr_dir(_m, _l, 1)
+
+#define	in_cksum_hdr(_ip)			\
+	(~b_sum16(_ip, sizeof (struct ip)) & 0xffff)
+
+#define	in_cksum_offset(_m, _o)		\
+	((void) in_finalize_cksum(_m, _o, CSUM_DELAY_IP))
+#define	in_delayed_cksum(_m)		\
+	((void) in_finalize_cksum(_m, 0, CSUM_DELAY_DATA))
+#define	in_delayed_cksum_offset(_m, _o)	\
+	((void) in_finalize_cksum(_m, _o, CSUM_DELAY_DATA))
 
 #define	in_hosteq(s, t)	((s).s_addr == (t).s_addr)
 #define	in_nullhost(x)	((x).s_addr == INADDR_ANY)
@@ -799,14 +884,28 @@ extern int inaddr_local(struct in_addr);
 #define	SIN(s)		((struct sockaddr_in *)(void *)s)
 #define	satosin(sa)	SIN(sa)
 #define	sintosa(sin)	((struct sockaddr *)(void *)(sin))
+#define	SINIFSCOPE(s)	((struct sockaddr_inifscope *)(void *)(s))
+#endif /* BSD_KERNEL_PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+/* exported for ApplicationFirewall */
+extern int in_localaddr(struct in_addr);
+extern int inaddr_local(struct in_addr);
+
+extern char	*inet_ntoa(struct in_addr);
+extern char	*inet_ntoa_r(struct in_addr ina, char *buf,
+    size_t buflen);
+extern int	inet_pton(int af, const char *, void *);
 #endif /* KERNEL_PRIVATE */
+
 #define MAX_IPv4_STR_LEN	16
 #define MAX_IPv6_STR_LEN	64
 
-extern const char *inet_ntop(int, const void *, char *, socklen_t); /* in libkern */
+extern int	 inet_aton(const char *, struct in_addr *); /* in libkern */
+extern const char *inet_ntop(int, const void *, char *, socklen_t); /* in libkern*/
 #endif /* KERNEL */
 
-#ifndef KERNEL		
+#ifndef KERNEL
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 __BEGIN_DECLS
 int        bindresvport(int, struct sockaddr_in *);
@@ -814,6 +913,5 @@ struct sockaddr;
 int        bindresvport_sa(int, struct sockaddr *);
 __END_DECLS
 #endif
-#endif
-
+#endif /* !KERNEL */
 #endif /* _NETINET_IN_H_ */

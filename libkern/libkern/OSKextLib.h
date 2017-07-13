@@ -35,13 +35,14 @@ __BEGIN_DECLS
 #include <stdint.h>
 #include <mach/kmod.h>
 #include <mach/vm_types.h>
+#include <uuid/uuid.h>
 
 #ifdef KERNEL
 #include <libkern/OSTypes.h>
 #include <libkern/OSReturn.h>
 #else
 #include <CoreFoundation/CoreFoundation.h>
-#include <System/libkern/OSReturn.h>
+#include <libkern/OSReturn.h>
 #endif /* KERNEL */
 
 /*!
@@ -463,6 +464,7 @@ __BEGIN_DECLS
  * about itself.
  */
 
+#ifdef KERNEL
 /*!
  * @typedef OSKextLoadTag
  *
@@ -482,6 +484,22 @@ __BEGIN_DECLS
  * <code>@link OSKextReleaseKextWithLoadTag
  * OSKextReleaseKextWithLoadTag@/link</code>.
  */
+#else
+/*!
+ * @typedef OSKextLoadTag
+ *
+ * @abstract
+ * A unique identifier assigned to a loaded instanace of a kext.
+ *
+ * @discussion
+ * If a kext is unloaded and later reloaded, the new instance
+ * has a different load tag.
+ *
+ * A kext can get its own load tag in the <code>kmod_info_t</code>
+ * structure passed into its module start routine, as the
+ * <code>id</code> field (cast to this type).
+ */
+#endif
 typedef uint32_t  OSKextLoadTag;
 
 /*!
@@ -492,7 +510,6 @@ typedef uint32_t  OSKextLoadTag;
  * indicates kext not found.
  */
 #define  kOSKextInvalidLoadTag  ((OSKextLoadTag)(-1))
-
 
 #ifdef KERNEL
 
@@ -862,6 +879,62 @@ OSReturn OSKextCancelRequest(
     void             ** contextOut);
 
 
+/*!
+ * @function OSKextGrabPgoData
+ *
+ * @abstract
+ * Grab a LLVM profile data buffer from a loaded kext.
+ *
+ * @param   uuid             the uuid identifying the kext to retrieve data from
+ * @param   pSize            pointer of where to store the size of the buffer.   May be NULL.
+ * @param   pBuffer          pointer to the output buffer.   May be NULL.
+ * @param   bufferSize       size of the buffer pointed to by pBuffer
+ * @param   wait_for_unload  (boolean) sleep until the kext is unloaded
+ * @param   metadata         (boolean) include metadata footer
+ *
+ * @result
+ * 0 on success
+ * ENOTSUP if the kext does not have profile data to retrieve.
+ * ENOTSUP if no kext with the given UUID is found
+ * ERRORS  if the provided buffer is too small
+ * EIO     internal error, such as if __llvm_profile_write_buffer_internal fails
+ */
+int
+OSKextGrabPgoData(uuid_t uuid,
+                  uint64_t *pSize,
+                  char *pBuffer,
+                  uint64_t bufferSize,
+                  int wait_for_unload,
+                  int metadata);
+
+/*!
+ * @function OSKextResetPgoCountersLock
+ *
+ * @abstract
+ * Call this function before trapping into the debugger to call OSKextResetPgoCounters.
+ */
+void
+OSKextResetPgoCountersLock();
+
+/*!
+ * @function OSKextResetPgoCountersUnlock
+ *
+ * @abstract
+ * Call this function after trapping into the debugger to call OSKextResetPgoCounters.
+ */
+void
+OSKextResetPgoCountersUnlock();
+
+/*!
+ * @function OSKextResetPgoCounters
+ *
+ * @abstract Reset the PGO counters for all kexts.  Call only from debugger
+ * context, while holding OSKextResetPgoCountersLock().
+ */
+void
+OSKextResetPgoCounters();
+
+
 #if PRAGMA_MARK
 #pragma mark -
 /********************************************************************/
@@ -938,7 +1011,7 @@ extern const void * gOSKextUnresolved;
 // Kernel External Components for FIPS compliance (KEC_FIPS)
 // WARNING - ath_hash is owned by the kernel, do not free
 typedef struct AppleTEXTHash {
-    const int       ath_version;    // version of this structure (value is 1)
+    int       		ath_version;    // version of this structure (value is 1 or 2)
     int             ath_length;     // length of hash data
     void *          ath_hash;       // hash extracted from AppleTextHashes dict 
 } AppleTEXTHash_t;

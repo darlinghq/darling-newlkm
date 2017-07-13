@@ -526,7 +526,11 @@ cbq_enqueue(cbq_state_t *cbqp, struct rm_class *cl, struct mbuf *m,
 	}
 
 	if (cl == NULL) {
+#if PF_ALTQ
 		cl = cbq_clh_to_clp(cbqp, t->pftag_qid);
+#else /* !PF_ALTQ */
+		cl = cbq_clh_to_clp(cbqp, 0);
+#endif /* !PF_ALTQ */
 		if (cl == NULL) {
 			cl = cbqp->ifnp.default_;
 			if (cl == NULL) {
@@ -566,6 +570,7 @@ cbq_enqueue(cbq_state_t *cbqp, struct rm_class *cl, struct mbuf *m,
 	/* successfully queued. */
 	++cbqp->cbq_qlen;
 	IFCQ_INC_LEN(ifq);
+	IFCQ_INC_BYTES(ifq, len);
 
 	return (ret);
 }
@@ -583,6 +588,7 @@ cbq_dequeue(cbq_state_t *cbqp, cqdq_op_t op)
 	if (m && op == CLASSQDQ_REMOVE) {
 		--cbqp->cbq_qlen;  /* decrement # of packets in cbq */
 		IFCQ_DEC_LEN(ifq);
+		IFCQ_DEC_BYTES(ifq, m_pktlen(m));
 		IFCQ_XMIT_ADD(ifq, 1, m_pktlen(m));
 
 		/* Update the class. */

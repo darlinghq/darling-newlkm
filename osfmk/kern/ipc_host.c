@@ -73,7 +73,6 @@
 #include <mach/host_priv_server.h>
 #include <kern/host.h>
 #include <kern/processor.h>
-#include <kern/lock.h>
 #include <kern/task.h>
 #include <kern/thread.h>
 #include <kern/ipc_host.h>
@@ -87,6 +86,9 @@
 #include <duct/duct_post_xnu.h>
 #endif
 
+#if CONFIG_MACF
+#include <security/mac_mach_internal.h>
+#endif
 
 /*
  * Forward declarations
@@ -141,6 +143,10 @@ void ipc_host_init(void)
 
 	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++) {
 			realhost.exc_actions[i].port = IP_NULL;
+			realhost.exc_actions[i].label = NULL;
+			/* The mac framework is not yet initialized, so we defer
+			 * initializing the labels to later, when they are set
+			 * for the first time. */
 		}/* for */
 
 	/*
@@ -174,10 +180,13 @@ mach_port_name_t
 host_self_trap(
 	__unused struct host_self_trap_args *args)
 {
+	task_t self = current_task();
 	ipc_port_t sright;
 	mach_port_name_t name;
 
-	sright = ipc_port_copy_send(current_task()->itk_host);
+	itk_lock(self);
+	sright = ipc_port_copy_send(self->itk_host);
+	itk_unlock(self);
 	name = ipc_port_copyout_send(sright, current_space());
 	return name;
 }
@@ -285,15 +294,12 @@ convert_port_to_host(
 	host_t host = HOST_NULL;
 
 	if (IP_VALID(port)) {
-		ip_lock(port);
-		if (ip_active(port) &&
-		    ((ip_kotype(port) == IKOT_HOST) ||
-		     (ip_kotype(port) == IKOT_HOST_PRIV) 
-		     ))
+		if (ip_kotype(port) == IKOT_HOST ||
+		    ip_kotype(port) == IKOT_HOST_PRIV) {
 			host = (host_t) port->ip_kobject;
-		ip_unlock(port);
+			assert(ip_active(port));
+		}
 	}
-
 	return host;
 }
 
@@ -548,20 +554,18 @@ convert_port_to_host_security(
  */
 kern_return_t
 host_set_exception_ports(
-	host_priv_t				host_priv,
+	host_priv_t			host_priv,
 	exception_mask_t		exception_mask,
 	ipc_port_t			new_port,
 	exception_behavior_t		new_behavior,
 	thread_state_flavor_t		new_flavor)
 {
-	register int	i;
+	int	i;
 	ipc_port_t	old_port[EXC_TYPES_COUNT];
 
 	if (host_priv == HOST_PRIV_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
-
-	assert(host_priv == &realhost);
 
 	if (exception_mask & ~EXC_MASK_VALID) {
 		return KERN_INVALID_ARGUMENT;
@@ -577,21 +581,46 @@ host_set_exception_ports(
 			return KERN_INVALID_ARGUMENT;
 		}
 	}
-	/* Cannot easily check "new_flavor", but that just means that
-	 * the flavor in the generated exception message might be garbage:
-	 * GIGO
+
+	/*
+	 * Check the validity of the thread_state_flavor by calling the
+	 * VALID_THREAD_STATE_FLAVOR architecture dependent macro defined in
+	 * osfmk/mach/ARCHITECTURE/thread_status.h
 	 */
+	if (new_flavor != 0 && !VALID_THREAD_STATE_FLAVOR(new_flavor))
+		return (KERN_INVALID_ARGUMENT);
+
+#if CONFIG_MACF
+	if (mac_task_check_set_host_exception_ports(current_task(), exception_mask) != 0)
+		return KERN_NO_ACCESS;
+#endif
+
+	assert(host_priv == &realhost);
+
 	host_lock(host_priv);
 
 	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++) {
-		if (exception_mask & (1 << i)) {
+#if CONFIG_MACF
+		if (host_priv->exc_actions[i].label == NULL) {
+			// Lazy initialization (see ipc_port_init).
+			mac_exc_action_label_init(host_priv->exc_actions + i);
+		}
+#endif
+
+		if ((exception_mask & (1 << i))
+#if CONFIG_MACF
+			&& mac_exc_action_label_update(current_task(), host_priv->exc_actions + i) == 0
+#endif
+			) {
 			old_port[i] = host_priv->exc_actions[i].port;
+
 			host_priv->exc_actions[i].port =
 				ipc_port_copy_send(new_port);
 			host_priv->exc_actions[i].behavior = new_behavior;
 			host_priv->exc_actions[i].flavor = new_flavor;
-		} else
+		} else {
 			old_port[i] = IP_NULL;
+		}
 	}/* for */
 
 	/*
@@ -651,6 +680,13 @@ host_get_exception_ports(
 	count = 0;
 
 	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++) {
+#if CONFIG_MACF
+		if (host_priv->exc_actions[i].label == NULL) {
+			// Lazy initialization (see ipc_port_init).
+			mac_exc_action_label_init(host_priv->exc_actions + i);
+		}
+#endif
+
 		if (exception_mask & (1 << i)) {
 			for (j = 0; j < count; j++) {
 /*
@@ -686,7 +722,7 @@ host_get_exception_ports(
 
 kern_return_t
 host_swap_exception_ports(
-	host_priv_t				host_priv,
+	host_priv_t			host_priv,
 	exception_mask_t		exception_mask,
 	ipc_port_t			new_port,
 	exception_behavior_t		new_behavior,
@@ -719,16 +755,31 @@ host_swap_exception_ports(
 			return KERN_INVALID_ARGUMENT;
 		}
 	}
-	/* Cannot easily check "new_flavor", but that just means that
-	 * the flavor in the generated exception message might be garbage:
-	 * GIGO */
+
+	if (new_flavor != 0 && !VALID_THREAD_STATE_FLAVOR(new_flavor))
+		return (KERN_INVALID_ARGUMENT);
+
+#if CONFIG_MACF
+	if (mac_task_check_set_host_exception_ports(current_task(), exception_mask) != 0)
+		return KERN_NO_ACCESS;
+#endif /* CONFIG_MACF */
 
 	host_lock(host_priv);
 
-	count = 0;
+	assert(EXC_TYPES_COUNT > FIRST_EXCEPTION);
+	for (count=0, i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT && count < *CountCnt; i++) {
+#if CONFIG_MACF
+		if (host_priv->exc_actions[i].label == NULL) {
+			// Lazy initialization (see ipc_port_init).
+			mac_exc_action_label_init(host_priv->exc_actions + i);
+		}
+#endif
 
-	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++) {
-		if (exception_mask & (1 << i)) {
+		if ((exception_mask & (1 << i))
+#if CONFIG_MACF
+			&& mac_exc_action_label_update(current_task(), host_priv->exc_actions + i) == 0
+#endif
+			) {
 			for (j = 0; j < count; j++) {
 /*
  *				search for an identical entry, if found
@@ -755,9 +806,6 @@ host_swap_exception_ports(
 				ipc_port_copy_send(new_port);
 			host_priv->exc_actions[i].behavior = new_behavior;
 			host_priv->exc_actions[i].flavor = new_flavor;
-			if (count > *CountCnt) {
-				break;
-			}
 		} else
 			old_port[i] = IP_NULL;
 	}/* for */
@@ -766,9 +814,11 @@ host_swap_exception_ports(
 	/*
 	 * Consume send rights without any lock held.
 	 */
-	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++)
+	while (--i >= FIRST_EXCEPTION) {
 		if (IP_VALID(old_port[i]))
 			ipc_port_release_send(old_port[i]);
+	}
+
 	if (IP_VALID(new_port))		 /* consume send right */
 		ipc_port_release_send(new_port);
 	*CountCnt = count;

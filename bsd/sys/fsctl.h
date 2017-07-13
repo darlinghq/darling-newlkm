@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2014 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -74,6 +74,7 @@
 
 #ifdef XNU_KERNEL_PRIVATE
 
+/* Userland structs for namespace handler */
 typedef struct user64_namespace_handler_info {
 	user64_addr_t  token;
 	user64_addr_t  flags;
@@ -86,12 +87,16 @@ typedef struct user32_namespace_handler_info {
 	user32_addr_t  fdptr;
 } user32_namespace_handler_info;
 
+
+/* Kernel-internal of namespace handler info */
 typedef struct namespace_handler_info {
 	user_addr_t  token;
 	user_addr_t  flags;
 	user_addr_t  fdptr;
 } namespace_handler_info;
 
+
+/* Userland structs for extended namespace handler */
 typedef struct user64_namespace_handler_info_ext {
 	user64_addr_t  token;
 	user64_addr_t  flags;
@@ -106,6 +111,8 @@ typedef struct user32_namespace_handler_info_ext {
 	user32_addr_t  infoptr;
 } user32_namespace_handler_info_ext;
 
+
+/* Kernel-internal of extended namespace handler */
 typedef struct namespace_handler_info_ext {
 	user_addr_t  token;
 	user_addr_t  flags;
@@ -113,7 +120,44 @@ typedef struct namespace_handler_info_ext {
 	user_addr_t  infoptr;
 } namespace_handler_info_ext;
 
-extern int resolve_nspace_item(struct vnode *vp, uint64_t op);
+/* Size-Augmented namespace_handler_info */
+/* 64 bit userland*/
+typedef struct user64_namespace_handler_data {
+	user64_addr_t token;
+	user64_addr_t flags;
+	user64_addr_t fdptr;
+	user64_addr_t infoptr;
+	user64_addr_t objid;
+	user64_addr_t reserved1;
+	user64_addr_t reserved2;
+	user64_addr_t reserved3;
+} user64_namespace_handler_data;
+
+/*32 bit userland*/
+typedef struct user32_namespace_handler_data {
+	user32_addr_t token;
+	user32_addr_t flags;
+	user32_addr_t fdptr;
+	user32_addr_t infoptr;
+	user32_addr_t objid;
+	user32_addr_t reserved1;
+	user32_addr_t reserved2;
+	user32_addr_t reserved3;
+} user32_namespace_handler_data;
+
+/* kernel-internal */
+typedef struct namespace_handler_data {
+	user_addr_t token;
+	user_addr_t flags;
+	user_addr_t fdptr;
+	user_addr_t infoptr;
+	user_addr_t objid;
+	user_addr_t reserved1;
+	user_addr_t reserved2;
+	user_addr_t reserved3;
+} namespace_handler_data;
+
+
 extern int resolve_nspace_item_ext(struct vnode *vp, uint64_t op, void *arg);
 extern int get_nspace_item_status(struct vnode *vp, int32_t *status);
 
@@ -132,8 +176,26 @@ typedef struct namespace_handler_info_ext {
 	int64_t    *infoptr;     // for snapshot write events, the kernel puts an offset/length pair here
 } namespace_handler_info_ext;
 
+typedef struct namespace_handler_data {
+	int32_t *token;
+	int64_t *flags;
+	int32_t *fdptr;
+	int64_t *infoptr;     // for snapshot write events, the kernel puts an offset/length pair here
+	int64_t *objid;
+	uint32_t *reserved1;
+	uint32_t *reserved2;
+	uint32_t *reserved3;
+} namespace_handler_data;
 
 #endif /* XNU_KERNEL_PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+
+#define NSPACE_REARM_NO_ARG ((void *)1)
+int resolve_nspace_item(struct vnode *vp, uint64_t op);
+int nspace_snapshot_event(vnode_t vp, time_t ctime, uint64_t op_type, void *arg);
+
+#endif // defined(KERNEL_PRIVATE)
 
 #define NAMESPACE_HANDLER_READ_OP             0x0001
 #define NAMESPACE_HANDLER_WRITE_OP            0x0002
@@ -143,7 +205,10 @@ typedef struct namespace_handler_info_ext {
 #define NAMESPACE_HANDLER_METADATA_WRITE_OP   0x0020
 #define NAMESPACE_HANDLER_METADATA_DELETE_OP  0x0040
 #define NAMESPACE_HANDLER_METADATA_MOD        0x0080
+// #define NAMESPACE_HANDLER_OP_DO_NOT_USE    0x0100   // SNAPSHOT_EVENT uses this value
 #define NAMESPACE_HANDLER_LINK_CREATE         0x0200
+#define NAMESPACE_HANDLER_RENAME_SUCCESS_OP   0x0400
+#define NAMESPACE_HANDLER_RENAME_FAILED_OP    0x0800
 
 #define NAMESPACE_HANDLER_NSPACE_EVENT        0x1000
 #define NAMESPACE_HANDLER_SNAPSHOT_EVENT      0x0100
@@ -189,8 +254,8 @@ typedef struct package_ext_info {
 #define FSIOC_SET_PACKAGE_EXTS			  _IOW('A', 2, struct package_ext_info)
 #define	FSCTL_SET_PACKAGE_EXTS			  IOCBASECMD(FSIOC_SET_PACKAGE_EXTS)
 
-#define FSIOC_WAIT_FOR_SYNC			  _IOR('A', 3, int32_t)
-#define	FSCTL_WAIT_FOR_SYNC			  IOCBASECMD(FSIOC_WAIT_FOR_SYNC)
+/* Unsupported - previously FSIOC_WAIT_FOR_SYNC */
+#define FSIOC_UNSUPPORTED 			  _IOR('A', 3, int32_t)
 
 #define FSIOC_NAMESPACE_HANDLER_GET		  _IOW('A', 4, struct namespace_handler_info)
 #define	FSCTL_NAMESPACE_HANDLER_GET		  IOCBASECMD(FSIOC_NAMESPACE_HANDLER_GET)
@@ -216,14 +281,20 @@ typedef struct package_ext_info {
 #define FSIOC_NAMESPACE_ALLOW_DMG_SNAPSHOT_EVENTS _IOW('A', 11, int32_t)
 #define	FSCTL_NAMESPACE_ALLOW_DMG_SNAPSHOT_EVENTS IOCBASECMD(FSIOC_NAMESPACE_ALLOW_DMG_SNAPSHOT_EVENTS)
 
-#define FSIOC_TRACKED_HANDLER_GET		  _IOW('A', 12, struct namespace_handler_info)
-#define FSCTL_TRACKED_HANDLER_GET		  IOCBASECMD(FSIOC_TRACKED_HANDLER_GET)
+/* 12 was used for TRACKED_HANDLER_GET which has now been removed
+   as it is no longer used. */
 
 #define FSIOC_SNAPSHOT_HANDLER_GET_EXT		  _IOW('A', 13, struct namespace_handler_info_ext)
 #define FSCTL_SNAPSHOT_HANDLER_GET_EXT		  IOCBASECMD(FSIOC_SNAPSHOT_HANDLER_GET_EXT)
 
+/* 14 was used for NAMESPACE_HANDLER_GETDATA which has now been
+   removed as it is no longer used. */
+
+#define FSIOC_ROUTEFS_SETROUTEID			  _IO('A', 15)
+#define	FSCTL_ROUTEFS_SETROUTEID			  IOCBASECMD(FSIOC_ROUTEFS_SETROUTEID)
+
 //
-// IO commands 14, 15, 16, and 17 are currently unused
+// IO commands 16 and 17 are currently unused
 //
 
 //

@@ -130,7 +130,7 @@ static lck_grp_t	*tty_lck_grp;
 static lck_grp_attr_t	*tty_lck_grp_attr;
 static lck_attr_t      *tty_lck_attr;
 
-static int	ttnread(struct tty *tp);
+__private_extern__ int ttnread(struct tty *tp);
 static void	ttyecho(int c, struct tty *tp);
 static int	ttyoutput(int c, struct tty *tp);
 static void	ttypend(struct tty *tp);
@@ -341,11 +341,6 @@ tty_unlock(struct tty *tp)
 int
 ttyopen(dev_t device, struct tty *tp)
 {
-	proc_t p = current_proc();
-	struct pgrp *pg, *oldpg;
-	struct session *sessp, *oldsess;
-	struct tty *oldtp;
-
 	TTY_LOCK_OWNED(tp);	/* debug assert */
 
 	tp->t_dev = device;
@@ -357,57 +352,6 @@ ttyopen(dev_t device, struct tty *tp)
 		bzero(&tp->t_winsize, sizeof(tp->t_winsize));
 	}
 
-	pg = proc_pgrp(p);
-	sessp = proc_session(p);
-
-	/*
-	 * First tty open affter setsid() call makes this tty its controlling
-	 * tty, if the tty does not already have a session associated with it.
-	 */
-	if (SESS_LEADER(p, sessp) &&	/* the process is the session leader */
-	    sessp->s_ttyvp == NULL &&	/* but has no controlling tty */
-	    tp->t_session == NULL ) {	/* and tty not controlling */
-		session_lock(sessp);
-	    	if ((sessp->s_flags & S_NOCTTY) == 0) {	/* and no O_NOCTTY */
-			oldtp = sessp->s_ttyp;
-			ttyhold(tp);
-			sessp->s_ttyp = tp;
-			OSBitOrAtomic(P_CONTROLT, &p->p_flag);
-			session_unlock(sessp);
-			proc_list_lock();
-			oldpg = tp->t_pgrp;
-			oldsess = tp->t_session;
-			if (oldsess != SESSION_NULL)
-				oldsess->s_ttypgrpid = NO_PID;
-			tp->t_session = sessp;
-			tp->t_pgrp = pg;
-			sessp->s_ttypgrpid = pg->pg_id;
-			proc_list_unlock();
-			/* SAFE: All callers drop the lock on return */
-			tty_unlock(tp);
-			if (oldpg != PGRP_NULL)
-				pg_rele(oldpg);
-			if (oldsess != SESSION_NULL)
-				session_rele(oldsess);	
-			if (NULL != oldtp)
-				ttyfree(oldtp);
-			tty_lock(tp);
-			goto out;
-	     	}
-		session_unlock(sessp);
-	}
-
-	/* SAFE: All callers drop the lock on return */
-	tty_unlock(tp);
-	if (sessp != SESSION_NULL)
-		session_rele(sessp);
-	if (pg != PGRP_NULL)
-		pg_rele(pg);
-	tty_lock(tp);
-
-out:
-
-	/* XXX may be an error code */
 	return (0);
 }
 
@@ -960,6 +904,29 @@ ttyoutput(int c, struct tty *tp)
 	return (-1);
 }
 
+/*
+ * Sets the tty state to not allow any more changes of foreground process
+ * group. This is required to be done so that a subsequent revoke on a vnode
+ * is able to always successfully complete.
+ *
+ * Locks :   Assumes tty_lock held on entry
+ */
+void
+ttysetpgrphup(struct tty *tp)
+{
+	TTY_LOCK_OWNED(tp);     /* debug assert */
+	SET(tp->t_state, TS_PGRPHUP);
+}
+
+/*
+ * Locks : Assumes tty lock held on entry
+ */
+void
+ttyclrpgrphup(struct tty *tp)
+{
+	TTY_LOCK_OWNED(tp);     /* debug assert */
+	CLR(tp->t_state, TS_PGRPHUP);
+}
 
 /*
  * ttioctl
@@ -1052,6 +1019,7 @@ int
 ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 {
 	int error = 0;
+	int bogusData = 1;
 	struct uthread *ut;
 	struct pgrp *pg, *oldpg;
 	struct session *sessp, *oldsessp;
@@ -1148,7 +1116,6 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 	}
 	case TIOCSCONS: {
 		/* Set current console device to this line */
-		int bogusData = 1;
 		data = (caddr_t) &bogusData;
 
 		/* No break - Fall through to BSD code */
@@ -1385,21 +1352,58 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 		break;
 	case TIOCSCTTY:			/* become controlling tty */
 		/* Session ctty vnode pointer set in vnode layer. */
-		pg = proc_pgrp(p);
 		sessp = proc_session(p);
-		if (!SESS_LEADER(p, sessp) ||
-		    ((sessp->s_ttyvp || tp->t_session) &&
-		    (tp->t_session != sessp))) {
+		if (sessp == SESSION_NULL) {
+			error = EPERM;
+			goto out;
+		}
+
+		/*
+		 * This can only be done by a session leader.
+		 */
+		if (!SESS_LEADER(p, sessp)) {
 			/* SAFE: All callers drop the lock on return */
 			tty_unlock(tp);
-			if (sessp != SESSION_NULL)
-				session_rele(sessp);
-			if (pg != PGRP_NULL)
-				pg_rele(pg);
+			session_rele(sessp);
 			tty_lock(tp);
 			error = EPERM;
 			goto out;
 		}
+		/*
+		 * If this terminal is already the controlling terminal for the
+		 * session, nothing to do here.
+		 */
+		if (tp->t_session == sessp) {
+			/* SAFE: All callers drop the lock on return */
+			tty_unlock(tp);
+			session_rele(sessp);
+			tty_lock(tp);
+			error = 0;
+			goto out;
+		}
+		pg = proc_pgrp(p);
+		/*
+		 * Deny if the terminal is already attached to another session or
+		 * the session already has a terminal vnode.
+		 */
+		session_lock(sessp);
+		if (sessp->s_ttyvp || tp->t_session) {
+			session_unlock(sessp);
+			/* SAFE: All callers drop the lock on return */
+			tty_unlock(tp);
+			if (pg != PGRP_NULL) {
+				pg_rele(pg);
+			}
+			session_rele(sessp);
+			tty_lock(tp);
+			error = EPERM;
+			goto out;
+		}
+		sessp->s_ttypgrpid = pg->pg_id;
+		oldtp = sessp->s_ttyp;
+		ttyhold(tp);
+		sessp->s_ttyp = tp;
+		session_unlock(sessp);
 		proc_list_lock();
 		oldsessp = tp->t_session;
 		oldpg = tp->t_pgrp;
@@ -1407,14 +1411,8 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 			oldsessp->s_ttypgrpid = NO_PID;
 		/* do not drop refs on sessp and pg as tp holds them */
 		tp->t_session = sessp;
-		sessp->s_ttypgrpid = pg->pg_id;
 		tp->t_pgrp = pg;
 		proc_list_unlock();
-		session_lock(sessp);
-		oldtp = sessp->s_ttyp;
-		ttyhold(tp);
-		sessp->s_ttyp = tp;
-		session_unlock(sessp);
 		OSBitOrAtomic(P_CONTROLT, &p->p_flag);
 		/* SAFE: All callers drop the lock on return */
 		tty_unlock(tp);
@@ -1450,6 +1448,15 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 				session_rele(sessp);
 			pg_rele(pgrp);
 			tty_lock(tp);
+			error = EPERM;
+			goto out;
+		}
+		/*
+		 * The session leader is going away and is possibly going to revoke
+		 * the terminal, we can't change the process group when that is the
+		 * case.
+		 */
+		if (ISSET(tp->t_state, TS_PGRPHUP)) {
 			error = EPERM;
 			goto out;
 		}
@@ -1570,7 +1577,7 @@ ttselect(dev_t dev, int rw, void *wql, proc_t p)
 /*
  * Locks:	Assumes tp is locked on entry, remains locked on exit
  */
-static int
+__private_extern__ int
 ttnread(struct tty *tp)
 {
 	int nread;
@@ -2145,7 +2152,7 @@ read:
 		char ibuf[IBUFSIZ];
 		int icc;
 
-		icc = min(uio_resid(uio), IBUFSIZ);
+		icc = MIN(uio_resid(uio), IBUFSIZ);
 		icc = q_to_b(qp, (u_char *)ibuf, icc);
 		if (icc <= 0) {
 			if (first)
@@ -2186,8 +2193,8 @@ slowcase:
 			tty_pgsignal(tp, SIGTSTP, 1);
 			tty_lock(tp);
 			if (first) {
-				error = ttysleep(tp, &lbolt, TTIPRI | PCATCH,
-						 "ttybg3", 0);
+				error = ttysleep(tp, &ttread, TTIPRI | PCATCH,
+						 "ttybg3", hz);
 				if (error)
 					break;
 				goto loop;
@@ -2366,7 +2373,7 @@ loop:
 		 * leftover from last time.
 		 */
 		if (cc == 0) {
-			cc = min(uio_resid(uio), OBUFSIZ);
+			cc = MIN(uio_resid(uio), OBUFSIZ);
 			cp = obuf;
 			error = uiomove(cp, cc, uio);
 			if (error) {
@@ -2419,7 +2426,9 @@ loop:
 			i = b_to_q((u_char *)cp, ce, &tp->t_outq);
 			ce -= i;
 			tp->t_column += ce;
-			cp += ce, cc -= ce, tk_nout += ce;
+			cp += ce;
+			cc -= ce;
+			tk_nout += ce;
 			tp->t_outcc += ce;
 			if (i > 0) {
 				/* out of space */

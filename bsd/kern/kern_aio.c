@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -63,6 +63,7 @@
 
 #include <mach/mach_types.h>
 #include <kern/kern_types.h>
+#include <kern/waitq.h>
 #include <kern/zalloc.h>
 #include <kern/task.h>
 #include <kern/sched_prim.h>
@@ -123,7 +124,7 @@ typedef struct aio_workq   {
 	TAILQ_HEAD(, aio_workq_entry) 	aioq_entries;
 	int				aioq_count;
 	lck_mtx_t			aioq_mtx;
-	wait_queue_t			aioq_waitq;
+	struct waitq			aioq_waitq;
 } *aio_workq_t;
 
 #define AIO_NUM_WORK_QUEUES 1
@@ -303,7 +304,7 @@ aio_workq_init(aio_workq_t wq)
 	TAILQ_INIT(&wq->aioq_entries);
 	wq->aioq_count = 0;
 	lck_mtx_init(&wq->aioq_mtx, aio_queue_lock_grp, aio_lock_attr);
-	wq->aioq_waitq = wait_queue_alloc(SYNC_POLICY_FIFO);
+	waitq_init(&wq->aioq_waitq, SYNC_POLICY_FIFO);
 }
 
 
@@ -606,14 +607,13 @@ _aio_close(proc_t p, int fd )
 		     	 	  (int)p, fd, 0, 0, 0 );
 
 		while (aio_proc_active_requests_for_file(p, fd) > 0) {
-			msleep(&p->AIO_CLEANUP_SLEEP_CHAN, aio_proc_mutex(p), PRIBIO | PDROP, "aio_close", 0 );
+			msleep(&p->AIO_CLEANUP_SLEEP_CHAN, aio_proc_mutex(p), PRIBIO, "aio_close", 0 );
 		}
 
-	} else {
-		aio_proc_unlock(p);
 	}
-
-
+	
+	aio_proc_unlock(p);
+	
 	KERNEL_DEBUG( (BSDDBG_CODE(DBG_BSD_AIO, AIO_close)) | DBG_FUNC_END,
 		     	  (int)p, fd, 0, 0, 0 );
 
@@ -1394,7 +1394,8 @@ aio_enqueue_work( proc_t procp, aio_workq_entry *entryp, int proc_locked)
 	/* And work queue */
 	aio_workq_lock_spin(queue);
 	aio_workq_add_entry_locked(queue, entryp);
-	wait_queue_wakeup_one(queue->aioq_waitq, queue, THREAD_AWAKENED, -1);
+	waitq_wakeup64_one(&queue->aioq_waitq, CAST_EVENT64_T(queue),
+			   THREAD_AWAKENED, WAITQ_ALL_PRIORITIES);
 	aio_workq_unlock(queue);
 	
 	if (proc_locked == 0) {
@@ -1653,8 +1654,9 @@ ExitRoutine:
  * we get a wake up call on sleep channel &aio_anchor.aio_async_workq 
  * after new work is queued up.
  */
+__attribute__((noreturn))
 static void
-aio_work_thread( void )
+aio_work_thread(void)
 {
 	aio_workq_entry		 	*entryp;
 	int 			error;
@@ -1825,7 +1827,7 @@ aio_get_some_work( void )
 
 nowork:
 	/* We will wake up when someone enqueues something */
-	wait_queue_assert_wait(queue->aioq_waitq, queue, THREAD_UNINT, 0);
+	waitq_assert_wait64(&queue->aioq_waitq, CAST_EVENT64_T(queue), THREAD_UNINT, 0);
 	aio_workq_unlock(queue);
 	thread_block( (thread_continue_t)aio_work_thread );
 
@@ -1896,7 +1898,18 @@ aio_create_queue_entry(proc_t procp, user_addr_t aiocbp, void *group_tag, int ki
 
 	/* do some more validation on the aiocb and embedded file descriptor */
 	result = aio_validate( entryp );
+	if ( result != 0 )
+		goto error_exit_with_ref;
 
+	/* get a reference on the current_thread, which is passed in vfs_context. */
+	entryp->thread = current_thread();
+	thread_reference( entryp->thread );
+	return ( entryp );
+
+error_exit_with_ref:
+	if ( VM_MAP_NULL != entryp->aio_map ) {
+		vm_map_deallocate( entryp->aio_map );
+	}
 error_exit:
 	if ( result && entryp != NULL ) {
 		zfree( aio_workq_zonep, entryp );
@@ -2056,6 +2069,11 @@ aio_free_request(aio_workq_entry *entryp)
 		vm_map_deallocate(entryp->aio_map);
 	}
 
+	/* remove our reference to thread which enqueued the request */
+	if ( NULL != entryp->thread ) {
+		thread_deallocate( entryp->thread );
+	}
+
 	entryp->aio_refcount = -1; /* A bit of poisoning in case of bad refcounting. */
 	
 	zfree( aio_workq_zonep, entryp );
@@ -2143,7 +2161,7 @@ aio_validate( aio_workq_entry *entryp )
 			/* we don't have read or write access */
 			result = EBADF;
 		}
-		else if ( fp->f_fglob->fg_type != DTYPE_VNODE ) {
+		else if ( FILEGLOB_DTYPE(fp->f_fglob) != DTYPE_VNODE ) {
 			/* this is not a file */
 			result = ESPIPE;
 		} else
@@ -2352,11 +2370,7 @@ do_aio_read( aio_workq_entry *entryp )
 		return(EBADF);
 	}
 
-	/*
-	 * <rdar://4714366>
-	 * Needs vfs_context_t from vfs_context_create() in entryp!
-	 */
-	context.vc_thread = proc_thread(entryp->procp);	/* XXX */
+	context.vc_thread = entryp->thread;	/* XXX */
 	context.vc_ucred = fp->f_fglob->fg_cred;
 
 	error = dofileread(&context, fp, 
@@ -2393,11 +2407,7 @@ do_aio_write( aio_workq_entry *entryp )
 		flags |= FOF_OFFSET;
 	}
 
-	/*
-	 * <rdar://4714366>
-	 * Needs vfs_context_t from vfs_context_create() in entryp!
-	 */
-	context.vc_thread = proc_thread(entryp->procp);	/* XXX */
+	context.vc_thread = entryp->thread;	/* XXX */
 	context.vc_ucred = fp->f_fglob->fg_cred;
 
 	/* NB: tell dofilewrite the offset, and to use the proc cred */
@@ -2408,8 +2418,11 @@ do_aio_write( aio_workq_entry *entryp )
 				entryp->aiocb.aio_offset,
 				flags,
 				&entryp->returnval);
-	
-	fp_drop(entryp->procp, entryp->aiocb.aio_fildes, fp, 0);
+
+	if (entryp->returnval)
+		fp_drop_written(entryp->procp, entryp->aiocb.aio_fildes, fp);
+	else
+		fp_drop(entryp->procp, entryp->aiocb.aio_fildes, fp, 0);
 
 	return( error );
 

@@ -78,6 +78,8 @@
 #include <ipc/ipc_port.h>
 #include <kern/kalloc.h>
 
+#include <security/mac_mach_internal.h>
+
 /*
  * Exported interface
  */
@@ -90,10 +92,13 @@ decl_simple_lock_data(static,pset_node_lock)
 
 queue_head_t			tasks;
 queue_head_t			terminated_tasks;	/* To be used ONLY for stackshot. */
+queue_head_t			corpse_tasks;
 int						tasks_count;
+int						terminated_tasks_count;
 queue_head_t			threads;
 int						threads_count;
 decl_lck_mtx_data(,tasks_threads_lock)
+decl_lck_mtx_data(,tasks_corpse_lock)
 
 processor_t				processor_list;
 unsigned int			processor_count;
@@ -106,13 +111,6 @@ processor_t		master_processor;
 int 			master_cpu = 0;
 boolean_t		sched_stats_active = FALSE;
 
-/* Forwards */
-kern_return_t	processor_set_things(
-		processor_set_t		pset,
-		mach_port_t		**thing_list,
-		mach_msg_type_number_t	*count,
-		int			type);
-
 void
 processor_bootstrap(void)
 {
@@ -124,6 +122,7 @@ processor_bootstrap(void)
 	queue_init(&tasks);
 	queue_init(&terminated_tasks);
 	queue_init(&threads);
+	queue_init(&corpse_tasks);
 
 	simple_lock_init(&processor_list_lock, 0);
 
@@ -143,6 +142,8 @@ processor_init(
 	int					cpu_id,
 	processor_set_t		pset)
 {
+	spl_t		s;
+
 	if (processor != master_processor) {
 		/* Scheduler state deferred until sched_init() */
 		SCHED(processor_init)(processor);
@@ -153,15 +154,22 @@ processor_init(
 	processor->processor_set = pset;
 	processor->current_pri = MINPRI;
 	processor->current_thmode = TH_MODE_NONE;
+	processor->current_sfi_class = SFI_CLASS_KERNEL;
+	processor->starting_pri = MINPRI;
 	processor->cpu_id = cpu_id;
 	timer_call_setup(&processor->quantum_timer, thread_quantum_expire, processor);
+	processor->quantum_end = UINT64_MAX;
 	processor->deadline = UINT64_MAX;
-	processor->timeslice = 0;
-	processor->processor_meta = PROCESSOR_META_NULL;
+	processor->first_timeslice = FALSE;
+	processor->processor_primary = processor; /* no SMT relationship known at this point */
+	processor->processor_secondary = NULL;
+	processor->is_SMT = FALSE;
+	processor->is_recommended = (pset->recommended_bitmask & (1ULL << cpu_id)) ? TRUE : FALSE;
 	processor->processor_self = IP_NULL;
 	processor_data_init(processor);
 	processor->processor_list = NULL;
 
+	s = splsched();
 	pset_lock(pset);
 	if (pset->cpu_set_count++ == 0)
 		pset->cpu_set_low = pset->cpu_set_hi = cpu_id;
@@ -170,6 +178,7 @@ processor_init(
 		pset->cpu_set_hi = (cpu_id > pset->cpu_set_hi)? cpu_id: pset->cpu_set_hi;
 	}
 	pset_unlock(pset);
+	splx(s);
 
 	simple_lock(&processor_list_lock);
 	if (processor_list == NULL)
@@ -182,21 +191,26 @@ processor_init(
 }
 
 void
-processor_meta_init(
+processor_set_primary(
 	processor_t		processor,
 	processor_t		primary)
 {
-	processor_meta_t	pmeta = primary->processor_meta;
+	assert(processor->processor_primary == primary || processor->processor_primary == processor);
+	/* Re-adjust primary point for this (possibly) secondary processor */
+	processor->processor_primary = primary;
 
-	if (pmeta == PROCESSOR_META_NULL) {
-		pmeta = kalloc(sizeof (*pmeta));
-
-		queue_init(&pmeta->idle_queue);
-
-		pmeta->primary = primary;
+	assert(primary->processor_secondary == NULL || primary->processor_secondary == processor);
+	if (primary != processor) {
+		/* Link primary to secondary, assumes a 2-way SMT model
+		 * We'll need to move to a queue if any future architecture
+		 * requires otherwise.
+		 */
+		assert(processor->processor_secondary == NULL);
+		primary->processor_secondary = processor;
+		/* Mark both processors as SMT siblings */
+		primary->is_SMT = TRUE;
+		processor->is_SMT = TRUE;
 	}
-
-	processor->processor_meta = pmeta;
 }
 
 processor_set_t
@@ -216,6 +230,10 @@ processor_set_t
 pset_create(
 	pset_node_t			node)
 {
+	/* some schedulers do not support multiple psets */
+	if (SCHED(multiple_psets_enabled) == FALSE)
+		return processor_pset(master_processor);
+
 	processor_set_t		*prev, pset = kalloc(sizeof (*pset));
 
 	if (pset != PROCESSOR_SET_NULL) {
@@ -250,11 +268,15 @@ pset_init(
 
 	queue_init(&pset->active_queue);
 	queue_init(&pset->idle_queue);
+	queue_init(&pset->idle_secondary_queue);
 	pset->online_processor_count = 0;
-	pset_pri_init_hint(pset, PROCESSOR_NULL);
-	pset_count_init_hint(pset, PROCESSOR_NULL);
 	pset->cpu_set_low = pset->cpu_set_hi = 0;
 	pset->cpu_set_count = 0;
+	pset->recommended_bitmask = ~0ULL;
+	pset->pending_AST_cpu_mask = 0;
+#if defined(CONFIG_SCHED_DEFERRED_AST)
+	pset->pending_deferred_AST_cpu_mask = 0;
+#endif
 	pset_lock_init(pset);
 	pset->pset_self = IP_NULL;
 	pset->pset_name_self = IP_NULL;
@@ -287,13 +309,13 @@ processor_info_count(
 
 kern_return_t
 processor_info(
-	register processor_t	processor,
+	processor_t	processor,
 	processor_flavor_t		flavor,
 	host_t					*host,
 	processor_info_t		info,
 	mach_msg_type_number_t	*count)
 {
-	register int	cpu_id, state;
+	int	cpu_id, state;
 	kern_return_t	result;
 
 	if (processor == PROCESSOR_NULL)
@@ -305,7 +327,7 @@ processor_info(
 
 	case PROCESSOR_BASIC_INFO:
 	{
-		register processor_basic_info_t		basic_info;
+		processor_basic_info_t		basic_info;
 
 		if (*count < PROCESSOR_BASIC_INFO_COUNT)
 			return (KERN_FAILURE);
@@ -333,8 +355,20 @@ processor_info(
 	case PROCESSOR_CPU_LOAD_INFO:
 	{
 		processor_cpu_load_info_t	cpu_load_info;
-		timer_data_t	idle_temp;
 		timer_t		idle_state;
+		uint64_t	idle_time_snapshot1, idle_time_snapshot2;
+		uint64_t	idle_time_tstamp1, idle_time_tstamp2;
+
+		/*
+		 * We capture the accumulated idle time twice over
+		 * the course of this function, as well as the timestamps
+		 * when each were last updated. Since these are
+		 * all done using non-atomic racy mechanisms, the
+		 * most we can infer is whether values are stable.
+		 * timer_grab() is the only function that can be
+		 * used reliably on another processor's per-processor
+		 * data.
+		 */
 
 		if (*count < PROCESSOR_CPU_LOAD_INFO_COUNT)
 			return (KERN_FAILURE);
@@ -354,17 +388,35 @@ processor_info(
 		}
 
 		idle_state = &PROCESSOR_DATA(processor, idle_state);
-		idle_temp = *idle_state;
+		idle_time_snapshot1 = timer_grab(idle_state);
+		idle_time_tstamp1 = idle_state->tstamp;
 
-		if (PROCESSOR_DATA(processor, current_state) != idle_state ||
-		    timer_grab(&idle_temp) != timer_grab(idle_state)) {
+		/*
+		 * Idle processors are not continually updating their
+		 * per-processor idle timer, so it may be extremely
+		 * out of date, resulting in an over-representation
+		 * of non-idle time between two measurement
+		 * intervals by e.g. top(1). If we are non-idle, or
+		 * have evidence that the timer is being updated
+		 * concurrently, we consider its value up-to-date.
+		 */
+		if (PROCESSOR_DATA(processor, current_state) != idle_state) {
 			cpu_load_info->cpu_ticks[CPU_STATE_IDLE] =
-							(uint32_t)(timer_grab(&PROCESSOR_DATA(processor, idle_state)) / hz_tick_interval);
+							(uint32_t)(idle_time_snapshot1 / hz_tick_interval);
+		} else if ((idle_time_snapshot1 != (idle_time_snapshot2 = timer_grab(idle_state))) ||
+				   (idle_time_tstamp1 != (idle_time_tstamp2 = idle_state->tstamp))){
+			/* Idle timer is being updated concurrently, second stamp is good enough */
+			cpu_load_info->cpu_ticks[CPU_STATE_IDLE] =
+							(uint32_t)(idle_time_snapshot2 / hz_tick_interval);
 		} else {
-			timer_advance(&idle_temp, mach_absolute_time() - idle_temp.tstamp);
+			/*
+			 * Idle timer may be very stale. Fortunately we have established
+			 * that idle_time_snapshot1 and idle_time_tstamp1 are unchanging
+			 */
+			idle_time_snapshot1 += mach_absolute_time() - idle_time_tstamp1;
 				
 			cpu_load_info->cpu_ticks[CPU_STATE_IDLE] =
-				(uint32_t)(timer_grab(&idle_temp) / hz_tick_interval);
+				(uint32_t)(idle_time_snapshot1 / hz_tick_interval);
 		}
 
 		cpu_load_info->cpu_ticks[CPU_STATE_NICE] = 0;
@@ -462,6 +514,7 @@ processor_start(
 		thread->bound_processor = processor;
 		processor->next_thread = thread;
 		thread->state = TH_RUN;
+		thread->last_made_runnable_time = mach_absolute_time();
 		thread_unlock(thread);
 		splx(s);
 
@@ -556,7 +609,7 @@ processor_set_info(
 		return(KERN_INVALID_ARGUMENT);
 
 	if (flavor == PROCESSOR_SET_BASIC_INFO) {
-		register processor_set_basic_info_t	basic_info;
+		processor_set_basic_info_t	basic_info;
 
 		if (*count < PROCESSOR_SET_BASIC_INFO_COUNT)
 			return(KERN_FAILURE);
@@ -570,7 +623,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_TIMESHARE_DEFAULT) {
-		register policy_timeshare_base_t	ts_base;
+		policy_timeshare_base_t	ts_base;
 
 		if (*count < POLICY_TIMESHARE_BASE_COUNT)
 			return(KERN_FAILURE);
@@ -583,7 +636,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_FIFO_DEFAULT) {
-		register policy_fifo_base_t		fifo_base;
+		policy_fifo_base_t		fifo_base;
 
 		if (*count < POLICY_FIFO_BASE_COUNT)
 			return(KERN_FAILURE);
@@ -596,7 +649,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_RR_DEFAULT) {
-		register policy_rr_base_t		rr_base;
+		policy_rr_base_t		rr_base;
 
 		if (*count < POLICY_RR_BASE_COUNT)
 			return(KERN_FAILURE);
@@ -610,7 +663,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_TIMESHARE_LIMITS) {
-		register policy_timeshare_limit_t	ts_limit;
+		policy_timeshare_limit_t	ts_limit;
 
 		if (*count < POLICY_TIMESHARE_LIMIT_COUNT)
 			return(KERN_FAILURE);
@@ -623,7 +676,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_FIFO_LIMITS) {
-		register policy_fifo_limit_t		fifo_limit;
+		policy_fifo_limit_t		fifo_limit;
 
 		if (*count < POLICY_FIFO_LIMIT_COUNT)
 			return(KERN_FAILURE);
@@ -636,7 +689,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_RR_LIMITS) {
-		register policy_rr_limit_t		rr_limit;
+		policy_rr_limit_t		rr_limit;
 
 		if (*count < POLICY_RR_LIMIT_COUNT)
 			return(KERN_FAILURE);
@@ -649,7 +702,7 @@ processor_set_info(
 		return(KERN_SUCCESS);
 	}
 	else if (flavor == PROCESSOR_SET_ENABLED_POLICIES) {
-		register int				*enabled;
+		int				*enabled;
 
 		if (*count < (sizeof(*enabled)/sizeof(int)))
 			return(KERN_FAILURE);
@@ -683,7 +736,7 @@ processor_set_statistics(
 		return (KERN_INVALID_PROCESSOR_SET);
 
 	if (flavor == PROCESSOR_SET_LOAD_INFO) {
-		register processor_set_load_info_t     load_info;
+		processor_set_load_info_t     load_info;
 
 		if (*count < PROCESSOR_SET_LOAD_INFO_COUNT)
 			return(KERN_FAILURE);
@@ -748,9 +801,6 @@ processor_set_policy_disable(
 	return (KERN_INVALID_ARGUMENT);
 }
 
-#define THING_TASK	0
-#define THING_THREAD	1
-
 /*
  *	processor_set_things:
  *
@@ -758,166 +808,226 @@ processor_set_policy_disable(
  */
 kern_return_t
 processor_set_things(
-	processor_set_t			pset,
-	mach_port_t				**thing_list,
-	mach_msg_type_number_t	*count,
-	int						type)
+	processor_set_t	pset,
+	void **thing_list,
+	mach_msg_type_number_t *count,
+	int type)
 {
-	unsigned int actual;	/* this many things */
-	unsigned int maxthings;
 	unsigned int i;
+	task_t task;
+	thread_t thread;
 
+	task_t *task_list;
+	unsigned int actual_tasks;
+	vm_size_t task_size, task_size_needed;
+
+	thread_t *thread_list;
+	unsigned int actual_threads;
+	vm_size_t thread_size, thread_size_needed;
+
+	void *addr, *newaddr;
 	vm_size_t size, size_needed;
-	void  *addr;
 
 	if (pset == PROCESSOR_SET_NULL || pset != &pset0)
 		return (KERN_INVALID_ARGUMENT);
 
-	size = 0;
-	addr = NULL;
+	task_size = 0;
+	task_size_needed = 0;
+	task_list = NULL;
+	actual_tasks = 0;
+
+	thread_size = 0;
+	thread_size_needed = 0;
+	thread_list = NULL;
+	actual_threads = 0;
 
 	for (;;) {
 		lck_mtx_lock(&tasks_threads_lock);
 
-		if (type == THING_TASK)
-			maxthings = tasks_count;
-		else
-			maxthings = threads_count;
-
 		/* do we have the memory we need? */
+		if (type == PSET_THING_THREAD)
+			thread_size_needed = threads_count * sizeof(void *);
+#if !CONFIG_MACF
+		else
+#endif
+			task_size_needed = tasks_count * sizeof(void *);
 
-		size_needed = maxthings * sizeof (mach_port_t);
-		if (size_needed <= size)
+		if (task_size_needed <= task_size &&
+		    thread_size_needed <= thread_size)
 			break;
 
 		/* unlock and allocate more memory */
 		lck_mtx_unlock(&tasks_threads_lock);
 
-		if (size != 0)
-			kfree(addr, size);
+		/* grow task array */
+		if (task_size_needed > task_size) {
+			if (task_size != 0)
+				kfree(task_list, task_size);
 
-		assert(size_needed > 0);
-		size = size_needed;
+			assert(task_size_needed > 0);
+			task_size = task_size_needed;
 
-		addr = kalloc(size);
-		if (addr == 0)
-			return (KERN_RESOURCE_SHORTAGE);
+			task_list = (task_t *)kalloc(task_size);
+			if (task_list == NULL) {
+				if (thread_size != 0)
+					kfree(thread_list, thread_size);
+				return (KERN_RESOURCE_SHORTAGE);
+			}
+		}
+
+		/* grow thread array */
+		if (thread_size_needed > thread_size) {
+			if (thread_size != 0)
+				kfree(thread_list, thread_size);
+
+			assert(thread_size_needed > 0);
+			thread_size = thread_size_needed;
+
+			thread_list = (thread_t *)kalloc(thread_size);
+			if (thread_list == 0) {
+				if (task_size != 0)
+					kfree(task_list, task_size);
+				return (KERN_RESOURCE_SHORTAGE);
+			}
+		}
 	}
 
 	/* OK, have memory and the list locked */
 
-	actual = 0;
-	switch (type) {
-
-	case THING_TASK: {
-		task_t		task, *task_list = (task_t *)addr;
-
+	/* If we need it, get the thread list */
+	if (type == PSET_THING_THREAD) {
+		for (thread = (thread_t)queue_first(&threads);
+		     !queue_end(&threads, (queue_entry_t)thread);
+		     thread = (thread_t)queue_next(&thread->threads)) {
+#if defined(SECURE_KERNEL)
+			if (thread->task != kernel_task) {
+#endif
+				thread_reference_internal(thread);
+				thread_list[actual_threads++] = thread;
+#if defined(SECURE_KERNEL)
+			}
+#endif
+		}
+	}
+#if !CONFIG_MACF
+	  else {
+#endif
+		/* get a list of the tasks */
 		for (task = (task_t)queue_first(&tasks);
-						!queue_end(&tasks, (queue_entry_t)task);
-								task = (task_t)queue_next(&task->tasks)) {
+		     !queue_end(&tasks, (queue_entry_t)task);
+		     task = (task_t)queue_next(&task->tasks)) {
 #if defined(SECURE_KERNEL)
 			if (task != kernel_task) {
 #endif
 				task_reference_internal(task);
-				task_list[actual++] = task;
+				task_list[actual_tasks++] = task;
 #if defined(SECURE_KERNEL)
 			}
 #endif
 		}
-
-		break;
+#if !CONFIG_MACF
 	}
+#endif
 
-	case THING_THREAD: {
-		thread_t	thread, *thread_list = (thread_t *)addr;
-
-		for (thread = (thread_t)queue_first(&threads);
-						!queue_end(&threads, (queue_entry_t)thread);
-								thread = (thread_t)queue_next(&thread->threads)) {
-			thread_reference_internal(thread);
-			thread_list[actual++] = thread;
-		}
-
-		break;
-	}
-
-	}
-		
 	lck_mtx_unlock(&tasks_threads_lock);
 
-	if (actual < maxthings)
-		size_needed = actual * sizeof (mach_port_t);
+#if CONFIG_MACF
+	unsigned int j, used;
 
-	if (actual == 0) {
-		/* no things, so return null pointer and deallocate memory */
-		*thing_list = NULL;
-		*count = 0;
-
-		if (size != 0)
-			kfree(addr, size);
+	/* for each task, make sure we are allowed to examine it */
+	for (i = used = 0; i < actual_tasks; i++) {
+		if (mac_task_check_expose_task(task_list[i])) {
+			task_deallocate(task_list[i]);
+			continue;
+		}
+		task_list[used++] = task_list[i];
 	}
-	else {
-		/* if we allocated too much, must copy */
+	actual_tasks = used;
+	task_size_needed = actual_tasks * sizeof(void *);
 
-		if (size_needed < size) {
-			void *newaddr;
+	if (type == PSET_THING_THREAD) {
 
-			newaddr = kalloc(size_needed);
-			if (newaddr == 0) {
-				switch (type) {
+		/* for each thread (if any), make sure it's task is in the allowed list */
+		for (i = used = 0; i < actual_threads; i++) {
+			boolean_t found_task = FALSE;
 
-				case THING_TASK: {
-					task_t		*task_list = (task_t *)addr;
-
-					for (i = 0; i < actual; i++)
-						task_deallocate(task_list[i]);
+			task = thread_list[i]->task;
+			for (j = 0; j < actual_tasks; j++) {
+				if (task_list[j] == task) {
+					found_task = TRUE;
 					break;
 				}
-
-				case THING_THREAD: {
-					thread_t	*thread_list = (thread_t *)addr;
-
-					for (i = 0; i < actual; i++)
-						thread_deallocate(thread_list[i]);
-					break;
-				}
-
-				}
-
-				kfree(addr, size);
-				return (KERN_RESOURCE_SHORTAGE);
 			}
-
-			bcopy((void *) addr, (void *) newaddr, size_needed);
-			kfree(addr, size);
-			addr = newaddr;
+			if (found_task)
+				thread_list[used++] = thread_list[i];
+			else
+				thread_deallocate(thread_list[i]);
 		}
+		actual_threads = used;
+		thread_size_needed = actual_threads * sizeof(void *);
 
-		*thing_list = (mach_port_t *)addr;
-		*count = actual;
-
-		/* do the conversion that Mig should handle */
-
-		switch (type) {
-
-		case THING_TASK: {
-			task_t		*task_list = (task_t *)addr;
-
-			for (i = 0; i < actual; i++)
-				(*thing_list)[i] = convert_task_to_port(task_list[i]);
-			break;
-		}
-
-		case THING_THREAD: {
-			thread_t	*thread_list = (thread_t *)addr;
-
-			for (i = 0; i < actual; i++)
-			  	(*thing_list)[i] = convert_thread_to_port(thread_list[i]);
-			break;
-		}
-
-		}
+		/* done with the task list */
+		for (i = 0; i < actual_tasks; i++)
+			task_deallocate(task_list[i]);
+		kfree(task_list, task_size);
+		task_size = 0;
+		actual_tasks = 0;
+		task_list = NULL;
 	}
+#endif
+
+	if (type == PSET_THING_THREAD) {
+		if (actual_threads == 0) {
+			/* no threads available to return */
+			assert(task_size == 0);
+			if (thread_size != 0)
+				kfree(thread_list, thread_size);
+			*thing_list = NULL;
+			*count = 0;
+			return KERN_SUCCESS;
+		}
+		size_needed = actual_threads * sizeof(void *);
+		size = thread_size;
+		addr = thread_list;
+	} else {
+		if (actual_tasks == 0) {
+			/* no tasks available to return */
+			assert(thread_size == 0);
+			if (task_size != 0)
+				kfree(task_list, task_size);
+			*thing_list = NULL;
+			*count = 0;
+			return KERN_SUCCESS;
+		} 
+		size_needed = actual_tasks * sizeof(void *);
+		size = task_size;
+		addr = task_list;
+	}
+
+	/* if we allocated too much, must copy */
+	if (size_needed < size) {
+		newaddr = kalloc(size_needed);
+		if (newaddr == 0) {
+			for (i = 0; i < actual_tasks; i++) {
+				if (type == PSET_THING_THREAD)
+					thread_deallocate(thread_list[i]);
+				else
+					task_deallocate(task_list[i]);
+			}
+			if (size)
+				kfree(addr, size);
+			return (KERN_RESOURCE_SHORTAGE);
+		}
+
+		bcopy((void *) addr, (void *) newaddr, size_needed);
+		kfree(addr, size);
+
+		addr = newaddr;
+		size = size_needed;
+	}
+
+	*thing_list = (void **)addr;
+	*count = (unsigned int)size / sizeof(void *);
 
 	return (KERN_SUCCESS);
 }
@@ -934,7 +1044,17 @@ processor_set_tasks(
 	task_array_t		*task_list,
 	mach_msg_type_number_t	*count)
 {
-    return(processor_set_things(pset, (mach_port_t **)task_list, count, THING_TASK));
+	kern_return_t ret;
+	mach_msg_type_number_t i;
+
+	ret = processor_set_things(pset, (void **)task_list, count, PSET_THING_TASK);
+	if (ret != KERN_SUCCESS)
+		return ret;
+
+	/* do the conversion that Mig should handle */
+	for (i = 0; i < *count; i++)
+		(*task_list)[i] = (task_t)convert_task_to_port((*task_list)[i]);
+	return KERN_SUCCESS;
 }
 
 /*
@@ -951,15 +1071,6 @@ processor_set_threads(
 {
     return KERN_FAILURE;
 }
-#elif defined(CONFIG_EMBEDDED)
-kern_return_t
-processor_set_threads(
-	__unused processor_set_t		pset,
-	__unused thread_array_t		*thread_list,
-	__unused mach_msg_type_number_t	*count)
-{
-    return KERN_NOT_SUPPORTED;
-}
 #else
 kern_return_t
 processor_set_threads(
@@ -967,7 +1078,17 @@ processor_set_threads(
 	thread_array_t		*thread_list,
 	mach_msg_type_number_t	*count)
 {
-    return(processor_set_things(pset, (mach_port_t **)thread_list, count, THING_THREAD));
+	kern_return_t ret;
+	mach_msg_type_number_t i;
+
+	ret = processor_set_things(pset, (void **)thread_list, count, PSET_THING_THREAD);
+	if (ret != KERN_SUCCESS)
+		return ret;
+
+	/* do the conversion that Mig should handle */
+	for (i = 0; i < *count; i++)
+		(*thread_list)[i] = (thread_t)convert_thread_to_port((*thread_list)[i]);
+	return KERN_SUCCESS;
 }
 #endif
 

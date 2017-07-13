@@ -75,9 +75,11 @@ kext_alloc_init(void)
      */
 
     text = getsegbyname(SEG_TEXT);
-    text_start = vm_map_trunc_page(text->vmaddr);
+    text_start = vm_map_trunc_page(text->vmaddr,
+				   VM_MAP_PAGE_MASK(kernel_map));
     text_start &= ~((512ULL * 1024 * 1024 * 1024) - 1);
-    text_end = vm_map_round_page(text->vmaddr + text->vmsize);
+    text_end = vm_map_round_page(text->vmaddr + text->vmsize,
+				 VM_MAP_PAGE_MASK(kernel_map));
     text_size = text_end - text_start;
 
     kext_alloc_base = KEXT_ALLOC_BASE(text_end);
@@ -91,7 +93,8 @@ kext_alloc_init(void)
          * kexts
          */
         kext_post_boot_base = 
-            vm_map_round_page(kext_alloc_base + prelinkTextSegment->vmsize);
+		vm_map_round_page(kext_alloc_base + prelinkTextSegment->vmsize,
+				  VM_MAP_PAGE_MASK(kernel_map));
     }
     else {
         kext_post_boot_base = kext_alloc_base;
@@ -100,7 +103,7 @@ kext_alloc_init(void)
     /* Allocate the sub block of the kernel map */
     rval = kmem_suballoc(kernel_map, (vm_offset_t *) &kext_alloc_base, 
 			 kext_alloc_size, /* pageable */ TRUE,
-			 VM_FLAGS_FIXED|VM_FLAGS_OVERWRITE,
+			 VM_FLAGS_FIXED|VM_FLAGS_OVERWRITE | VM_MAKE_TAG(VM_KERN_MEMORY_KEXT),
 			 &g_kext_map);
     if (rval != KERN_SUCCESS) {
 	    panic("kext_alloc_init: kmem_suballoc failed 0x%x\n", rval);
@@ -138,6 +141,8 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 #endif
     int flags = (fixed) ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE;
  
+    flags |= VM_MAKE_TAG(VM_KERN_MEMORY_KEXT);
+     
 #if CONFIG_KEXT_BASEMENT
     /* Allocate the kext virtual memory
      * 10608884 - use mach_vm_map since we want VM_FLAGS_ANYWHERE allocated past

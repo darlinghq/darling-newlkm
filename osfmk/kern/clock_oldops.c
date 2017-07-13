@@ -44,7 +44,6 @@
 
 #include <mach/mach_types.h>
 
-#include <kern/lock.h>
 #include <kern/host.h>
 #include <kern/spl.h>
 #include <kern/sched_prim.h>
@@ -137,8 +136,6 @@ static kern_return_t	clock_sleep_internal(
 							sleep_type_t		sleep_type,
 							mach_timespec_t		*sleep_time);
 
-int		rtclock_config(void);
-
 int		rtclock_init(void);
 
 kern_return_t	rtclock_gettime(
@@ -150,7 +147,7 @@ kern_return_t	rtclock_getattr(
 	mach_msg_type_number_t	*count);
 
 struct clock_ops sysclk_ops = {
-	rtclock_config,			rtclock_init,
+	NULL,			rtclock_init,
 	rtclock_gettime,
 	rtclock_getattr,
 };
@@ -184,7 +181,7 @@ void
 clock_oldconfig(void)
 {
 	clock_t			clock;
-	register int 	i;
+	int	i;
 
 	simple_lock_init(&alarm_lock, 0);
 	thread_call_setup(&alarm_done_call, (thread_call_func_t)alarm_done, NULL);
@@ -209,7 +206,7 @@ void
 clock_oldinit(void)
 {
 	clock_t			clock;
-	register int	i;
+	int	i;
 
 	/*
 	 * Initialize basic clock structures.
@@ -228,7 +225,7 @@ void
 clock_service_create(void)
 {
 	clock_t			clock;
-	register int	i;
+	int	i;
 
 	/*
 	 * Initialize ipc clock services.
@@ -632,8 +629,8 @@ static void
 alarm_expire(void)
 {
 	clock_t				clock;
-	register alarm_t	alrm1;
-	register alarm_t	alrm2;
+	alarm_t	alrm1;
+	alarm_t	alrm2;
 	mach_timespec_t		clock_time;
 	mach_timespec_t		*alarm_time;
 	spl_t				s;
@@ -699,7 +696,7 @@ alarm_expire(void)
 static void
 alarm_done(void)
 {
-	register alarm_t	alrm;
+	alarm_t	alrm;
 	kern_return_t		code;
 	spl_t				s;
 
@@ -738,7 +735,7 @@ static void
 post_alarm(
 	alarm_t				alarm)
 {
-	register alarm_t	alrm1, alrm2;
+	alarm_t	alrm1, alrm2;
 	mach_timespec_t		*alarm_time;
 	mach_timespec_t		*queue_time;
 
@@ -775,7 +772,7 @@ set_alarm(
 	uint64_t	abstime;
 
 	nanotime_to_absolutetime(alarm_time->tv_sec, alarm_time->tv_nsec, &abstime);
-	timer_call_enter(&alarm_expire_timer, abstime, 0);
+	timer_call_enter_with_leeway(&alarm_expire_timer, NULL, abstime, 0, TIMER_CALL_USER_NORMAL, FALSE);
 }
 
 /*

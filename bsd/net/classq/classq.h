@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -94,6 +94,9 @@ typedef enum classq_state {
 
 #define	DEFAULT_QLIMIT	128 /* default */
 
+#define	CLASSQ_DEQUEUE_MAX_PKT_LIMIT	2048
+#define	CLASSQ_DEQUEUE_MAX_BYTE_LIMIT	(1024 * 1024)
+
 /*
  * generic packet counter
  */
@@ -113,8 +116,8 @@ struct pktcntr {
 typedef struct _class_queue_ {
 	MBUFQ_HEAD(mq_head) mbufq;	/* Packet queue */
 	u_int32_t	qlen;	/* Queue length (in number of packets) */
-	u_int32_t	qsize;	/* Approx. queue size (in number of bytes) */
 	u_int32_t	qlim;	/* Queue limit (in number of packets*) */
+	u_int64_t	qsize;	/* Approx. queue size (in number of bytes) */
 	classq_type_t	qtype;	/* Queue type */
 	classq_state_t	qstate;	/* Queue state */
 } class_queue_t;
@@ -159,19 +162,23 @@ extern void _addq(class_queue_t *, struct mbuf *);
 extern void _addq_multi(class_queue_t *, struct mbuf *, struct mbuf *,
     u_int32_t, u_int32_t);
 extern struct mbuf *_getq(class_queue_t *);
-extern struct mbuf *_getq_all(class_queue_t *);
+extern struct mbuf *_getq_all(class_queue_t *, struct mbuf **,
+    u_int32_t *, u_int64_t *);
 extern struct mbuf *_getq_tail(class_queue_t *);
 extern struct mbuf *_getq_random(class_queue_t *);
 extern struct mbuf *_getq_flow(class_queue_t *, u_int32_t);
+extern struct mbuf *_getq_scidx_lt(class_queue_t *, u_int32_t);
 extern void _removeq(class_queue_t *, struct mbuf *);
 extern void _flushq(class_queue_t *);
 extern void _flushq_flow(class_queue_t *, u_int32_t, u_int32_t *, u_int32_t *);
 
 extern void classq_init(void);
 
+#if PF_ECN
 extern u_int8_t read_dsfield(struct mbuf *, struct pf_mtag *);
 extern void	write_dsfield(struct mbuf *, struct pf_mtag *, u_int8_t);
 extern int	mark_ecn(struct mbuf *, struct pf_mtag *, int);
+#endif /* PF_ECN */
 #endif /* BSD_KERNEL_PRIVATE */
 
 #ifdef __cplusplus

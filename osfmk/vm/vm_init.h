@@ -32,14 +32,9 @@
 #ifndef VM_INIT_H
 #define VM_INIT_H
 
-#if defined (__DARLING__)
-extern void __init vm_mem_bootstrap(void);
-extern void __init vm_mem_init(void);
-extern void __init vm_map_steal_memory(void);
-#else
-extern void vm_mem_bootstrap(void) __attribute__((section("__TEXT, initcode")));
-extern void vm_mem_init(void) __attribute__((section("__TEXT, initcode")));
-extern void vm_map_steal_memory(void) __attribute__((section("__TEXT, initcode")));;
-#endif
+extern void vm_mem_bootstrap(void);
+extern void vm_mem_init(void);
+extern void vm_map_steal_memory(void);;
+extern void vm_user_init(void);
 
 #endif /* VM_INIT_H */

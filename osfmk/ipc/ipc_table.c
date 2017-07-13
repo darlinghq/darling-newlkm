@@ -80,29 +80,13 @@
 #include <duct/duct_post_xnu.h>
 #endif
 
-/*
- * Forward declarations
- */
-void ipc_table_fill(
-	ipc_table_size_t	its,
-	unsigned int		num,
-	unsigned int		min,
-	vm_size_t		elemsize);
-
-/*
- *	We borrow the kalloc map, rather than creating
- *	yet another submap of the kernel map.
- */
-
-extern vm_map_t kalloc_map;
-
 ipc_table_size_t ipc_table_entries;
-unsigned int ipc_table_entries_size = 512;
+unsigned int ipc_table_entries_size = CONFIG_IPC_TABLE_ENTRIES_STEPS;
 
 ipc_table_size_t ipc_table_requests;
 unsigned int ipc_table_requests_size = 64;
 
-void
+static void
 ipc_table_fill(
 	ipc_table_size_t	its,	     /* array to fill */
 	unsigned int		num,	     /* size of array */
@@ -117,7 +101,7 @@ ipc_table_fill(
 	/* first use powers of two, up to the page size */
 
 	for (index = 0, size = 1;
-	     (index < num) && (size < PAGE_SIZE);
+	     (index < num) && (size < PAGE_MAX_SIZE);
 	     size <<= 1) {
 		if (size >= minsize) {
 			its[index].its_size = (ipc_table_elems_t)(size / elemsize);
@@ -127,7 +111,7 @@ ipc_table_fill(
 
 	/* then increments of a page, then two pages, etc. */
 
-	for (incrsize = PAGE_SIZE; index < num;) {
+	for (incrsize = PAGE_MAX_SIZE; index < num;) {
 		unsigned int period;
 
 		for (period = 0;
@@ -138,7 +122,7 @@ ipc_table_fill(
 				index++;
 			}
 		}
-		if (incrsize < (PAGE_SIZE << 3))
+		if (incrsize < (vm_size_t)(PAGE_MAX_SIZE << 3))
 			incrsize <<= 1;
 	}
 }
@@ -185,27 +169,14 @@ void *
 ipc_table_alloc(
 	vm_size_t	size)
 {
-#if defined (__DARLING__)
-    return vzalloc (size);
-#else
-	vm_offset_t table;
-
-	if (size < PAGE_SIZE)
-		return kalloc(size);
-
-	if (kmem_alloc(kalloc_map, &table, size) != KERN_SUCCESS)
-		table = 0;
-
-	return (void *)table;
-#endif
+	return kalloc(size);
 }
 
 
 /*
  *	Routine:	ipc_table_free
  *	Purpose:
- *		Free a table allocated with ipc_table_alloc or
- *		ipc_table_realloc.
+ *		Free a table allocated with ipc_table_alloc.
  *	Conditions:
  *		May block.
  */
@@ -215,12 +186,5 @@ ipc_table_free(
 	vm_size_t	size,
 	void *		table)
 {
-#if defined (__DARLING__)
-    vfree (table);
-#else
-	if (size < PAGE_SIZE)
-		kfree(table, size);
-    else
-		kmem_free(kalloc_map, (vm_offset_t)table, size);
-#endif
+	kfree(table, size);
 }

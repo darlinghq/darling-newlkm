@@ -29,7 +29,7 @@
 #ifndef _FBT_H
 #define _FBT_H
 
-#if defined(__i386__) || defined (__x86_64__)
+#if defined (__x86_64__)
 typedef uint8_t machine_inst_t;
 #else
 #error Unknown Architecture
@@ -54,9 +54,6 @@ typedef struct fbt_probe {
 	char			fbtp_name[MAX_FBTP_NAME_CHARS];
 	struct modctl	*fbtp_ctl;
 	int		fbtp_loadcnt;
-#if !defined(__APPLE__)
-	int		fbtp_symndx;
-#endif
 	struct fbt_probe *fbtp_next;
 } fbt_probe_t;
 

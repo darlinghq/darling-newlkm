@@ -242,8 +242,7 @@ routine	task_swap_exception_ports(
 	  out	old_flavors	: exception_flavor_array_t, SameCount);
 
 /*
- * Create and destroy lock_set and semaphore synchronizers on a
- * per-task basis (i.e. the task owns them).
+ * OBSOLETE interface.
  */
 routine lock_set_create(
 		task		: task_t;
@@ -251,9 +250,17 @@ routine lock_set_create(
 		n_ulocks	: int;
 		policy		: int);
 
+/*
+ * OBSOLETE interface.
+ */
 routine lock_set_destroy(
 		task		: task_t;
 		lock_set	: lock_set_t);
+
+/*
+ * Create and destroy semaphore synchronizers on a
+ * per-task basis (i.e. the task owns them).
+ */
 
 routine semaphore_create(
 		task		: task_t;
@@ -410,4 +417,80 @@ routine	task_set_state(
 		flavor		: thread_state_flavor_t;
 		new_state	: thread_state_t);
 
+/*
+ * Change the task's physical footprint limit (in MB).
+ */
+routine task_set_phys_footprint_limit(
+		task		: task_t;
+		new_limit	: int;
+	out old_limit	: int);
+
+routine task_suspend2(
+		target_task : task_t;
+	out suspend_token : task_suspension_token_t);
+
+routine task_resume2(
+		suspend_token : task_suspension_token_t);
+
+routine task_purgable_info(
+		task 		: task_t;
+	out	stats		: task_purgable_info_t);
+
+routine task_get_mach_voucher(
+		task		: task_t;
+		which		: mach_voucher_selector_t;
+	out	voucher		: ipc_voucher_t);
+
+routine task_set_mach_voucher(
+		task		: task_t;
+		voucher		: ipc_voucher_t);
+
+routine task_swap_mach_voucher(
+		task		: task_t;
+		new_voucher	: ipc_voucher_t;
+	inout	old_voucher	: ipc_voucher_t);
+
+routine task_generate_corpse(
+		task		:task_t;
+	out	corpse_task_port:mach_port_t);
+
+routine task_map_corpse_info(
+		task		:task_t;
+		corspe_task	:task_t;
+	out	kcd_addr_begin	:vm_address_t;
+	out	kcd_size	:uint32_t);
+
+routine task_register_dyld_image_infos(
+        task            :task_t;
+        dyld_images     :dyld_kernel_image_info_array_t);
+
+routine task_unregister_dyld_image_infos(
+        task            :task_t;
+        dyld_images     :dyld_kernel_image_info_array_t);
+
+routine task_get_dyld_image_infos(
+        task            :task_t;
+    out dyld_images     :dyld_kernel_image_info_array_t);
+
+routine task_register_dyld_shared_cache_image_info(
+        task                :task_t;
+        dyld_cache_image    :dyld_kernel_image_info_t;
+        no_cache            :boolean_t;
+        private_cache       :boolean_t);
+
+routine task_register_dyld_set_dyld_state(
+        task           :task_t;
+        dyld_state     :uint8_t);
+
+routine task_register_dyld_get_process_state(
+        task                :task_t;
+    out dyld_process_state  :dyld_kernel_process_info_t);
+
+routine task_map_corpse_info_64(
+		task		:task_t;
+		corspe_task	:task_t;
+	out	kcd_addr_begin	:mach_vm_address_t;
+	out	kcd_size	:mach_vm_size_t);
+
 /* vim: set ft=c : */
+

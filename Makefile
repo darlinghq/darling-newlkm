@@ -158,14 +158,16 @@ CFLAGS_notify_user.o := $(miggen_cflags)
 ifneq ($(KERNELRELEASE),)
 	obj-m := darling-mach.o
 	darling-mach-objs := osfmk/ipc/ipc_entry.o \
+		osfmk/ipc/flipc.o \
 		osfmk/ipc/ipc_hash.o \
+		osfmk/ipc/ipc_importance.o \
 		osfmk/ipc/ipc_space.o \
 		osfmk/ipc/ipc_kmsg.o \
-		osfmk/ipc/ipc_labelh.o \
 		osfmk/ipc/ipc_notify.o \
 		osfmk/ipc/ipc_object.o \
 		osfmk/ipc/ipc_pset.o \
 		osfmk/ipc/ipc_table.o \
+		osfmk/ipc/ipc_voucher.o \
 		osfmk/ipc/mig_log.o \
 		osfmk/ipc/mach_port.o \
 		osfmk/ipc/mach_msg.o \
@@ -181,7 +183,7 @@ ifneq ($(KERNELRELEASE),)
 		darling/task_registry.o \
 		darling/license.o \
 		darling/host_info.o \
-		darling/evprocfd.o \
+		darling/evprocfd.o 
 		darling/evpsetfd.o \
 		darling/psynch/pthread_kill.o \
 		darling/psynch/psynch_mutex.o \

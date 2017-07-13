@@ -79,9 +79,6 @@
 
 #define VOPFUNC int (*)(void *)
 
-extern int	soo_ioctl(struct fileproc *fp, u_long cmd, caddr_t data, vfs_context_t ctx);
-extern int	soo_select(struct fileproc *fp, int which, void * wql, vfs_context_t ctx);
-
 int (**fifo_vnodeop_p)(void *);
 struct vnodeopv_entry_desc fifo_vnodeop_entries[] = {
 	{ &vnop_default_desc, (VOPFUNC)vn_default_error },
@@ -329,7 +326,9 @@ fifo_read(struct vnop_read_args *ap)
 	/* skip soreceive to avoid blocking when we have no writers */
 	if (error != EWOULDBLOCK) {
 		error = soreceive(rso, (struct sockaddr **)0, uio, (struct mbuf **)0,
-	    					(struct mbuf **)0, &rflags);
+						(struct mbuf **)0, &rflags);
+		if (error == 0)
+			lock_vnode_and_post(ap->a_vp, 0);
 	}
 	else {
 		/* clear EWOULDBLOCK and return EOF (zero) */
@@ -361,6 +360,8 @@ fifo_write(struct vnop_write_args *ap)
 #endif
 	error = sosend(wso, (struct sockaddr *)0, ap->a_uio, NULL,
 		       (struct mbuf *)0, (ap->a_ioflag & IO_NDELAY) ? MSG_NBIO : 0);
+	if (error == 0)
+		lock_vnode_and_post(ap->a_vp, 0);
 
 	return (error);
 }

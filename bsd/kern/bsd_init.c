@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2015 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -119,6 +119,7 @@
 #include <mach/exception_types.h>
 #include <dev/busvar.h>			/* for pseudo_inits */
 #include <sys/kdebug.h>
+#include <sys/reason.h>
 
 #include <mach/mach_types.h>
 #include <mach/vm_prot.h>
@@ -144,6 +145,7 @@
 #include <sys/protosw.h>		/* for domaininit() */
 #include <kern/sched_prim.h>		/* for thread_wakeup() */
 #include <net/if_ether.h>		/* for ether_family_init() */
+#include <net/if_gif.h>			/* for gif_init() */
 #include <vm/vm_protos.h>		/* for vnode_pager_bootstrap() */
 #include <miscfs/devfs/devfsdefs.h>	/* for devfs_kernel_mount() */
 #include <mach/host_priv.h>		/* for host_set_exception_ports() */
@@ -152,11 +154,21 @@
 #include <sys/semaphore.h>		/* for psem_lock_init() */
 #include <sys/msgbuf.h>			/* for log_setsize() */
 #include <sys/tty.h>			/* for tty_init() */
+#include <sys/proc_uuid_policy.h>	/* proc_uuid_policy_init() */
+#include <netinet/flow_divert.h>	/* flow_divert_init() */
+#include <net/content_filter.h>		/* for cfil_init() */
+#include <net/necp.h>			/* for necp_init() */
+#include <net/network_agent.h>		/* for netagent_init() */
+#include <net/packet_mangler.h>		/* for pkt_mnglr_init() */
 #include <net/if_utun.h>		/* for utun_register_control() */
+#include <net/if_ipsec.h>		/* for ipsec_register_control() */
 #include <net/net_str_id.h>		/* for net_str_id_init() */
 #include <net/netsrc.h>			/* for netsrc_init() */
 #include <net/ntstat.h>			/* for nstat_init() */
+#include <netinet/tcp_cc.h>			/* for tcp_cc_init() */
+#include <netinet/mptcp_var.h>		/* for mptcp_control_register() */
 #include <kern/assert.h>		/* for assert() */
+#include <sys/kern_overrides.h>		/* for init_system_override() */
 
 #include <net/init.h>
 
@@ -180,9 +192,11 @@
 #include <net/if_pflog.h>
 #endif
 
+
 #include <pexpert/pexpert.h>
 #include <machine/pal_routines.h>
 #include <console/video_console.h>
+
 
 void * get_user_regs(thread_t);		/* XXX kludge for <machine/thread.h> */
 void IOKitInitializeTime(void);		/* XXX */
@@ -226,26 +240,34 @@ int		hostnamelen;
 char	domainname[MAXDOMNAMELEN];
 int		domainnamelen;
 
-char rootdevice[16]; 	/* hfs device names have at least 9 chars */
+char rootdevice[16]; 	/* device names have at least 9 chars */
 
 #if  KMEMSTATS
 struct	kmemstats kmemstats[M_LAST];
 #endif
 
-int	lbolt;				/* awoken once a second */
 struct	vnode *rootvp;
 int boothowto = RB_DEBUG;
+int minimalboot = 0;
 
-void lightning_bolt(void *);
+#if PROC_REF_DEBUG
+__private_extern__ int proc_ref_tracking_disabled = 0; /* disable panics on leaked proc refs across syscall boundary */
+#endif
+
+#if OS_REASON_DEBUG
+__private_extern__ int os_reason_debug_disabled = 0; /* disable asserts for when we fail to allocate OS reasons */
+#endif
+
 extern kern_return_t IOFindBSDRoot(char *, unsigned int, dev_t *, u_int32_t *);
 extern void IOSecureBSDRoot(const char * rootName);
 extern kern_return_t IOKitBSDInit(void );
 extern void kminit(void);
-extern void klogwakeup(void);
 extern void file_lock_init(void);
 extern void kmeminit(void);
 extern void bsd_bufferinit(void);
+extern void oslog_setsize(int size);
 extern void throttle_init(void);
+extern void acct_init(void);
 
 extern int serverperfmode;
 extern int ncl;
@@ -259,9 +281,13 @@ __private_extern__ int execargs_cache_size = 0;
 __private_extern__ int execargs_free_count = 0;
 __private_extern__ vm_offset_t * execargs_cache = NULL;
 
-void bsd_exec_setup(int) __attribute__((aligned(4096)));
+void bsd_exec_setup(int);
 
 __private_extern__ int bootarg_vnode_cache_defeat = 0;
+
+#if CONFIG_JETSAM && (DEVELOPMENT || DEBUG)
+__private_extern__ int bootarg_no_vnode_jetsam = 0;
+#endif /* CONFIG_JETSAM && (DEVELOPMENT || DEBUG) */
 
 /*
  * Prevent kernel-based ASLR from being used, for testing.
@@ -270,23 +296,31 @@ __private_extern__ int bootarg_vnode_cache_defeat = 0;
 __private_extern__ int bootarg_disable_aslr = 0;
 #endif
 
+/*
+ * Allow an alternate dyld to be used for testing.
+ */
+
+#if DEVELOPMENT || DEBUG
+char dyld_alt_path[MAXPATHLEN];
+int use_alt_dyld = 0;
+#endif
+
 int	cmask = CMASK;
 extern int customnbuf;
 
-void bsd_init(void) __attribute__((section("__TEXT, initcode")));
-kern_return_t bsd_autoconf(void) __attribute__((section("__TEXT, initcode")));
-void bsd_utaskbootstrap(void) __attribute__((section("__TEXT, initcode")));
+kern_return_t bsd_autoconf(void);
+void bsd_utaskbootstrap(void);
 
 static void parse_bsd_args(void);
 extern task_t bsd_init_task;
-extern char    init_task_failure_data[];
+#if CONFIG_DEV_KMEM
+extern void dev_kmem_init(void);
+#endif
 extern void time_zone_slock_init(void);
-extern void select_wait_queue_init(void);
+extern void select_waitq_init(void);
 static void process_name(const char *, proc_t);
 
 static void setconf(void);
-
-funnel_t *kernel_flock;
 
 #if SYSV_SHM
 extern void sysv_shm_lock_init(void);
@@ -298,11 +332,7 @@ extern void sysv_sem_lock_init(void);
 extern void sysv_msg_lock_init(void);
 #endif
 
-#if !defined(SECURE_KERNEL)
-/* kmem access not enabled by default; can be changed with boot-args */
-/* We don't need to keep this symbol around in RELEASE kernel */
-int setup_kmem = 0;
-#endif
+extern void ulock_initialize(void);
 
 #if CONFIG_MACF
 #if defined (__i386__) || defined (__x86_64__)
@@ -312,9 +342,6 @@ int policy_check_flags = 0;
 extern int check_policy_init(int);
 #endif
 #endif	/* CONFIG_MACF */
-
-extern void stackshot_lock_init(void);
-
 
 /* If we are using CONFIG_DTRACE */
 #if CONFIG_DTRACE
@@ -339,25 +366,23 @@ extern void stackshot_lock_init(void);
 static void
 process_name(const char *s, proc_t p)
 {
-	size_t length = strlen(s);
-
-	bcopy(s, p->p_comm,
-		length >= sizeof(p->p_comm) ? sizeof(p->p_comm) :
-			length + 1);
+       strlcpy(p->p_comm, s, sizeof(p->p_comm));
+       strlcpy(p->p_name, s, sizeof(p->p_name));
 }
 
 /* To allow these values to be patched, they're globals here */
 #include <machine/vmparam.h>
-struct rlimit vm_initial_limit_stack = { DFLSSIZ, MAXSSIZ - PAGE_SIZE };
+struct rlimit vm_initial_limit_stack = { DFLSSIZ, MAXSSIZ - PAGE_MAX_SIZE };
 struct rlimit vm_initial_limit_data = { DFLDSIZ, MAXDSIZ };
 struct rlimit vm_initial_limit_core = { DFLCSIZ, MAXCSIZ };
 
-extern thread_t	cloneproc(task_t, proc_t, int);
+extern thread_t	cloneproc(task_t, coalition_t, proc_t, int, int);
 extern int 	(*mountroot)(void);
 
 lck_grp_t * proc_lck_grp;
 lck_grp_t * proc_slock_grp;
 lck_grp_t * proc_fdmlock_grp;
+lck_grp_t * proc_ucred_mlock_grp;
 lck_grp_t * proc_mlock_grp;
 lck_grp_attr_t * proc_lck_grp_attr;
 lck_attr_t * proc_lck_attr;
@@ -369,6 +394,17 @@ extern lck_mtx_t * execargs_cache_lock;
 /* hook called after root is mounted XXX temporary hack */
 void (*mountroot_post_hook)(void);
 void (*unmountroot_pre_hook)(void);
+
+/*
+ * This function is called before IOKit initialization, so that globals
+ * like the sysctl tree are initialized before kernel extensions
+ * are started (since they may want to register sysctls
+ */
+void
+bsd_early_init(void)
+{
+	sysctl_early_init();
+}
 
 /*
  * This function is called very early on in the Mach startup, from the
@@ -384,9 +420,6 @@ void (*unmountroot_pre_hook)(void);
  * of the uu_context.vc_ucred field so that the uthread structure can be
  * used like any other.
  */
-extern void run_bringup_tests(void);
-
-extern void IOServicePublishResource(const char *, boolean_t);
 
 void
 bsd_init(void)
@@ -405,11 +438,6 @@ bsd_init(void)
 
 	throttle_init();
 
-	kernel_flock = funnel_alloc(KERNEL_FUNNEL);
-	if (kernel_flock == (funnel_t *)0 ) {
-		panic("bsd_init: Failed to allocate kernel funnel");
-	}
-        
 	printf(copyright);
 	
 	bsd_init_kprintf("calling kmeminit\n");
@@ -417,6 +445,11 @@ bsd_init(void)
 	
 	bsd_init_kprintf("calling parse_bsd_args\n");
 	parse_bsd_args();
+
+#if CONFIG_DEV_KMEM
+	bsd_init_kprintf("calling dev_kmem_init\n");
+	dev_kmem_init();
+#endif
 
 	/* Initialize kauth subsystem before instancing the first credential */
 	bsd_init_kprintf("calling kauth_init\n");
@@ -446,6 +479,7 @@ bsd_init(void)
 #if CONFIG_FINE_LOCK_GROUPS
 	proc_slock_grp = lck_grp_alloc_init("proc-slock",  proc_lck_grp_attr);
 	proc_fdmlock_grp = lck_grp_alloc_init("proc-fdmlock",  proc_lck_grp_attr);
+	proc_ucred_mlock_grp = lck_grp_alloc_init("proc-ucred-mlock",  proc_lck_grp_attr);
 	proc_mlock_grp = lck_grp_alloc_init("proc-mlock",  proc_lck_grp_attr);
 #endif
 	/* Allocate proc lock attribute */
@@ -461,12 +495,14 @@ bsd_init(void)
 	proc_klist_mlock = lck_mtx_alloc_init(proc_mlock_grp, proc_lck_attr);
 	lck_mtx_init(&kernproc->p_mlock, proc_mlock_grp, proc_lck_attr);
 	lck_mtx_init(&kernproc->p_fdmlock, proc_fdmlock_grp, proc_lck_attr);
+	lck_mtx_init(&kernproc->p_ucred_mlock, proc_ucred_mlock_grp, proc_lck_attr);
 	lck_spin_init(&kernproc->p_slock, proc_slock_grp, proc_lck_attr);
 #else
 	proc_list_mlock = lck_mtx_alloc_init(proc_lck_grp, proc_lck_attr);
 	proc_klist_mlock = lck_mtx_alloc_init(proc_lck_grp, proc_lck_attr);
 	lck_mtx_init(&kernproc->p_mlock, proc_lck_grp, proc_lck_attr);
 	lck_mtx_init(&kernproc->p_fdmlock, proc_lck_grp, proc_lck_attr);
+	lck_mtx_init(&kernproc->p_ucred_mlock, proc_lck_grp, proc_lck_attr);
 	lck_spin_init(&kernproc->p_slock, proc_lck_grp, proc_lck_attr);
 #endif
 
@@ -499,6 +535,11 @@ bsd_init(void)
 	check_policy_init(policy_check_flags);
 #endif
 #endif /* MAC */
+
+	/* Initialize System Override call */
+	init_system_override();
+	
+	ulock_initialize();
 
 	/*
 	 * Create process 0.
@@ -533,8 +574,8 @@ bsd_init(void)
 	LIST_INSERT_HEAD(SESSHASH(0), &session0, s_hash);
 	proc_list_unlock();
 
-#if CONFIG_LCTX
-	kernproc->p_lctx = NULL;
+#if CONFIG_PERSONAS
+	kernproc->p_persona = NULL;
 #endif
 
 	kernproc->task = kernel_task;
@@ -543,7 +584,11 @@ bsd_init(void)
 	kernproc->p_flag = P_SYSTEM;
 	kernproc->p_lflag = 0;
 	kernproc->p_ladvflag = 0;
-	
+
+#if defined(__LP64__)
+	kernproc->p_flag |= P_LP64;
+#endif
+
 #if DEVELOPMENT || DEBUG
 	if (bootarg_disable_aslr)
 		kernproc->p_flag |= P_DISABLE_ASLR;
@@ -567,9 +612,10 @@ bsd_init(void)
 	bzero(&temp_cred, sizeof(temp_cred));
 	bzero(&temp_pcred, sizeof(temp_pcred));
 	temp_pcred.cr_ngroups = 1;
-
+	/* kern_proc, shouldn't call up to DS for group membership */
+	temp_pcred.cr_flags = CRF_NOMEMBERD;
 	temp_cred.cr_audit.as_aia_p = audit_default_aia_p;
-
+	
 	bsd_init_kprintf("calling kauth_cred_create\n");
 	/*
 	 * We have to label the temp cred before we create from it to
@@ -597,11 +643,9 @@ bsd_init(void)
 
 #if CONFIG_MACF
 	mac_cred_label_associate_kernel(kernproc->p_ucred);
-	mac_task_label_update_cred (kernproc->p_ucred, (struct task *) kernproc->task);
 #endif
 
 	/* Create the file descriptor table. */
-	filedesc0.fd_refcnt = 1+1;	/* +1 so shutdown will not _FREE_ZONE */
 	kernproc->p_fd = &filedesc0;
 	filedesc0.fd_cmask = cmask;
 	filedesc0.fd_knlistsize = -1;
@@ -626,7 +670,7 @@ bsd_init(void)
 	kernproc->p_sigacts = &sigacts0;
 
 	/*
-	 * Charge root for two  processes: init and mach_init.
+	 * Charge root for one process: launchd.
 	 */
 	bsd_init_kprintf("calling chgproccnt\n");
 	(void)chgproccnt(0, 1);
@@ -644,7 +688,7 @@ bsd_init(void)
 				&minimum,
 				(vm_size_t)bsd_pageable_map_size,
 				TRUE,
-				VM_FLAGS_ANYWHERE,
+				VM_FLAGS_ANYWHERE | VM_MAKE_TAG(VM_KERN_MEMORY_BSD),
 				&bsd_pageable_map);
 		if (ret != KERN_SUCCESS) 
 			panic("bsd_init: Failed to allocate bsd pageable map");
@@ -675,15 +719,15 @@ bsd_init(void)
 	bsd_init_kprintf("calling ubc_init\n");
 	ubc_init();
 
-	/*
-	 * Initialize device-switches.
-	 */
-	bsd_init_kprintf("calling devsw_init() \n");
-	devsw_init();
-
 	/* Initialize the file systems. */
 	bsd_init_kprintf("calling vfsinit\n");
 	vfsinit();
+
+#if CONFIG_PROC_UUID_POLICY
+	/* Initial proc_uuid_policy subsystem */
+	bsd_init_kprintf("calling proc_uuid_policy_init()\n");
+	proc_uuid_policy_init();
+#endif
 
 #if SOCKETS
 	/* Initialize per-CPU cache allocator */
@@ -744,19 +788,13 @@ bsd_init(void)
 	psem_cache_init();
 	bsd_init_kprintf("calling time_zone_slock_init\n");
 	time_zone_slock_init();
-	bsd_init_kprintf("calling select_wait_queue_init\n");
-	select_wait_queue_init();
+	bsd_init_kprintf("calling select_waitq_init\n");
+	select_waitq_init();
 
-	/* Stack snapshot facility lock */
-	stackshot_lock_init();
 	/*
 	 * Initialize protocols.  Block reception of incoming packets
 	 * until everything is ready.
 	 */
-	bsd_init_kprintf("calling sysctl_register_fixed\n");
-	sysctl_register_fixed(); 
-	bsd_init_kprintf("calling sysctl_mib_init\n");
-	sysctl_mib_init();
 #if NETWORKING
 	bsd_init_kprintf("calling dlil_init\n");
 	dlil_init();
@@ -769,6 +807,9 @@ bsd_init(void)
 	bsd_init_kprintf("calling domaininit\n");
 	domaininit();
 	iptap_init();
+#if FLOW_DIVERT
+	flow_divert_init();
+#endif	/* FLOW_DIVERT */
 #endif /* SOCKETS */
 
 	kernproc->p_fd->fd_cdir = NULL;
@@ -789,17 +830,22 @@ bsd_init(void)
 	memorystatus_init();
 #endif /* CONFIG_MEMORYSTATUS */
 
+	bsd_init_kprintf("calling acct_init\n");
+	acct_init();
+
 #ifdef GPROF
 	/* Initialize kernel profiling. */
 	kmstartup();
 #endif
 
-	/* kick off timeout driven events by calling first time */
-	thread_wakeup(&lbolt);
-	timeout(lightning_bolt, 0, hz);
+	bsd_init_kprintf("calling sysctl_mib_init\n");
+	sysctl_mib_init()
 
 	bsd_init_kprintf("calling bsd_autoconf\n");
 	bsd_autoconf();
+
+	bsd_init_kprintf("calling os_reason_init\n");
+	os_reason_init();
 
 #if CONFIG_DTRACE
 	dtrace_postinit();
@@ -814,6 +860,10 @@ bsd_init(void)
 #if NLOOP > 0
 	bsd_init_kprintf("calling loopattach\n");
 	loopattach();			/* XXX */
+#endif
+#if NGIF
+	/* Initialize gif interface (after lo0) */
+	gif_init();
 #endif
 
 #if PFLOG
@@ -832,20 +882,36 @@ bsd_init(void)
 	bsd_init_kprintf("calling net_init_run\n");
 	net_init_run();
 	
+#if CONTENT_FILTER
+	cfil_init();
+#endif
+
+#if PACKET_MANGLER
+	pkt_mnglr_init();
+#endif	
+
+#if NECP
+	/* Initialize Network Extension Control Policies */
+	necp_init();
+#endif
+
+	netagent_init();
+
 	/* register user tunnel kernel control handler */
 	utun_register_control();
+#if IPSEC
+	ipsec_register_control();
+#endif /* IPSEC */
 	netsrc_init();
 	nstat_init();
+	tcp_cc_init();
+#if MPTCP
+	mptcp_control_register();
+#endif /* MPTCP */
 #endif /* NETWORKING */
 
 	bsd_init_kprintf("calling vnode_pager_bootstrap\n");
 	vnode_pager_bootstrap();
-#if 0
-	/* XXX Hack for early debug stop */
-	printf("\nabout to sleep for 10 seconds\n");
-	IOSleep( 10 * 1000 );
-	/* Debugger("hello"); */
-#endif
 
 	bsd_init_kprintf("calling inittodr\n");
 	inittodr(0);
@@ -932,8 +998,7 @@ bsd_init(void)
 #endif /* CONFIG_IMAGEBOOT */
   
 	/* set initial time; all other resource data is  already zero'ed */
-	microtime(&kernproc->p_start);
-	kernproc->p_stats->p_start = kernproc->p_start;	/* for compat */
+	microtime_with_abstime(&kernproc->p_start, &kernproc->p_stats->ps_start);
 
 #if DEVFS
 	{
@@ -943,18 +1008,13 @@ bsd_init(void)
 	    devfs_kernel_mount(mounthere);
 	}
 #endif /* DEVFS */
-	
+
 	/* Initialize signal state for process 0. */
 	bsd_init_kprintf("calling siginit\n");
 	siginit(kernproc);
 
 	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
 	bsd_utaskbootstrap();
-
-#if defined(__LP64__)
-	kernproc->p_flag |= P_LP64;
-	printf("Kernel is LP64\n");
-#endif
 
 	pal_kernel_announce();
 
@@ -965,13 +1025,13 @@ bsd_init(void)
 		mountroot_post_hook();
 
 #if 0 /* not yet */
-	consider_zone_gc(FALSE);
+	consider_zone_gc();
 #endif
+
 
 	bsd_init_kprintf("done\n");
 }
 
-/* Called with kernel funnel held */
 void
 bsdinit_task(void)
 {
@@ -993,28 +1053,12 @@ bsdinit_task(void)
 	ut = (uthread_t)get_bsdthread_info(thread);
 
 	bsd_init_task = get_threadtask(thread);
-	init_task_failure_data[0] = 0;
 
 #if CONFIG_MACF
 	mac_cred_label_associate_user(p->p_ucred);
-	mac_task_label_update_cred (p->p_ucred, (struct task *) p->task);
 #endif
 	load_init_program(p);
 	lock_trace = 1;
-}
-
-void
-lightning_bolt(__unused void *dummy)
-{			
-	boolean_t 	funnel_state;
-
-	funnel_state = thread_funnel_set(kernel_flock, TRUE);
-
-	thread_wakeup(&lbolt);
-	timeout(lightning_bolt,0,hz);
-	klogwakeup();
-
-	(void) thread_funnel_set(kernel_flock, FALSE);
 }
 
 kern_return_t
@@ -1045,11 +1089,6 @@ setconf(void)
 	u_int32_t	flags;
 	kern_return_t	err;
 
-	/*
-	 * calls into IOKit can generate networking registrations
-	 * which needs to be under network funnel. Right thing to do
-	 * here is to drop the funnel alltogether and regrab it afterwards
-	 */
 	err = IOFindBSDRoot(rootdevice, sizeof(rootdevice), &rootdev, &flags);
 	if( err) {
 		printf("setconf: IOFindBSDRoot returned an error (%d);"
@@ -1083,7 +1122,7 @@ bsd_utaskbootstrap(void)
 	 * Clone the bootstrap process from the kernel process, without
 	 * inheriting either task characteristics or memory from the kernel;
 	 */
-	thread = cloneproc(TASK_NULL, kernproc, FALSE);
+	thread = cloneproc(TASK_NULL, COALITION_NULL, kernproc, FALSE, TRUE);
 
 	/* Hold the reference as it will be dropped during shutdown */
 	initproc = proc_find(1);				
@@ -1101,7 +1140,7 @@ bsd_utaskbootstrap(void)
 	ut = (struct uthread *)get_bsdthread_info(thread);
 	ut->uu_sigmask = 0;
 	act_set_astbsd(thread);
-	(void) thread_resume(thread);
+	task_clear_return_wait(get_threadtask(thread));
 }
 
 static void
@@ -1110,7 +1149,7 @@ parse_bsd_args(void)
 	char namep[16];
 	int msgbuf;
 
-	if (PE_parse_boot_argn("-s", namep, sizeof (namep)))
+	if ( PE_parse_boot_argn("-s", namep, sizeof (namep)))
 		boothowto |= RB_SINGLE;
 
 	if (PE_parse_boot_argn("-b", namep, sizeof (namep)))
@@ -1118,6 +1157,16 @@ parse_bsd_args(void)
 
 	if (PE_parse_boot_argn("-x", namep, sizeof (namep))) /* safe boot */
 		boothowto |= RB_SAFEBOOT;
+
+	if (PE_parse_boot_argn("-minimalboot", namep, sizeof(namep))) {
+		/*
+		 * -minimalboot indicates that we want userspace to be bootstrapped to a
+		 * minimal environment.  What constitutes minimal is up to the bootstrap
+		 * process.
+		 */
+		minimalboot = 1;
+	}
+
 
 	/* disable vnode_cache_is_authorized() by setting vnode_cache_defeat */
 	if (PE_parse_boot_argn("-vnode_cache_defeat", namep, sizeof (namep)))
@@ -1133,9 +1182,6 @@ parse_bsd_args(void)
 				sizeof (max_nbuf_headers))) {
 		customnbuf = 1;
 	}
-#if !defined(SECURE_KERNEL)
-	PE_parse_boot_argn("kmem", &setup_kmem, sizeof (setup_kmem));
-#endif
 
 #if CONFIG_MACF
 #if defined (__i386__) || defined (__x86_64__)
@@ -1145,11 +1191,47 @@ parse_bsd_args(void)
 
 	if (PE_parse_boot_argn("msgbuf", &msgbuf, sizeof (msgbuf))) {
 		log_setsize(msgbuf);
+		oslog_setsize(msgbuf);
 	}
 
 	if (PE_parse_boot_argn("-novfscache", namep, sizeof(namep))) {
 		nc_disabled = 1;
 	}
+
+#if CONFIG_JETSAM && (DEVELOPMENT || DEBUG)
+	if (PE_parse_boot_argn("-no_vnode_jetsam", namep, sizeof(namep)))
+		 bootarg_no_vnode_jetsam = 1;
+#endif /* CONFIG_JETSAM && (DEVELOPMENT || DEBUG) */
+
+
+
+#if PROC_REF_DEBUG
+	if (PE_parse_boot_argn("-disable_procref_tracking", namep, sizeof(namep))) {
+		proc_ref_tracking_disabled = 1;
+	}
+#endif
+
+#if OS_REASON_DEBUG
+	if (PE_parse_boot_argn("-disable_osreason_debug", namep, sizeof(namep))) {
+		os_reason_debug_disabled = 1;
+	}
+#endif
+
+	PE_parse_boot_argn("sigrestrict", &sigrestrict_arg, sizeof(sigrestrict_arg));
+
+#if DEVELOPMENT|| DEBUG
+	if (PE_parse_boot_argn("-no_sigsys", namep, sizeof(namep))) {
+		send_sigsys = false;
+	}
+#endif
+
+#if (DEVELOPMENT|| DEBUG)
+	if (PE_parse_boot_argn("alt-dyld", dyld_alt_path, sizeof(dyld_alt_path))) {
+        if (strlen(dyld_alt_path) > 0) {
+            use_alt_dyld = 1;
+        }
+	}
+#endif
 }
 
 void

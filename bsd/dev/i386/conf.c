@@ -47,7 +47,6 @@
 /* Prototypes that should be elsewhere: */
 extern dev_t	chrtoblk(dev_t dev);
 extern int	chrtoblk_set(int cdev, int bdev);
-extern int	iskmemdev(dev_t dev);
 
 struct bdevsw	bdevsw[] =
 {
@@ -92,7 +91,7 @@ struct bdevsw	bdevsw[] =
 	NO_BDEVICE,							/*23*/
 };
 
-int	nblkdev = sizeof (bdevsw) / sizeof (bdevsw[0]);
+const int nblkdev = sizeof(bdevsw) / sizeof(bdevsw[0]);
 
 extern struct tty *km_tty[];
 extern d_open_t		cnopen;
@@ -121,7 +120,6 @@ extern d_ioctl_t	volioctl;
 #endif
 
 extern d_open_t		cttyopen;
-extern d_close_t	cttyclose;
 extern d_read_t		cttyread;
 extern d_write_t	cttywrite;
 extern d_ioctl_t	cttyioctl;
@@ -135,12 +133,12 @@ extern d_ioctl_t	mmioctl;
 
 #include <pty.h>
 #if NPTY > 0
-extern struct tty *pt_tty[];
 extern d_open_t		ptsopen;
 extern d_close_t	ptsclose;
 extern d_read_t		ptsread;
 extern d_write_t	ptswrite;
 extern d_stop_t		ptsstop;
+extern d_select_t	ptsselect;
 extern d_open_t		ptcopen;
 extern d_close_t	ptcclose;
 extern d_read_t		ptcread;
@@ -173,6 +171,17 @@ extern d_write_t	fdesc_write;
 extern d_ioctl_t	fdesc_ioctl;
 extern d_select_t	fdesc_select;
 
+extern d_open_t 	oslog_streamopen;
+extern d_close_t	oslog_streamclose;
+extern d_read_t 	oslog_streamread;
+extern d_ioctl_t	oslog_streamioctl;
+extern d_select_t	oslog_streamselect;
+
+extern d_open_t 	oslogopen;
+extern d_close_t	oslogclose;
+extern d_select_t	oslogselect;
+extern d_ioctl_t	oslogioctl;
+
 #define nullopen	(d_open_t *)&nulldev
 #define nullclose	(d_close_t *)&nulldev
 #define nullread	(d_read_t *)&nulldev
@@ -202,9 +211,9 @@ struct cdevsw	cdevsw[] =
     },
     NO_CDEVICE,								/* 1*/
     {
-	cttyopen,	cttyclose,	cttyread,	cttywrite,	/* 2*/
+	cttyopen,	nullclose,	cttyread,	cttywrite,	/* 2*/
 	cttyioctl,	nullstop,	nullreset,	0,		cttyselect,
-	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TTY | D_TRACKCLOSE
+	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TTY
     },
     {
 	nullopen,	nullclose,	mmread,		mmwrite,	/* 3*/
@@ -213,7 +222,7 @@ struct cdevsw	cdevsw[] =
     },
     {
 	ptsopen,	ptsclose,	ptsread,	ptswrite,	/* 4*/
-	ptyioctl,	ptsstop,	nullreset,	pt_tty,		ttselect,
+	ptyioctl,	ptsstop,	nullreset,	0,		ptsselect,
 	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	D_TTY
     },
     {
@@ -226,8 +235,16 @@ struct cdevsw	cdevsw[] =
 	logioctl,	eno_stop,	nullreset,	0,		logselect,
 	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
     },
-    NO_CDEVICE,								/* 7*/
-    NO_CDEVICE,								/* 8*/
+    {
+	oslogopen,	oslogclose,	eno_rdwrt,	eno_rdwrt,	/* 7*/
+	oslogioctl,	eno_stop,	nullreset,	0,		oslogselect,
+	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
+    },
+    {
+	oslog_streamopen,	oslog_streamclose,	oslog_streamread,	eno_rdwrt,	/* 8*/
+	oslog_streamioctl,	eno_stop,		nullreset,		0,		oslog_streamselect,
+	eno_mmap,		eno_strat,		eno_getc,		eno_putc,	0
+    },
     NO_CDEVICE,								/* 9*/
     NO_CDEVICE,								/*10*/
     NO_CDEVICE,								/*11*/
@@ -287,9 +304,9 @@ struct cdevsw	cdevsw[] =
 	eno_mmap,	eno_strat,	eno_getc,	eno_putc,	0
     },
 };
-int	nchrdev = sizeof (cdevsw) / sizeof (cdevsw[0]);
+const int nchrdev = sizeof(cdevsw) / sizeof(cdevsw[0]);
 
-uint64_t cdevsw_flags[sizeof (cdevsw) / sizeof (cdevsw[0])];
+uint64_t cdevsw_flags[sizeof(cdevsw) / sizeof(cdevsw[0])];
 
 #include	<sys/vnode.h> /* for VCHR and VBLK */
 /*
@@ -308,7 +325,7 @@ isdisk(dev_t dev, int type)
 		}
 		/* FALL THROUGH */
 	case VBLK:
-		if ((D_TYPEMASK & bdevsw[maj].d_type) == D_DISK) {
+		if (bdevsw[maj].d_type == D_DISK) {
 			return (1);
 		}
 		break;
@@ -370,10 +387,3 @@ chrtoblk_set(int cdev, int bdev)
 	return 0;
 }
 
-/*
- * Returns true if dev is /dev/mem or /dev/kmem.
- */
-int iskmemdev(dev_t dev)
-{
-	return (major(dev) == 3 && minor(dev) < 2);
-}

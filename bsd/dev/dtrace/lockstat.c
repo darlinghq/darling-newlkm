@@ -55,7 +55,7 @@
 /*
  * Hot patch values, x86
  */
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 #define	NOP	0x90
 #define	RET	0xc3
 #define LOCKSTAT_AFRAMES 1
@@ -72,7 +72,7 @@ typedef struct lockstat_probe {
 
 lockstat_probe_t lockstat_probes[] =
 {
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 	/* Only provide implemented probes for each architecture  */
 	{ LS_LCK_MTX_LOCK,	LSA_ACQUIRE,	LS_LCK_MTX_LOCK_ACQUIRE, DTRACE_IDNONE },
 	{ LS_LCK_MTX_LOCK,	LSA_SPIN,	LS_LCK_MTX_LOCK_SPIN, DTRACE_IDNONE },
@@ -119,21 +119,21 @@ lockstat_probe_t lockstat_probes[] =
 dtrace_id_t lockstat_probemap[LS_NPROBES];
 
 #if CONFIG_DTRACE
+#if defined(__x86_64__)
 extern void lck_mtx_lock_lockstat_patch_point(void);
 extern void lck_mtx_try_lock_lockstat_patch_point(void);
 extern void lck_mtx_try_lock_spin_lockstat_patch_point(void);
 extern void lck_mtx_unlock_lockstat_patch_point(void);
 extern void lck_mtx_lock_ext_lockstat_patch_point(void);
 extern void lck_mtx_ext_unlock_lockstat_patch_point(void);
-
-extern void lck_rw_done_release1_lockstat_patch_point(void);
-extern void lck_rw_done_release2_lockstat_patch_point(void);
 extern void lck_rw_lock_shared_lockstat_patch_point(void);
 extern void lck_rw_lock_exclusive_lockstat_patch_point(void);
 extern void lck_rw_lock_shared_to_exclusive_lockstat_patch_point(void);
 extern void lck_rw_try_lock_shared_lockstat_patch_point(void);
 extern void lck_rw_try_lock_exclusive_lockstat_patch_point(void);
 extern void lck_mtx_lock_spin_lockstat_patch_point(void);
+#endif
+
 #endif /* CONFIG_DTRACE */
 
 typedef struct lockstat_assembly_probe {
@@ -145,7 +145,7 @@ typedef struct lockstat_assembly_probe {
 	lockstat_assembly_probe_t assembly_probes[] =
 	{
 #if CONFIG_DTRACE
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 		/*
 		 * On x86 these points are better done via hot patches, which ensure
 		 * there is zero overhead when not in use.  On x86 these patch points
@@ -165,17 +165,21 @@ typedef struct lockstat_assembly_probe {
 		{ LS_LCK_RW_TRY_LOCK_EXCL_ACQUIRE,	(vm_offset_t *) lck_rw_try_lock_exclusive_lockstat_patch_point },
 		{ LS_LCK_MTX_LOCK_SPIN_ACQUIRE,		(vm_offset_t *) lck_mtx_lock_spin_lockstat_patch_point },
 #endif
+		/* No assembly patch points for ARM */
 #endif /* CONFIG_DTRACE */
 		{ LS_LCK_INVALID, NULL }
 };
+
+
 /*
- * Hot patch switches back and forth the probe points between NOP and RET.
- * The active argument indicates whether the probe point will turn on or off.
+ * APPLE NOTE:
+ * Hot patch is used to manipulate probe points by swapping between
+ * no-op and return instructions.
+ * The active flag indicates whether the probe point will turn on or off.
  *	on == plant a NOP and thus fall through to the probe call
  *     off == plant a RET and thus avoid the probe call completely
- * The lsap_probe identifies which probe we will patch.
+ * The ls_probe identifies which probe we will patch.
  */
-#if defined(__APPLE__)
 static
 void lockstat_hot_patch(boolean_t active, int ls_probe)
 {
@@ -188,7 +192,7 @@ void lockstat_hot_patch(boolean_t active, int ls_probe)
 	 */
 	for (i = 0; assembly_probes[i].lsap_patch_point; i++) {
 		if (ls_probe == assembly_probes[i].lsap_probe)
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
 		{			
 			uint8_t instr;
 			instr = (active ? NOP : RET );
@@ -198,14 +202,15 @@ void lockstat_hot_patch(boolean_t active, int ls_probe)
 #endif
 	} /* for */
 }
-#endif /* __APPLE__*/
-
 
 void (*lockstat_probe)(dtrace_id_t, uint64_t, uint64_t,
 				    uint64_t, uint64_t, uint64_t);
 
-#if defined(__APPLE__)
-/* This wrapper is used by arm assembler hot patched probes */
+
+/*
+ * APPLE NOTE:
+ * This wrapper is used only by assembler hot patched probes.
+ */
 void
 lockstat_probe_wrapper(int probe, uintptr_t lp, int rwflag)
 {
@@ -216,8 +221,6 @@ lockstat_probe_wrapper(int probe, uintptr_t lp, int rwflag)
 		(*lockstat_probe)(id, (uintptr_t)lp, (uint64_t)rwflag, 0,0,0);
 	}
 }
-#endif /* __APPLE__ */
-    
 
 static dev_info_t	*lockstat_devi;	/* saved in xxattach() for xxinfo() */
 static dtrace_provider_id_t lockstat_id;

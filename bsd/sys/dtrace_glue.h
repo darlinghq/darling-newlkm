@@ -32,7 +32,6 @@
 #ifdef KERNEL_BUILD
 
 #include <libkern/libkern.h>
-#include <kern/lock.h>
 #include <kern/locks.h>
 #include <kern/thread_call.h>
 #include <kern/thread.h>
@@ -99,7 +98,13 @@ int suword8(user_addr_t, uint8_t value);
  * cpuvar
  */
 extern lck_mtx_t cpu_lock;
+extern lck_mtx_t cyc_lock;
 extern lck_mtx_t mod_lock;
+
+/*
+ * wrap_timer_call: wrapper of timer_call for cyclic timers.
+ */
+struct wrap_timer_call;
 
 /*
  * Per-CPU data.
@@ -112,6 +117,9 @@ typedef struct dtrace_cpu {
 	hrtime_t        cpu_dtrace_chillmark;      /* DTrace: chill mark time */
 	hrtime_t        cpu_dtrace_chilled;        /* DTrace: total chill time */
 	boolean_t       cpu_dtrace_invop_underway; /* DTrace gaurds against invalid op re-entrancy */
+
+	/* Local cyclic timers on this CPU */
+	LIST_HEAD(cyc_list_head, wrap_timer_call) cpu_cyc_list;
 } dtrace_cpu_t;
 
 extern dtrace_cpu_t *cpu_list;
@@ -135,12 +143,13 @@ typedef struct cpu_core {
 
 extern cpu_core_t *cpu_core;
 
+extern unsigned int dtrace_max_cpus;		/* max number of enabled cpus */
+#define NCPU	    dtrace_max_cpus
 
 extern int cpu_number(void); /* From #include <kern/cpu_number.h>. Called from probe context, must blacklist. */
 
 #define	CPU		(&(cpu_list[cpu_number()]))	/* Pointer to current CPU */
 #define	CPU_ON_INTR(cpup) ml_at_interrupt_context() /* always invoked on current cpu */
-#define NCPU	real_ncpus
 
 /*
  * Routines used to register interest in cpu's being added to or removed
@@ -178,9 +187,6 @@ extern void unregister_cpu_setup_func(cpu_setup_func_t *, void *);
 #define	CPU_DTRACE_KPRIV	0x0080	/* DTrace fault: bad kernel access */
 #define	CPU_DTRACE_UPRIV	0x0100	/* DTrace fault: bad user access */
 #define	CPU_DTRACE_TUPOFLOW	0x0200	/* DTrace fault: tuple stack overflow */
-#if defined(__sparc)
-//#define	CPU_DTRACE_FAKERESTORE	0x0400	/* pid provider hint to getreg */
-#endif
 #define CPU_DTRACE_USTACK_FP	0x0400  /* pid provider hint to ustack() */
 #define	CPU_DTRACE_ENTRY	0x0800	/* pid provider hint to ustack() */
 #define CPU_DTRACE_BADSTACK 0x1000  /* DTrace fault: bad stack */
@@ -207,7 +213,7 @@ typedef struct modctl {
 	char		mod_modname[KMOD_MAX_NAME];
 	int		mod_loadcnt;
 	char		mod_loaded;
-	char		mod_flags;	// See flags below
+	uint16_t	mod_flags;	// See flags below
 	int		mod_nenabled;	// # of enabled DTrace probes in module
 	vm_address_t	mod_address;	// starting address (of Mach-o header blob)
 	vm_size_t	mod_size;	// total size (of blob)
@@ -216,13 +222,15 @@ typedef struct modctl {
 } modctl_t;
 
 /* Definitions for mod_flags */
-#define MODCTL_IS_MACH_KERNEL			0x01 // This module represents /mach_kernel
-#define MODCTL_HAS_KERNEL_SYMBOLS		0x02 // Kernel symbols (nlist) are available
-#define MODCTL_FBT_PROBES_PROVIDED      	0x04 // fbt probes have been provided
-#define MODCTL_FBT_INVALID			0x08 // Module is invalid for fbt probes
-#define MODCTL_SDT_PROBES_PROVIDED		0x10 // sdt probes have been provided
-#define MODCTL_SDT_INVALID			0x20 // Module is invalid for sdt probes
-#define MODCTL_HAS_UUID				0x40 // Module has UUID
+#define MODCTL_IS_MACH_KERNEL			0x01  // This module represents /mach_kernel
+#define MODCTL_HAS_KERNEL_SYMBOLS		0x02  // Kernel symbols (nlist) are available
+#define MODCTL_FBT_PROBES_PROVIDED      	0x04  // fbt probes have been provided
+#define MODCTL_FBT_INVALID			0x08  // Module is invalid for fbt probes
+#define MODCTL_SDT_PROBES_PROVIDED		0x10  // sdt probes have been provided
+#define MODCTL_SDT_INVALID			0x20  // Module is invalid for sdt probes
+#define MODCTL_HAS_UUID				0x40  // Module has UUID
+#define MODCTL_FBT_PRIVATE_PROBES_PROVIDED	0x80  // fbt private probes have been provided
+#define MODCTL_FBT_PROVIDE_PRIVATE_PROBES	0x100 // fbt provider must provide private probes
 
 /* Simple/singular mod_flags accessors */
 #define MOD_IS_MACH_KERNEL(mod)			(mod->mod_flags & MODCTL_IS_MACH_KERNEL)
@@ -233,9 +241,12 @@ typedef struct modctl {
 #define MOD_SDT_PROBES_PROVIDED(mod)   		(mod->mod_flags & MODCTL_SDT_PROBES_PROVIDED)
 #define MOD_SDT_INVALID(mod)			(mod->mod_flags & MODCTL_SDT_INVALID)
 #define MOD_HAS_UUID(mod)			(mod->mod_flags & MODCTL_HAS_UUID)
+#define MOD_FBT_PRIVATE_PROBES_PROVIDED(mod)	(mod->mod_flags & MODCTL_FBT_PRIVATE_PROBES_PROVIDED)
+#define MOD_FBT_PROVIDE_PRIVATE_PROBES(mod)	(mod->mod_flags & MODCTL_FBT_PROVIDE_PRIVATE_PROBES)
 
 /* Compound accessors */
-#define MOD_FBT_DONE(mod)			(MOD_FBT_PROBES_PROVIDED(mod) || MOD_FBT_INVALID(mod))
+#define MOD_FBT_PRIVATE_PROBES_DONE(mod)	(MOD_FBT_PRIVATE_PROBES_PROVIDED(mod) || !MOD_FBT_PROVIDE_PRIVATE_PROBES(mod))
+#define MOD_FBT_DONE(mod)			((MOD_FBT_PROBES_PROVIDED(mod) && MOD_FBT_PRIVATE_PROBES_DONE(mod)) || MOD_FBT_INVALID(mod))
 #define MOD_SDT_DONE(mod)			(MOD_SDT_PROBES_PROVIDED(mod) || MOD_SDT_INVALID(mod))
 #define MOD_SYMBOLS_DONE(mod)			(MOD_FBT_DONE(mod) && MOD_SDT_DONE(mod))
 
@@ -303,6 +314,8 @@ typedef struct cyc_omni_handler {
 	void *cyo_arg;
 } cyc_omni_handler_t;
 
+extern void dtrace_install_cpu_hooks(void);
+
 extern cyclic_id_t cyclic_add(cyc_handler_t *, cyc_time_t *);
 extern void cyclic_remove(cyclic_id_t);
 
@@ -353,11 +366,6 @@ typedef uint_t minor_t;
 typedef struct __dev_info *dev_info_t;
 
 extern void ddi_report_dev(dev_info_t *);
-extern int ddi_soft_state_init(void **, size_t, size_t);
-extern void *ddi_get_soft_state(void *, int);
-extern int ddi_soft_state_free(void *, int);
-extern int ddi_soft_state_zalloc(void *, int);
-extern void ddi_soft_state_fini(void **);
 
 int ddi_getprop(dev_t dev, dev_info_t *dip, int flags, const char *name, int defvalue);
 
@@ -497,17 +505,28 @@ extern void vmem_free(vmem_t *vmp, void *vaddr, size_t size);
  * Atomic
  */
 
-static inline void atomic_add_32( uint32_t *theValue, int32_t theAmount )
+static inline uint32_t atomic_add_32( uint32_t *theAddress, int32_t theAmount )
 {
-	(void)OSAddAtomic( theAmount, theValue );
+	return OSAddAtomic( theAmount, theAddress );
 }
 
 #if defined(__i386__) || defined(__x86_64__)
-static inline void atomic_add_64( uint64_t *theValue, int64_t theAmount )
+static inline void atomic_add_64( uint64_t *theAddress, int64_t theAmount )
 {
-	(void)OSAddAtomic64( theAmount, (SInt64 *)theValue );
+	(void)OSAddAtomic64( theAmount, (SInt64 *)theAddress );
 }
 #endif
+
+static inline uint32_t atomic_and_32(uint32_t *addr, uint32_t mask)
+{
+	return OSBitAndAtomic(mask, addr);
+}
+
+static inline uint32_t atomic_or_32(uint32_t *addr, uint32_t mask)
+{
+	return OSBitOrAtomic(mask, addr);
+}
+
 
 /*
  * Miscellaneous
@@ -524,13 +543,13 @@ extern volatile int panicwait; /* kern/debug.c */
 
 #define	IS_P2ALIGNED(v, a) ((((uintptr_t)(v)) & ((uintptr_t)(a) - 1)) == 0)
 
-extern void delay( int ); /* kern/clock.h */
-
 extern int vuprintf(const char *, va_list);
 
 extern hrtime_t dtrace_abs_to_nano(uint64_t);
 
 __private_extern__ const char * strstr(const char *, const char *);
+
+#define DTRACE_NCLIENTS 32
 
 #undef proc_t
 

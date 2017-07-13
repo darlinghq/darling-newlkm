@@ -188,6 +188,7 @@ strcmp(
  */
 
 // ARM implementation in ../arm/strncmp.s
+// ARM64 implementation in ../arm64/strncmp.s
 int
 strncmp(
         const char *s1,
@@ -262,7 +263,6 @@ strncasecmp(const char *s1, const char *s2, size_t n)
  * Deprecation Warning: 
  *	strcpy() is being deprecated. Please use strlcpy() instead.
  */
-#if !CONFIG_EMBEDDED
 char *
 strcpy(
         char *to,
@@ -275,7 +275,6 @@ strcpy(
 
         return ret;
 }
-#endif
 
 /*
  * Abstract:
@@ -286,7 +285,7 @@ strcpy(
  *      to the "to" string.
  */
 
-// ARM implementation in ../arm/strncpy.s
+// ARM and ARM64 implementation in ../arm/strncpy.c
 char *
 strncpy(
 	char *s1, 
@@ -382,7 +381,8 @@ atoi_term(
  */
 
 // ARM implementation in ../arm/strnlen.s
-size_t 
+// ARM64 implementation in ../arm64/strnlen.s
+size_t
 strnlen(const char *s, size_t max) {
 	const char *es = s + max, *p = s;
 	while(*p && p != es) 
@@ -432,7 +432,6 @@ itoa(
  * Deprecation Warning:
  *	strcat() is being deprecated. Please use strlcat() instead.
  */
-#if !CONFIG_EMBEDDED
 char *
 strcat(
 	char *dest,
@@ -446,7 +445,6 @@ strcat(
 		;
 	return (old);
 }
-#endif
 
 /*
  * Appends src to string dst of size siz (unlike strncat, siz is the
@@ -489,7 +487,7 @@ strlcat(char *dst, const char *src, size_t siz)
  * Returns strlen(src); if retval >= siz, truncation occurred.
  */
 
-// ARM implementation in ../arm/strlcpy.s
+// ARM and ARM64 implementation in ../arm/strlcpy.c
 size_t
 strlcpy(char *dst, const char *src, size_t siz)
 {
@@ -559,15 +557,37 @@ STRDUP(const char *string, int type)
 
 /*
  * Return TRUE(1) if string 2 is a prefix of string 1.
- */     
-int       
-strprefix(register const char *s1, register const char *s2)
-{               
-        register int    c;
-                
-        while ((c = *s2++) != '\0') {
-            if (c != *s1++) 
-                return (0);
-        }       
-        return (1);
+ */
+int
+strprefix(const char *s1, const char *s2)
+{
+	int c;
+
+	while ((c = *s2++) != '\0') {
+		if (c != *s1++)
+			return (0);
+	}
+	return (1);
 }
+
+char *
+strnstr(char *s, const char *find, size_t slen)
+{
+  char c, sc;
+  size_t len;
+  
+  if ((c = *find++) != '\0') {
+    len = strlen(find);
+    do {
+      do {
+        if ((sc = *s++) == '\0' || slen-- < 1)
+          return (NULL);
+      } while (sc != c);
+      if (len > slen)
+        return (NULL);
+    } while (strncmp(s, find, len) != 0);
+    s--;
+  }
+  return (s);
+}
+
