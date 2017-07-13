@@ -1972,8 +1972,10 @@ mach_port_set_attributes(
 			}
 		}
 #else
+#ifndef __DARLING__
 		if (release_imp_task != IIT_NULL)
 			ipc_importance_task_release(release_imp_task);
+#endif
 #endif /* IMPORTANCE_INHERITANCE */
 
 		break;

@@ -39,6 +39,7 @@ mig(osfmk/mach/memory_object_default.defs)
 mig(osfmk/mach/memory_object.defs)
 mig(osfmk/mach/processor.defs)
 mig(osfmk/mach/processor_set.defs)
+mig(osfmk/mach/resource_notify.defs)
 mig(osfmk/mach/task_access.defs)
 mig(osfmk/mach/task.defs)
 mig(osfmk/mach/thread_act.defs)
@@ -56,6 +57,8 @@ mig(osfmk/mach/upl.defs)
 mig(osfmk/mach/mach_notify.defs)
 mig(osfmk/mach/vm32_map.defs)
 mig(osfmk/mach/host_notify_reply.defs)
+mig(osfmk/mach/mach_voucher_attr_control.defs)
+mig(osfmk/mach/mach_voucher.defs)
 
 file(RELATIVE_PATH MIGDIR_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 
@@ -65,10 +68,13 @@ add_custom_target(lkm_generate
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/host_notify_reply.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/vm32_map_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_notify.h
+		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_voucher_attr_control.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_control.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/memory_object_default_server.h
+		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_voucher_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/vm_map.h
+		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/resource_notify.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/exc_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/mach_exc_server.h
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/mach/notify_server.h

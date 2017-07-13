@@ -388,6 +388,7 @@ static inline void invlpg(uintptr_t addr)
 	__asm__  volatile("invlpg (%0)" :: "r" (addr) : "memory");
 }
 
+#ifndef __DARLING__
 static inline void clac(void)
 {
 	__asm__  volatile("clac");
@@ -397,6 +398,7 @@ static inline void stac(void)
 {
 	__asm__  volatile("stac");
 }
+#endif
 
 /*
  * Access to machine-specific registers (available on 586 and better only)

@@ -303,7 +303,7 @@ struct vm_map_entry {
 	/* boolean_t */ vme_resilient_codesign:1,
 	/* boolean_t */ vme_resilient_media:1,
 	/* boolean_t */ vme_atomic:1, /* entry cannot be split/coalesced */
-		__unused:5;
+		__xunused:5;
 ;
 
 	unsigned short		wired_count;	/* can be paged if = 0 */

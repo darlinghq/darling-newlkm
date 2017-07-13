@@ -88,8 +88,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define semaphore               xnu_semaphore
 
 // osfmk/kern/kern_types.h
-#undef wait_queue_t
-#define wait_queue_t            xnu_wait_queue_t
+#undef waitq_t
+#define waitq_t            xnu_wait_queue_t
 
 
 // bsd/sys/_structs.h
@@ -113,7 +113,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define uthread                 compat_uthread
 #define uthread_t               compat_uthread_t
 
+struct compat_proc;
 #define proc                    compat_proc
 
+
+#undef fsid_t
+#define fsid_t xnu_fsid_
 
 #endif // DUCT__PRE_XNU_TYPES_H

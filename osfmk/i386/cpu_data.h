@@ -570,9 +570,11 @@ _mp_enable_preemption_no_check(void) {
 }
 
 #ifdef XNU_KERNEL_PRIVATE
+#ifndef disable_preemption
 #define disable_preemption() disable_preemption_internal()
 #define enable_preemption() enable_preemption_internal()
 #define MACHINE_PREEMPTION_MACROS (1)
+#endif
 #endif
 
 

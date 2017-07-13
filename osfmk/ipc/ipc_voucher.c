@@ -26,6 +26,12 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#include <duct/duct_kern_printf.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/notify.h>
@@ -44,6 +50,10 @@
 #include <mach/mach_voucher_attr_control_server.h>
 #include <mach/mach_host_server.h>
 #include <voucher/ipc_pthread_priority_types.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  * Sysctl variable; enable and disable tracing of voucher contents

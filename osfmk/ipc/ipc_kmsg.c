@@ -2836,12 +2836,12 @@ ipc_kmsg_copyin_ool_ports_descriptor(
 
     /* calculate length of data in bytes, rounding up */
 
-    if (os_mul_overflow(count, sizeof(mach_port_t), &ports_length)) {
+    if (os_mul_overflow((unsigned long)count, sizeof(mach_port_t), &ports_length)) {
         *mr = MACH_SEND_TOO_LARGE;
         return NULL;
     }
 
-    if (os_mul_overflow(count, sizeof(mach_port_name_t), &names_length)) {
+    if (os_mul_overflow((unsigned long)count, sizeof(mach_port_name_t), &names_length)) {
         *mr = MACH_SEND_TOO_LARGE;
         return NULL;
     }
@@ -3049,7 +3049,7 @@ ipc_kmsg_copyin_body(
 	    }
 	    break;
 	case MACH_MSG_PORT_DESCRIPTOR:
-		if (os_add_overflow(total_ool_port_count, 1, &total_ool_port_count)) {
+		if (os_add_overflow(total_ool_port_count, (unsigned int)1, &total_ool_port_count)) {
 			/* Overflow detected */
 			mr = MACH_SEND_TOO_LARGE;
 			goto clean_message;

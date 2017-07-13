@@ -73,6 +73,7 @@
 #include <darling/task_registry.h>
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
+#include <duct/duct_kern_printf.h>
 #endif
 
 #include <mach/port.h>
@@ -112,7 +113,7 @@ extern char	*proc_name_address(void *p);
 #endif
 
 #if defined (__DARLING__)
-extern xnu_wait_queue_t duct__wait_queue_walkup (xnu_wait_queue_t waitq, event64_t event);
+extern struct waitq* duct__wait_queue_walkup (struct waitq* waitq, event64_t event);
 
 extern int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, int sync, void * key);
 
@@ -616,7 +617,7 @@ extern void ipc_mqueue_override_send(
 		}
 		printf("%s[%d] could not override mqueue (dst:%d) with 0x%x: "
 		       "queue slots are full, but there are no messages!\n",
-		       proc_name_address(current_task()->bsd_info),
+		       /*proc_name_address(current_task()->bsd_info)*/ "???",
 		       task_pid(current_task()), dst_pid, override);
 	}
 #endif
@@ -717,7 +718,7 @@ ipc_mqueue_post(
 		mach_msg_size_t msize;
 
 #if defined (__DARLING__)
-                assert (wait_queue_held (waitq));
+                assert (waitq_held (waitq));
 
                 // _wait_queue_select64_one
                 struct waitq*        walked_waitq        = duct__wait_queue_walkup (waitq, IPC_MQUEUE_RECEIVE);
@@ -875,10 +876,12 @@ ipc_mqueue_post(
 #if defined (__DARLING__)
         // queue message and break anyways as we don't know how to handle this case yet
         printk (KERN_NOTICE "- BUG: don't know how to handle\n");
+#endif
+#if 0
         ipc_kmsg_enqueue_macro (&mqueue->imq_messages, kmsg);
         thread_unlock (receiver);
         break;
-#else
+#endif
 		/*
 		 * Otherwise, this thread needs to be released to run
 		 * and handle its error without getting the message.  We
@@ -890,7 +893,6 @@ ipc_mqueue_post(
 
 		thread_unlock(receiver);
 		splx(th_spl);
-#endif
 
 	}
 
@@ -1089,7 +1091,7 @@ ipc_mqueue_receive_on_thread(
 
 	/* no need to reserve anything: we never prepost to anyone */
 
-        printk (KERN_NOTICE "- mqueue preposts empty: %d\n", queue_empty (q));
+     //   printk (KERN_NOTICE "- mqueue preposts empty: %d\n", queue_empty (q));
 	if (!imq_valid(mqueue)) {
 		/* someone raced us to destroy this mqueue/port! */
 		imq_unlock(mqueue);
@@ -1194,7 +1196,7 @@ ipc_mqueue_receive_on_thread(
 
         // printk (KERN_NOTICE "- thread: 0x%p, current_thread: 0x%p\n", thread, current_thread ());
         printk ( KERN_NOTICE "- &mqueue->data.port.linux_waitqh: 0x%p\n",
-                 &mqueue->data.port.wait_queue.linux_waitqh );
+                 &mqueue->data.port.waitq.linux_waitqh );
 
         printk (KERN_NOTICE "- ipc_mqueue_receive_on_thread (0x%p) to wait %ld jiffies\n", mqueue, jiffies);
 
@@ -1211,7 +1213,7 @@ ipc_mqueue_receive_on_thread(
 
         for (;;) {
                 // WC - todo handle interruptible
-                prepare_to_wait (&mqueue->data.port.wait_queue.linux_waitqh, &lwait, TASK_INTERRUPTIBLE);
+                prepare_to_wait (&mqueue->data.port.waitq.linux_waitqh, &lwait, TASK_INTERRUPTIBLE);
 
                 printk ( KERN_NOTICE "- thread->event: 0x%llx, event_ready: 0x%llx\n",
                          thread->wait_event, DUCT_EVENT64_READY );
@@ -1235,7 +1237,7 @@ ipc_mqueue_receive_on_thread(
                 imq_lock (mqueue);
                 thread_lock (thread);
         }
-        finish_wait (&mqueue->data.port.wait_queue.linux_waitqh, &lwait);
+        finish_wait (&mqueue->data.port.waitq.linux_waitqh, &lwait);
 
         // wresult     = THREAD_AWAKENED;
 #else

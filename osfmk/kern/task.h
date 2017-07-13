@@ -118,7 +118,9 @@
 #include <kern/exception.h>
 #include <kern/locks.h>
 #include <security/_label.h>
+#ifndef __DARLING__
 #include <ipc/ipc_port.h>
+#endif
 
 #include <kern/thread.h>
 #include <mach/coalition.h>

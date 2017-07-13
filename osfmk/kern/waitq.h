@@ -214,19 +214,29 @@ extern void waitq_invalidate_locked(struct waitq *wq);
 #define waitq_empty(wq) \
 	(queue_empty(&(wq)->waitq_queue))
 
-
+#ifndef __DARLING__
 #define waitq_held(wq) \
 	(hw_lock_held(&(wq)->waitq_interlock))
 
 #define waitq_lock_try(wq) \
 	(hw_lock_try(&(wq)->waitq_interlock))
+#else
 
+#define waitq_held(wq)         spin_is_locked ((spinlock_t *) &(wq)->waitq_interlock)
+#define waitq_lock_try(wq)     spin_trylock ((spinlock_t *) &(wq)->waitq_interlock)
+
+#endif
 
 #define waitq_wait_possible(thread) \
 	((thread)->waitq == NULL)
 
+#ifndef __DARLING__
 extern void waitq_lock(struct waitq *wq);
 extern void waitq_unlock(struct waitq *wq);
+#else
+#define waitq_lock(wq)         spin_lock ((spinlock_t *) &(wq)->waitq_interlock)
+#define waitq_unlock(wq)       spin_unlock ((spinlock_t *) &(wq)->waitq_interlock)
+#endif
 
 #define waitq_set_lock(wqs)		waitq_lock(&(wqs)->wqset_q)
 #define waitq_set_unlock(wqs)		waitq_unlock(&(wqs)->wqset_q)

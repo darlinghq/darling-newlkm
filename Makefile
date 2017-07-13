@@ -22,6 +22,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-fsigned-bitfields \
 	-fno-strict-aliasing \
 	-fno-keep-inline-functions \
+	-Wno-unknown-pragmas \
 	-DAPPLE \
 	-DKERNEL \
 	-DKERNEL_PRIVATE \
@@ -87,6 +88,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-DCONFIG_HFS_STD \
 	-DCONFIG_HFS_TRIM \
 	-DCONFIG_TASK_MAX=512 \
+	-DCONFIG_IPC_TABLE_ENTRIES_STEPS=256 \
 	-DNAMEDSTREAMS \
 	-DCONFIG_VOLFS \
 	-DCONFIG_IMGSRC_ACCESS \
@@ -158,9 +160,7 @@ CFLAGS_notify_user.o := $(miggen_cflags)
 ifneq ($(KERNELRELEASE),)
 	obj-m := darling-mach.o
 	darling-mach-objs := osfmk/ipc/ipc_entry.o \
-		osfmk/ipc/flipc.o \
 		osfmk/ipc/ipc_hash.o \
-		osfmk/ipc/ipc_importance.o \
 		osfmk/ipc/ipc_space.o \
 		osfmk/ipc/ipc_kmsg.o \
 		osfmk/ipc/ipc_notify.o \
