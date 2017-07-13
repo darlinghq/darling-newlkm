@@ -199,7 +199,7 @@ wait_queue_unlink_all_nofree(
 }
 #endif
 
-
+#if 0
 void
 mach_notify_dead_name(
         ipc_port_t    port,
@@ -246,6 +246,7 @@ mach_notify_send_possible(
 {
         kprintf("not implemented: mach_notify_send_possible()\n");
 }
+#endif
 
 // osfmk/kern/counters.c
 

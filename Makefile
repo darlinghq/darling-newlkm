@@ -151,6 +151,7 @@ CFLAGS_processor_set_server.o := $(miggen_cflags)
 CFLAGS_vm32_map_server.o := $(miggen_cflags)
 CFLAGS_device_server.o := $(miggen_cflags)
 CFLAGS_clock_reply_user.o := $(miggen_cflags)
+CFLAGS_notify_user.o := $(miggen_cflags)
 
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
@@ -265,6 +266,7 @@ ifneq ($(KERNELRELEASE),)
 		$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o \
 		$(MIGDIR_REL)/osfmk/mach/thread_act_server.o \
 		$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o \
+		$(MIGDIR_REL)/osfmk/mach/notify_user.o \
 		$(MIGDIR_REL)/osfmk/device/device_server.o \
 		$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o \
 		$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o \
