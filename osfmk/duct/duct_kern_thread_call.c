@@ -61,6 +61,7 @@ extern void
 duct_thread_destroy(thread_t thread);
 
 extern task_t kernel_task;
+static thread_t my_thread;
 
 /*
  *  thread_call_initialize:
@@ -99,23 +100,24 @@ thread_call_deinitialize(void)
 static void
 thread_call_wq_init(struct work_struct* work)
 {
-	// Register self as a XNU thread, so that IPC works from this thread
-	thread_t thread;
-	duct_thread_create(kernel_task, &thread);
-	thread_deallocate(thread);
+	// Setup an XNU thread, so that IPC works from this thread
+	// Note: It seems that Linux recreates the kthread backing the workqueue
+	// sometimes, so we register ourselves lazily now.
+	duct_thread_create(kernel_task, &my_thread);
+	thread_deallocate(my_thread);
 	
-	darling_thread_register(thread);
+	// darling_thread_register(thread);
 }
 
 static void
 thread_call_wq_exit(struct work_struct* work)
 {
-	thread_t thread = darling_thread_get_current();
-	if (thread != NULL)
-	{
-		duct_thread_destroy(thread);
-		darling_thread_deregister(thread);
-	}
+	// thread_t thread = darling_thread_get_current();
+	//if (thread != NULL)
+	//{
+		duct_thread_destroy(my_thread);
+		// darling_thread_deregister(thread);
+	// }
 }
 
 void
@@ -188,6 +190,8 @@ thread_call_worker(struct work_struct* work)
 	debug_msg("thread_call_worker() invoked\n");
 	call = container_of(to_delayed_work(work), struct thread_call, tc_work);
 	
+	darling_thread_register(my_thread);
 	call->tc_call.func(call->tc_call.param0, call->tc_call.param1);
+	darling_thread_deregister(my_thread);
 }
 
