@@ -51,6 +51,7 @@
 #include "psynch/psynch_mutex.h"
 #include "debug_print.h"
 #include "evprocfd.h"
+#include "evpsetfd.h"
 
 typedef long (*trap_handler)(task_t, ...);
 
@@ -81,9 +82,8 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_kernel_printk, kernel_printk_entry),
 
 	// KQUEUE
-	TRAP(NR_eventfd_machport_attach, eventfd_machport_attach_entry),
-	TRAP(NR_eventfd_machport_detach, eventfd_machport_detach_entry),
 	TRAP(NR_evproc_create, evproc_create_entry),
+	TRAP(NR_evfilt_machport_open, evfilt_machport_open_entry),
 
 	// PSYNCH
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -637,68 +637,6 @@ int thread_death_announce_entry(task_t task)
 	return -LINUX_ESRCH;
 }
 
-int eventfd_machport_attach_entry(task_t task, struct eventfd_machport_attach* in_args)
-{
-	struct eventfd_ctx* efd;
-	kern_return_t kr;
-
-	copyargs(args, in_args);
-
-	efd = eventfd_ctx_fdget(args.evfd);
-	if (IS_ERR(efd))
-		return PTR_ERR(efd);
-
-	kr = eventfd_machport_attach_detach(args.port_name, efd, false);
-	if (kr != KERN_SUCCESS)
-	{
-		if (kr == KERN_NAME_EXISTS)
-			return -LINUX_EEXIST;
-
-		return -LINUX_EINVAL;
-	}
-	return 0;
-}
-
-void compat_kevmachportfd_raise(struct eventfd_ctx* ctx)
-{
-	assert(ctx != NULL);
-	eventfd_signal(ctx, 1);
-}
-
-int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* in_args)
-{
-	struct file* file;
-	struct eventfd_ctx* efd;
-	kern_return_t kr;
-	int rv = 0;
-
-	copyargs(args, in_args);
-
-	file = fget(args.evfd);
-	if (file == NULL)
-		return -LINUX_EBADF;
-
-	efd = eventfd_ctx_fileget(file);
-	if (IS_ERR(efd))
-	{
-		rv = -LINUX_EINVAL;
-		goto out;
-	}
-
-	kr = eventfd_machport_attach_detach(args.port_name, efd, true);
-
-	if (kr == KERN_SUCCESS)
-		fput(file); // release the reference we took in eventfd_machport_attach_entry
-	else if (kr == KERN_NOT_RECEIVER)
-		rv = -LINUX_ENOENT; // wrong event fd used for detach (=this fd is not attached)
-	else
-		rv = -LINUX_EINVAL;
-
-out:
-	fput(file);
-	return rv;
-}
-
 int fork_wait_for_child_entry(task_t task)
 {
 	// Wait until the fork() child re-opens /dev/mach
@@ -812,6 +750,13 @@ int kernel_printk_entry(task_t task, struct kernel_printk_args* in_args)
 	debug_msg("%s\n", args.buf);
 
 	return 0;
+}
+
+int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* in_args)
+{
+	copyargs(args, in_args);
+
+	return evpsetfd_create(args.port_name, &args.opts);
 }
 
 module_init(mach_init);

@@ -181,6 +181,7 @@ ifneq ($(KERNELRELEASE),)
 		darling/license.o \
 		darling/host_info.o \
 		darling/evprocfd.o \
+		darling/evpsetfd.o \
 		darling/psynch/pthread_kill.o \
 		darling/psynch/psynch_mutex.o \
 		darling/psynch/psynch_cv.o \

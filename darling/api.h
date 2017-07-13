@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		6
+#define DARLING_MACH_API_VERSION		7
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -69,15 +69,14 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR__kernelrpc_mach_port_extract_member_trap,
 	NR_thread_death_announce,
 	NR__kernelrpc_mach_port_insert_right_trap, // 0x20
-	NR_eventfd_machport_attach,
-	NR_eventfd_machport_detach,
+	NR_evfilt_machport_open,
 	NR_fork_wait_for_child,
 	NR_evproc_create,
 	NR_task_for_pid_trap,
 	NR_pid_for_task_trap,
 	NR_set_dyld_info,
 	NR_stop_after_exec,
-	NR_kernel_printk, // 0x29
+	NR_kernel_printk, // 0x28
 };
 
 struct evproc_create
@@ -93,16 +92,36 @@ struct evproc_event
 	unsigned int extra;
 };
 
-struct eventfd_machport_attach
+// What can be written into the fd (to update rcv buffer)
+struct evpset_options
 {
-	unsigned int port_name;
-	unsigned int evfd;
+	void* rcvbuf;
+#ifdef __i386__
+	unsigned int pad1;
+#endif
+	unsigned long rcvbuf_size;
+#ifdef __i386__
+	unsigned int pad2;
+#endif
+	unsigned int sfflags;
 };
 
-struct eventfd_machport_detach
+struct evfilt_machport_open_args
 {
 	unsigned int port_name;
-	unsigned int evfd;
+	struct evpset_options opts;
+};
+
+// What is read from the fd
+struct evpset_event
+{
+	unsigned int flags; // kn_flags, override flags in libkqueue if non-zero
+	unsigned int port; // kn_data
+	unsigned long msg_size; // kn_ext[1]
+#ifdef __i386__
+	unsigned int pad1;
+#endif
+	unsigned int receive_status; // kn_fflags
 };
 
 struct mach_port_insert_right_args

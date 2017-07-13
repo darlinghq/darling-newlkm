@@ -74,7 +74,6 @@ typedef struct wait_queue {
 #if defined (__DARLING__)
         // struct mutex            mutex_lock;
         wait_queue_head_t       linux_waitqh;
-        void                  * fdctx;
 #endif
 
 #if defined (__DARLING__)

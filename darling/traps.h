@@ -58,8 +58,6 @@ int mk_timer_cancel_entry(task_t task, struct mk_timer_cancel_args* args);
 int mk_timer_destroy_entry(task_t task, struct mk_timer_destroy_args* args);
 
 int thread_death_announce_entry(task_t task);
-int eventfd_machport_attach_entry(task_t task, struct eventfd_machport_attach* args);
-int eventfd_machport_detach_entry(task_t task, struct eventfd_machport_detach* args);
 
 int fork_wait_for_child_entry(task_t task);
 
@@ -70,5 +68,7 @@ int pid_for_task_entry(task_t task, struct pid_for_task* args);
 int set_dyld_info_entry(task_t task, struct set_dyld_info_args* args);
 int stop_after_exec_entry(task_t task);
 int kernel_printk_entry(task_t task, struct kernel_printk_args* args);
+
+int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* args);
 
 #endif

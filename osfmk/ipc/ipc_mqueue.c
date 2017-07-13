@@ -109,7 +109,6 @@
 
 #if defined (__DARLING__)
 extern xnu_wait_queue_t duct__wait_queue_walkup (xnu_wait_queue_t waitq, event64_t event);
-extern void compat_kevmachportfd_raise (void * fdctx);
 
 extern int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, int sync, void * key);
 
@@ -358,11 +357,6 @@ ipc_mqueue_changed(
         xnu_wait_queue_t        waitq               = &mqueue->imq_wait_queue;
         xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, IPC_MQUEUE_RECEIVE);
 
-        if (walked_waitq->fdctx) {
-                printk(KERN_NOTICE "Raising kevent eventfd %p\n", walked_waitq->fdctx);
-                compat_kevmachportfd_raise (walked_waitq->fdctx);
-        }
-
         wake_up (&walked_waitq->linux_waitqh);
 #else
 	wait_queue_wakeup64_all_locked(
@@ -555,15 +549,10 @@ ipc_mqueue_post(
                 // _wait_queue_select64_one
                 xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, IPC_MQUEUE_RECEIVE);
 
-                printk ( KERN_NOTICE "- waitq: 0x%p, walked: 0x%p, walked->fdctx: 0x%p\n",
-                         waitq, walked_waitq, walked_waitq->fdctx );
+                printk ( KERN_NOTICE "- waitq: 0x%p, walked: 0x%p\n",
+                         waitq, walked_waitq);
 
                 // printk (KERN_NOTICE "- walked_waitq->linux_waitqh: 0x%p\n", &(walked_waitq->linux_waitqh));
-
-                // WC: set IPC_MQUEUE_RECEIVE somewhere
-                if (walked_waitq->fdctx) {
-                        compat_kevmachportfd_raise (walked_waitq->fdctx);
-                }
 
                 // __wake_up (&walked_waitq->linux_waitqh, TASK_NORMAL, 1, (void *) IPC_MQUEUE_RECEIVE);
                 unsigned long   flags;
@@ -606,6 +595,12 @@ ipc_mqueue_post(
 			 */
 			assert(mqueue->imq_msgcount > 0);
 			ipc_kmsg_enqueue_macro(&mqueue->imq_messages, kmsg);
+#ifdef __DARLING__
+			// Needed for kevpsetfd
+			// It doesn't enqueue itself as an IPC thread waiting for a message,
+			// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
+			wake_up(&walked_waitq->linux_waitqh);
+#endif
 			break;
 		}
 	

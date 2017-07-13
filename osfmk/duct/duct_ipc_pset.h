@@ -42,10 +42,4 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 struct compat_knote;
 struct wait_queue;
 
-extern kern_return_t duct_filt_machport_attach (struct compat_knote * kn, xnu_wait_queue_t * waitqp);
-extern kern_return_t duct_filt_machport_process (struct compat_knote * kn);
-
-struct eventfd_ctx;
-kern_return_t eventfd_machport_attach_detach(mach_port_name_t name, struct eventfd_ctx* fdctx, bool detach);
-
 #endif // DUCT_IPC_MACHMSG_H
