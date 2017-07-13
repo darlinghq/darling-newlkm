@@ -1000,7 +1000,7 @@ ipc_port_destroy(ipc_port_t port)
 
 	ip_release(port); /* consume caller's ref */
 
- drop_assertions:
+ drop_assertions:;
 #if IMPORTANCE_INHERITANCE
 	if (release_imp_task != IIT_NULL) {
 		if (assertcnt > 0) {
@@ -1211,7 +1211,7 @@ ipc_port_impcount_delta(
 		return delta;
 	}
 
-#if (DEVELOPMENT || DEBUG)
+#if (DEVELOPMENT || DEBUG) && !defined(__DARLING__)
 	if (port->ip_receiver_name != MACH_PORT_NULL) {
 		task_t target_task = port->ip_receiver->is_task;
 		ipc_importance_task_t target_imp = target_task->task_imp_base;

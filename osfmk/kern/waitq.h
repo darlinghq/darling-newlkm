@@ -168,10 +168,15 @@ struct waitq {
 	uint64_t waitq_set_id;
 	uint64_t waitq_prepost_id;
 	queue_head_t	waitq_queue;		/* queue of elements */
+#ifdef __DARLING__
+	wait_queue_head_t       linux_waitqh;
+#endif
 };
 
+#ifndef __DARLING__
 static_assert(sizeof(struct waitq) == WQ_OPAQUE_SIZE, "waitq structure size mismatch");
 static_assert(__alignof(struct waitq) == WQ_OPAQUE_ALIGN, "waitq structure alignment mismatch");
+#endif
 
 /*
  *	struct waitq_set
@@ -187,8 +192,10 @@ struct waitq_set {
 	};
 };
 
+#ifndef __DARLING__
 static_assert(sizeof(struct waitq_set) == WQS_OPAQUE_SIZE, "waitq_set structure size mismatch");
 static_assert(__alignof(struct waitq_set) == WQS_OPAQUE_ALIGN, "waitq_set structure alignment mismatch");
+#endif
 
 extern void waitq_bootstrap(void);
 
