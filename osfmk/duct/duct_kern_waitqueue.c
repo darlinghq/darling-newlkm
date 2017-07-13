@@ -339,6 +339,58 @@ kern_return_t duct_wait_queue_unlink_nofree (wait_queue_t wq, wait_queue_set_t w
         return KERN_NOT_IN_SET;
 }
 
+static void
+wait_queue_unlink_all_nofree_locked(
+        wait_queue_t wq,
+        queue_t links)
+{
+        wait_queue_element_t wq_element;
+        wait_queue_element_t wq_next_element;
+        wait_queue_set_t wq_set;
+        wait_queue_link_t wql;
+        queue_t q;
+
+        q = &wq->wq_queue;
+
+        wq_element = (wait_queue_element_t) queue_first(q);
+        while (!queue_end(q, (queue_entry_t)wq_element)) {
+
+                WAIT_QUEUE_ELEMENT_CHECK(wq, wq_element);
+                wq_next_element = (wait_queue_element_t)
+                             queue_next((queue_t) wq_element);
+
+                if (wq_element->wqe_type == WAIT_QUEUE_LINK ||
+                    wq_element->wqe_type == WAIT_QUEUE_LINK_NOALLOC) {
+                        wql = (wait_queue_link_t)wq_element;
+                        wq_set = wql->wql_setqueue;
+                        wqs_lock(wq_set);
+                        duct_wait_queue_unlink_locked(wq, wq_set, wql);
+                        wqs_unlock(wq_set);
+                        enqueue(links, &wql->wql_links);
+                }
+                wq_element = wq_next_element;
+        }
+}       
+
+kern_return_t
+wait_queue_unlink_all_nofree(
+        wait_queue_t wq,
+        queue_t links)
+{
+        spl_t s;
+
+        if (!wait_queue_is_valid(wq)) {
+                return KERN_INVALID_ARGUMENT;
+        }
+
+        s = splsched();
+        wait_queue_lock(wq);
+        wait_queue_unlink_all_nofree_locked(wq, links);
+        wait_queue_unlock(wq);
+        splx(s);
+
+        return(KERN_SUCCESS);
+}       
 
 
 

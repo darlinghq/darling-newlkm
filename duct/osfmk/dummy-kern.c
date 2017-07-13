@@ -188,6 +188,7 @@ wait_queue_set_unlink_all_nofree(
         return 0;
 }
 
+#if 0
 kern_return_t
 wait_queue_unlink_all_nofree(
         wait_queue_t wq,
@@ -196,7 +197,7 @@ wait_queue_unlink_all_nofree(
         kprintf("not implemented: wait_queue_unlink_all_nofree()\n");
         return 0;
 }
-
+#endif
 
 
 void
