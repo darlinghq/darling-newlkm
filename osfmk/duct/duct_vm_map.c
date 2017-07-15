@@ -224,7 +224,8 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
 
         // assert (src_map == current_map ());
         // assert (len > msg_ool_size_small);
-        copy            = (vm_map_copy_t) duct_zalloc (vm_map_copy_zone);
+        //copy            = (vm_map_copy_t) duct_zalloc (vm_map_copy_zone);
+		copy = (vm_map_copy_t) vmalloc_user(sizeof(struct vm_map_copy) + len);
 
         if (copy == NULL) {
                 return KERN_RESOURCE_SHORTAGE;
@@ -241,8 +242,8 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                 // and transferring the pages
                 case VM_MAP_COPY_KERNEL_BUFFER:
                 {
-                        copy->cpy_kdata = vmalloc_user(len);
-                        copy->cpy_kalloc_size = len;
+                        //copy->cpy_kdata = vmalloc_user(len);
+                        //copy->cpy_kalloc_size = len;
 
                         if (src_map->linux_task != NULL) { // if this is not a kernel map
                             if (src_addr) {
@@ -298,12 +299,13 @@ void duct_vm_map_copy_discard (vm_map_copy_t copy)
         switch (copy->type) {
                 case VM_MAP_COPY_KERNEL_BUFFER:
                 {
-                    vfree(copy->cpy_kdata);
+                    // vfree(copy->cpy_kdata);
                     break;
                 }
         }
 
-        duct_zfree (vm_map_copy_zone, copy);
+        //duct_zfree (vm_map_copy_zone, copy);
+		vfree(copy);
 }
 
 kern_return_t
@@ -333,8 +335,7 @@ vm_map_copy_overwrite(
 					return KERN_INVALID_ADDRESS;
 			}
 
-            vfree (copy->cpy_kdata);
-            duct_zfree (vm_map_copy_zone, copy);
+            vfree (copy);
 
 			return KERN_SUCCESS;
 		}
@@ -384,8 +385,7 @@ kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr
                     return KERN_FAILURE;
                 }
                 *dst_addr = addr;
-				vfree (copy->cpy_kdata);
-				duct_zfree (vm_map_copy_zone, copy);
+				vfree (copy);
 
                 return KERN_SUCCESS;
             }

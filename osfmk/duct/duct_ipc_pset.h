@@ -37,9 +37,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
-#include <kern/wait_queue.h>
+#include <kern/waitq.h>
 
 struct compat_knote;
-struct wait_queue;
+struct waitq;
 
 #endif // DUCT_IPC_MACHMSG_H

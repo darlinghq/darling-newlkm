@@ -219,6 +219,10 @@ typedef struct _lck_rw_t_internal_ {
 
 #if LOCK_PRIVATE
 
+#ifdef __DARLING__
+#define GS_RELATIVE
+#endif
+
 #define disable_preemption_for_thread(t) ((cpu_data_t GS_RELATIVE *)0UL)->cpu_preemption_level++
 
 #define LCK_MTX_THREAD_TO_STATE(t)	((uintptr_t)t)

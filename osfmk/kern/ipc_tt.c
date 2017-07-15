@@ -168,6 +168,7 @@ ipc_task_init(
 	task->itk_debug_control = IP_NULL;
 	task->itk_space = space;
 
+#ifndef __DARLING__
 	if (parent == TASK_NULL) {
 		ipc_port_t port;
 

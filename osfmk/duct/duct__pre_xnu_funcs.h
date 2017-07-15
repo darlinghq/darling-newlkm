@@ -80,14 +80,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 // for duct_waitqueue
-#define wait_queue_init                 duct_wait_queue_init
-#define wait_queue_set_init             duct_wait_queue_set_init
+#define waitq_init                 duct_waitq_init
+#define waitq_set_init             duct_waitq_set_init
 
-#define wait_queue_link_allocate        duct_wait_queue_link_allocate
-#define wait_queue_link_free            duct_wait_queue_link_free
+#define waitq_link_allocate        duct_waitq_link_allocate
+#define waitq_link_free            duct_waitq_link_free
 
-#define wait_queue_link_noalloc         duct_wait_queue_link_noalloc
-#define wait_queue_unlink_nofree        duct_wait_queue_unlink_nofree
+#define waitq_link_noalloc         duct_waitq_link_noalloc
+#define waitq_unlink_nofree        duct_waitq_unlink_nofree
 
 
 // xnu/osfmk/vm/vm_map.h

@@ -193,6 +193,7 @@ semaphore_create(
 		zfree(semaphore_zone, s);
 		return kret;
 	}
+	s->count = value;
 
 #endif
 
@@ -207,7 +208,6 @@ semaphore_create(
 	 */
 	s->port	= IP_NULL;
 	s->ref_count = 1;
-	s->count = value;
 	s->active = TRUE;
 	s->owner = task;
 
@@ -290,6 +290,7 @@ semaphore_destroy(
 	task_t			task,
 	semaphore_t		semaphore)
 {
+#ifndef __DARLING__
 	spl_t spl_level;
 
 	if (semaphore == SEMAPHORE_NULL)
@@ -333,6 +334,7 @@ void
 semaphore_destroy_all(
 	task_t			task)
 {
+#ifndef __DARLING__
 	uint32_t count;
 	spl_t spl_level;
 
@@ -360,6 +362,7 @@ semaphore_destroy_all(
 		splx(spl_level);
 
 	task_unlock(task);
+#endif
 }
 
 /*
@@ -1219,6 +1222,7 @@ semaphore_dereference(
 		ipc_port_dealloc_kernel(port);
 	}
 
+#ifndef __DARLING__
 	/*
 	 * Lock the semaphore to lock in the owner task reference.
 	 * Then continue to try to lock the task (inverse order).
@@ -1247,6 +1251,7 @@ semaphore_dereference(
 	}
 	semaphore_unlock(semaphore);
 	splx(spl_level);
+#endif
 
  out:
 	zfree(semaphore_zone, semaphore);

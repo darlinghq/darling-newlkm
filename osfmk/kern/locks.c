@@ -118,13 +118,24 @@ decl_lck_mtx_data(static,lck_grp_lock)
 #define ATOMIC_CAST(t,p) ((_Atomic t*)(uintptr_t)(p))
 
 /* Enforce program order of loads and stores. */
+#ifndef __DARLING__
 #define ordered_load(target, type) \
 		__c11_atomic_load((_Atomic type *)(target), memory_order_relaxed)
 #define ordered_store(target, type, value) \
 		__c11_atomic_store((_Atomic type *)(target), value, memory_order_relaxed)
+#else
+#define ordered_load(target, type) \
+		__atomic_load_n((type*)target, memory_order_relaxed)
+#define ordered_store(target, type, value) \
+		__atomic_store_n((type*)target, value, memory_order_relaxed)
+#endif
 
 #define ordered_load_hw(lock)			ordered_load(&(lock)->lock_data, uintptr_t)
 #define ordered_store_hw(lock, value)	ordered_store(&(lock)->lock_data, uintptr_t, (value))
+
+#ifdef __DARLING__
+#undef noinline
+#endif
 
 #define NOINLINE		__attribute__((noinline))
 
@@ -486,6 +497,9 @@ lck_attr_free(
 	kfree(attr, sizeof(lck_attr_t));
 }
 
+#ifdef __DARLING__
+#undef hw_lock_init
+#endif
 /*
  * Routine:	hw_lock_init
  *
@@ -583,6 +597,10 @@ contended:
 	return;
 }
 
+#ifdef __DARLING__
+#undef hw_lock_to
+#endif
+
 /*
  *	Routine: hw_lock_to
  *
@@ -620,6 +638,10 @@ contended:
 	return 0;
 #endif	// __SMP__
 }
+
+#ifdef __DARLING__
+#undef hw_lock_try
+#endif
 
 /*
  *	Routine: hw_lock_try
@@ -669,6 +691,10 @@ failed:
 	return success;
 }
 
+#ifdef __DARLING__
+#undef hw_lock_unlock
+#endif
+
 /*
  *	Routine: hw_lock_unlock
  *
@@ -678,9 +704,18 @@ failed:
 void
 hw_lock_unlock(hw_lock_t lock)
 {
+#ifndef __DARLING__
 	__c11_atomic_store((_Atomic uintptr_t *)&lock->lock_data, 0, memory_order_release_smp);
+#else
+	uintptr_t v = 0;
+	__atomic_store((uintptr_t*)&lock->lock_data, &v, memory_order_release_smp);
+#endif
 	enable_preemption();
 }
+
+#ifdef __DARLING__
+#undef hw_lock_held
+#endif
 
 /*
  *	RoutineL hw_lock_held
@@ -1556,7 +1591,8 @@ host_lockgroup_info(
  * Atomic primitives, prototyped in kern/simple_lock.h
  * Noret versions are more efficient on some architectures
  */
-	
+#ifndef __DARLING__
+
 uint32_t
 hw_atomic_add(volatile uint32_t *dest, uint32_t delt)
 {
@@ -1570,40 +1606,61 @@ hw_atomic_sub(volatile uint32_t *dest, uint32_t delt)
 	ALIGN_TEST(dest,uint32_t);
 	return __c11_atomic_fetch_sub(ATOMIC_CAST(uint32_t,dest), delt, memory_order_relaxed) - delt;
 }
+#endif
 
 uint32_t
 hw_atomic_or(volatile uint32_t *dest, uint32_t mask)
 {
 	ALIGN_TEST(dest,uint32_t);
+#ifndef __DARLING__
 	return __c11_atomic_fetch_or(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed) | mask;
+#else
+	return __atomic_fetch_or(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed) | mask;
+#endif
 }
 
 void
 hw_atomic_or_noret(volatile uint32_t *dest, uint32_t mask)
 {
 	ALIGN_TEST(dest,uint32_t);
+#ifndef __DARLING__
 	__c11_atomic_fetch_or(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed);
+#else
+	__atomic_fetch_or(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed);
+#endif
 }
 
 uint32_t
 hw_atomic_and(volatile uint32_t *dest, uint32_t mask)
 {
 	ALIGN_TEST(dest,uint32_t);
+#ifndef __DARLING__
 	return __c11_atomic_fetch_and(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed) & mask;
+#else
+	return __atomic_fetch_and(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed) & mask;
+#endif
 }
 
 void
 hw_atomic_and_noret(volatile uint32_t *dest, uint32_t mask)
 {
 	ALIGN_TEST(dest,uint32_t);
+#ifndef __DARLING__
 	__c11_atomic_fetch_and(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed);
+#else
+	__atomic_fetch_and(ATOMIC_CAST(uint32_t,dest), mask, memory_order_relaxed);
+#endif
 }
 
 uint32_t
 hw_compare_and_store(uint32_t oldval, uint32_t newval, volatile uint32_t *dest)
 {
 	ALIGN_TEST(dest,uint32_t);
+#ifndef __DARLING__
 	return __c11_atomic_compare_exchange_strong(ATOMIC_CAST(uint32_t,dest), &oldval, newval,
 			memory_order_acq_rel_smp, memory_order_relaxed);
+#else
+	return __atomic_compare_exchange_n(dest, &oldval, newval, 0, memory_order_acq_rel_smp, memory_order_relaxed);
+#endif
 }
 

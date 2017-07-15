@@ -102,7 +102,7 @@ void duct_thread_bootstrap (void)
         thread_template.reason = 0;
         thread_template.at_safe_point = FALSE;
         thread_template.wait_event = NO_EVENT64;
-        thread_template.wait_queue = WAIT_QUEUE_NULL;
+        thread_template.waitq = NULL;
         thread_template.wait_result = THREAD_WAITING;
         thread_template.options = THREAD_ABORTSAFE;
         thread_template.state = TH_WAIT | TH_UNINT;
@@ -116,7 +116,7 @@ void duct_thread_bootstrap (void)
         thread_template.saved_mode = TH_MODE_NONE;
         thread_template.safe_release = 0;
 
-        thread_template.priority = 0;
+        // thread_template.priority = 0;
         thread_template.sched_pri = 0;
         thread_template.max_priority = 0;
         thread_template.task_priority = 0;
@@ -127,19 +127,13 @@ void duct_thread_bootstrap (void)
 
         thread_template.realtime.deadline = UINT64_MAX;
 
-        thread_template.current_quantum = 0;
+        // thread_template.current_quantum = 0;
         thread_template.last_run_time = 0;
-        thread_template.last_quantum_refill_time = 0;
+        // thread_template.last_quantum_refill_time = 0;
 
         thread_template.computation_metered = 0;
         thread_template.computation_epoch = 0;
 
-    #if defined(CONFIG_SCHED_TRADITIONAL)
-        thread_template.sched_stamp = 0;
-        thread_template.pri_shift = INT8_MAX;
-        thread_template.sched_usage = 0;
-        thread_template.cpu_usage = thread_template.cpu_delta = 0;
-    #endif
         thread_template.c_switch = thread_template.p_switch = thread_template.ps_switch = 0;
 
         thread_template.bound_processor = PROCESSOR_NULL;
@@ -164,11 +158,11 @@ void duct_thread_bootstrap (void)
 
         thread_template.depress_timer_active = 0;
 
-        thread_template.special_handler.handler = special_handler;
-        thread_template.special_handler.next = NULL;
+        //thread_template.special_handler.handler = special_handler;
+        //thread_template.special_handler.next = NULL;
 
-        thread_template.funnel_lock = THR_FUNNEL_NULL;
-        thread_template.funnel_state = 0;
+        //thread_template.funnel_lock = THR_FUNNEL_NULL;
+        //thread_template.funnel_state = 0;
         thread_template.recover = (vm_offset_t)NULL;
 
         thread_template.map = VM_MAP_NULL;
@@ -179,7 +173,7 @@ void duct_thread_bootstrap (void)
         thread_template.t_dtrace_tracing = 0;
     #endif /* CONFIG_DTRACE */
 
-        thread_template.t_chud = 0;
+        // thread_template.t_chud = 0;
         thread_template.t_page_creation_count = 0;
         thread_template.t_page_creation_time = 0;
 
@@ -531,7 +525,7 @@ void duct_thread_deallocate (thread_t thread)
 
         task    = thread->task;
 
-        if (thread_deallocate_internal (thread) > 0) {
+        if (hw_atomic_sub(&(thread)->ref_count, 1) > 0) {
                 return;
         }
 

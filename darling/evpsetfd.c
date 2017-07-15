@@ -113,12 +113,12 @@ unsigned int evpsetfd_poll(struct file* file, poll_table* wait)
 	struct evpsetfd_ctx* ctx = (struct evpsetfd_ctx*) file->private_data;
 	ipc_mqueue_t set_mq = &ctx->pset->ips_messages;
 
-	xnu_wait_queue_t waitq = &set_mq->imq_wait_queue;
-	xnu_wait_queue_t walked_waitq = duct__wait_queue_walkup(waitq, IPC_MQUEUE_RECEIVE);
+	waitq_t waitq = &set_mq->imq_wait_queue;
+	waitq_t walked_waitq = duct__waitq_walkup(waitq, IPC_MQUEUE_RECEIVE);
 
 	poll_wait(file, &walked_waitq->linux_waitqh, wait);
 
-	if (ipc_mqueue_peek(set_mq))
+	if (ipc_mqueue_peek(set_mq, NULL, NULL, NULL, NULL, NULL))
 	{
 		debug_msg("evpsetfd_poll(): there is a pending msg\n");
 		return POLLIN | POLLRDNORM;
@@ -203,7 +203,7 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 	self->ith_object = (ipc_object_t)pset;
 	self->ith_msize = size;
 	self->ith_option = option;
-	self->ith_scatter_list_size = 0;
+	// self->ith_scatter_list_size = 0;
 	self->ith_receiver_name = MACH_PORT_NULL;
 	self->ith_continuation = NULL;
 	option |= MACH_RCV_TIMEOUT; // never wait
@@ -254,7 +254,7 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 	assert(option & MACH_RCV_MSG);
 	out.port = self->ith_receiver_name;
 	out.msg_size = self->ith_msize;
-	out.receive_status = mach_msg_receive_results();
+	out.receive_status = mach_msg_receive_results(NULL);
 	/* kmsg and pset reference consumed */
 
 	if (copy_to_user(buf, &out, sizeof(out)))

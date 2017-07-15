@@ -93,9 +93,9 @@ kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach
                 map_addr += PAGE_SIZE;
 
         } else
-            map_addr = vm_map_trunc_page(*addr);
+            map_addr = vm_map_trunc_page(*addr, PAGE_MASK);
 
-        map_size = vm_map_round_page(size);
+        map_size = vm_map_round_page(size, PAGE_MASK);
         if (map_size == 0) {
           return(KERN_INVALID_ARGUMENT);
         }

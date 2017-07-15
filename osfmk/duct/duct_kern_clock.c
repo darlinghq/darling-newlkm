@@ -38,7 +38,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <mach/mach_time.h>
 #include <kern/clock.h>
-#include <kern/wait_queue.h>
+#include <kern/waitq.h>
 
 #include "duct_post_xnu.h"
 

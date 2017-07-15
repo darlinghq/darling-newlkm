@@ -33,7 +33,7 @@
 #include <kern/clock.h>
 #include <kern/task.h>
 #include <kern/thread.h>
-#include <kern/wait_queue.h>
+#include <kern/waitq.h>
 
 #include <vm/vm_pageout.h>
 

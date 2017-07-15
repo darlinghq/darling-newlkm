@@ -167,7 +167,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         new_task->thread_count = 0;
         new_task->active_thread_count = 0;
         new_task->user_stop_count = 0;
-        new_task->role = TASK_UNSPECIFIED;
+        // new_task->role = TASK_UNSPECIFIED;
         new_task->active = TRUE;
         new_task->halting = FALSE;
         new_task->user_data = NULL;
@@ -180,10 +180,10 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         new_task->priv_flags = 0;
         new_task->syscalls_unix=0;
         new_task->c_switch = new_task->p_switch = new_task->ps_switch = 0;
-        new_task->taskFeatures[0] = 0;                /* Init task features */
-        new_task->taskFeatures[1] = 0;                /* Init task features */
+        // new_task->taskFeatures[0] = 0;                /* Init task features */
+        // new_task->taskFeatures[1] = 0;                /* Init task features */
 
-        zinfo_task_init(new_task);
+        // zinfo_task_init(new_task);
 
     // #ifdef MACH_BSD
     //     new_task->bsd_info = NULL;
@@ -196,9 +196,9 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
 
 
         queue_init(&new_task->semaphore_list);
-        queue_init(&new_task->lock_set_list);
+        // queue_init(&new_task->lock_set_list);
         new_task->semaphores_owned = 0;
-        new_task->lock_sets_owned = 0;
+        // new_task->lock_sets_owned = 0;
 
         if (ltask != NULL)
         {

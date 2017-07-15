@@ -56,7 +56,11 @@ atomic_compare_exchange(uintptr_t *target, uintptr_t oldval, uintptr_t newval,
 			enum memory_order ord, boolean_t wait)
 {
 	(void)wait;
+#ifndef __DARLING__
 	return __c11_atomic_compare_exchange_strong((_Atomic uintptr_t *)target, &oldval, newval, ord, memory_order_relaxed);
+#else
+	return __atomic_compare_exchange(target, &oldval, &newval, 0, ord, memory_order_relaxed);
+#endif
 }
 
 #endif // ATOMIC_PRIVATE

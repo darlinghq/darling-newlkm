@@ -38,24 +38,29 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 
-#include <kern/wait_queue.h>
+#include <kern/waitq.h>
 
 extern int      duct_event64_ready;
 #define DUCT_EVENT64_READY      CAST_EVENT64_T (&duct_event64_ready)
 
-extern kern_return_t duct_wait_queue_init (wait_queue_t wq, int policy);
-extern void duct_wait_queue_bootstrap (void);
+typedef struct waitq* waitq_t;
+typedef struct waitq_set* waitq_set_t;
+typedef struct waitq_link* waitq_link_t;
 
-extern kern_return_t duct_wait_queue_init (wait_queue_t wq, int policy);
-extern kern_return_t duct_wait_queue_set_init (wait_queue_set_t wqset, int policy);
+extern kern_return_t duct_waitq_init (waitq_t wq, int policy);
+extern void duct_waitq_bootstrap (void);
 
-extern wait_queue_link_t duct_wait_queue_link_allocate (void);
-extern kern_return_t duct_wait_queue_link_free (wait_queue_link_t wql);
+extern kern_return_t duct_waitq_init (waitq_t wq, int policy);
+extern kern_return_t duct_waitq_set_init (waitq_set_t wqset, int policy, uint64_t *reserved_link,
+		                    void *prepost_hook);
 
-extern kern_return_t duct_wait_queue_link_noalloc (wait_queue_t wq, wait_queue_set_t wq_set, wait_queue_link_t wql);
-extern kern_return_t duct_wait_queue_unlink_nofree (wait_queue_t wq, wait_queue_set_t wq_set, wait_queue_link_t * wqlp);
+extern waitq_link_t duct_waitq_link_allocate (void);
+extern kern_return_t duct_waitq_link_free (waitq_link_t wql);
 
-extern xnu_wait_queue_t duct__wait_queue_walkup (xnu_wait_queue_t waitq, event64_t event);
+extern kern_return_t duct_waitq_link_noalloc (waitq_t wq, waitq_set_t wq_set, waitq_link_t wql);
+extern kern_return_t duct_waitq_unlink_nofree (waitq_t wq, waitq_set_t wq_set, waitq_link_t * wqlp);
+
+extern waitq_t duct__waitq_walkup (waitq_t waitq, event64_t event);
 extern int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, int sync, void * key);
 
 #endif // DUCT_KERN_WAITQUEUE_H

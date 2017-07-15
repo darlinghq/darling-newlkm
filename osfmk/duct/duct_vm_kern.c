@@ -113,6 +113,6 @@ kmem_free(
     vm_offset_t addr,
     vm_size_t   size)
 {
-	vfree(addr);
+	vfree((void*) addr);
 }
 

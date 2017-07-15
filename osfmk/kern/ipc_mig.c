@@ -59,6 +59,7 @@
 #if defined (__DARLING__)
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
+#include <osfmk/kern/ast.h>
 #endif
 
 #include <mach/boolean.h>

@@ -59,10 +59,11 @@
 /*
  *      kern/ast.h: Definitions for Asynchronous System Traps.
  */
-
+#warning aaa
 #ifndef _KERN_AST_H_
 #define _KERN_AST_H_
 
+#warning vvv
 
 #include <kern/assert.h>
 #include <kern/macro_help.h>
@@ -99,7 +100,7 @@ typedef uint32_t		ast_t;
  * to run on another processor, cause_ast_check() may be called
  * to IPI that processor and request csw_check() be run there.
  */
-
+#warning I'm here
 /*
  *      Bits for reasons
  */

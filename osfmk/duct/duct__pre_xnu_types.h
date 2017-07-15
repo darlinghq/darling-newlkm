@@ -88,8 +88,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define semaphore               xnu_semaphore
 
 // osfmk/kern/kern_types.h
-#undef waitq_t
-#define waitq_t            xnu_wait_queue_t
+//#undef waitq_t
+//#define waitq_t            xnu_wait_queue_t
 
 
 // bsd/sys/_structs.h

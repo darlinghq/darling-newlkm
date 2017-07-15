@@ -15,7 +15,7 @@
 #include <kern/simple_lock.h>
 #include <kern/kalloc.h>
 #include <kern/task.h>
-#include <kern/wait_queue.h>
+#include <kern/waitq.h>
 #include <kern/counters.h>
 #include <mach_debug/vm_info.h>
 #include <mach_debug/page_info.h>

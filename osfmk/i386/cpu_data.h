@@ -147,7 +147,9 @@ typedef struct cpu_data
 	volatile int		cpu_prior_signals;	/* Last set of events,
 							 * debugging
 							 */
+#ifndef __DARLING__
 	ast_t			cpu_pending_ast;
+#endif
 	volatile int		cpu_running;
 	boolean_t		cpu_fixed_pmcs_enabled;
 	rtclock_timer_t		rtclock_timer;
@@ -354,11 +356,15 @@ get_interrupt_level(void)
 {
 	CPU_DATA_GET(cpu_interrupt_level,int)
 }
+#ifndef __DARLING__
 static inline int
 get_cpu_number(void)
 {
 	CPU_DATA_GET(cpu_number,int)
 }
+#else
+int get_cpu_number(void);
+#endif
 static inline int
 get_cpu_phys_number(void)
 {

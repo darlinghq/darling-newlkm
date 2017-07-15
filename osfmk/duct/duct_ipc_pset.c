@@ -54,9 +54,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/errno.h>
 // #include <sys/event.h>
 
+#if 0
 kern_return_t duct_filt_machport_attach (struct compat_knote * kn, xnu_wait_queue_t * waitqp)
 {
-#if 0
         printk (KERN_NOTICE "- duct_filt_machport_attach () called\n");
         mach_port_name_t        name    = (mach_port_name_t) kn->kevent.ident;
         // wait_queue_link_t       wql     = wait_queue_link_allocate();
@@ -76,7 +76,6 @@ kern_return_t duct_filt_machport_attach (struct compat_knote * kn, xnu_wait_queu
         ips_reference (pset);
         ips_unlock (pset);
         return kr;
-#endif
 }
-
+#endif
 
