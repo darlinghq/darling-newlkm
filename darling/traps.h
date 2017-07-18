@@ -70,5 +70,6 @@ int stop_after_exec_entry(task_t task);
 int kernel_printk_entry(task_t task, struct kernel_printk_args* args);
 
 int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* args);
+int path_at_entry(task_t task, struct path_at_args* args);
 
 #endif

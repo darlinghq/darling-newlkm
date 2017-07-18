@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		7
+#define DARLING_MACH_API_VERSION		8
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -77,6 +77,15 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_set_dyld_info,
 	NR_stop_after_exec,
 	NR_kernel_printk, // 0x28
+	NR_path_at,
+};
+
+struct path_at_args
+{
+	int fd;
+	const char* path;
+	char* path_out;
+	unsigned int max_path_out;
 };
 
 struct evproc_create

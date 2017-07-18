@@ -80,6 +80,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_set_dyld_info, set_dyld_info_entry),
 	TRAP(NR_stop_after_exec, stop_after_exec_entry),
 	TRAP(NR_kernel_printk, kernel_printk_entry),
+	TRAP(NR_path_at, path_at_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -757,6 +758,40 @@ int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* in
 	copyargs(args, in_args);
 
 	return evpsetfd_create(args.port_name, &args.opts);
+}
+
+// Evaluate given path relative to provided fd (or AT_FDCWD).
+int path_at_entry(task_t task, struct path_at_args* in_args)
+{
+	struct path path;
+	int error = 0;
+
+	copyargs(args, in_args);
+
+	error = user_path_at(args.fd, args.path, LOOKUP_FOLLOW | LOOKUP_EMPTY, &path);
+	if (error)
+		return error;
+
+	char* buf = (char*) __get_free_page(GFP_USER);
+	char* name = dentry_path_raw(path.dentry, buf, PAGE_SIZE);
+	unsigned long len;
+
+	if (IS_ERR(name))
+	{
+		error = PTR_ERR(name);
+		goto failure;
+	}
+
+	len = strlen(name) + 1;
+	if (len > args.max_path_out)
+		error = -LINUX_ENAMETOOLONG;
+	else if (copy_to_user(args.path_out, name, len))
+		error = -LINUX_EFAULT;
+
+failure:
+	free_page((unsigned long) buf);
+	path_put(&path);
+	return error;
 }
 
 module_init(mach_init);
