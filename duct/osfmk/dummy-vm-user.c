@@ -602,6 +602,7 @@ vm_write(
 	return vm_map_copy_overwrite(map, (vm_map_address_t)address,
 		(vm_map_copy_t) data, FALSE /* interruptible XXX */);
 }
+#if 0
 /*
  * mach_vm_copy -
  * Overwrite one range of the specified map with the contents of
@@ -628,6 +629,7 @@ vm_copy(
         kprintf("not implemented: vm_copy()\n");
         return 0;
 }
+#endif
 /*
  * mach_vm_map -
  * Map some range of an object into an address space.

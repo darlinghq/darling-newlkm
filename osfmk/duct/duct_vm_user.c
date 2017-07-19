@@ -35,6 +35,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct.h"
 #include "duct_pre_xnu.h"
 #include "duct_vm_user.h"
+#include "duct_kern_printf.h"
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+#include "access_process_vm.h"
+#endif
 
 #include <vm/vm_map.h>
 
@@ -166,5 +171,79 @@ mach_vm_deallocate(
 
     vm_munmap(start, size);
     return KERN_SUCCESS;
+}
+
+/*
+ * mach_vm_copy -
+ * Overwrite one range of the specified map with the contents of
+ * another range within that same map (i.e. both address ranges
+ * are "over there").
+ */
+kern_return_t
+mach_vm_copy(
+	vm_map_t		map,
+	mach_vm_address_t	source_address,
+	mach_vm_size_t	size,
+	mach_vm_address_t	dest_address)
+{
+	kern_return_t rv = KERN_SUCCESS;
+	int done;
+	void* mem;
+	struct task_struct* ltask = map->linux_task;
+
+	if (size > 100*1024*1024)
+	{
+		printf("BUG: Refusing to vm_copy %d bytes\n", size);
+		return KERN_FAILURE;
+	}
+
+	mem = vmalloc(size);
+	if (mem == NULL)
+	{
+		printf("out of memory in mach_vm_copy\n");
+		return KERN_NO_SPACE;
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	done = access_process_vm(ltask, source_address, mem, size, 0);
+#else
+	// Older kernels don't export access_process_vm(),
+	// so we need to fall back to our own copy in access_process_vm.h
+	done = __access_process_vm(ltask, source_address, mem, size, 0);
+#endif
+
+	if (done != size)
+	{
+		printf("mach_vm_copy(): only read %d bytes, %d expected\n", done, size);
+
+		rv = KERN_NO_SPACE;
+		goto failure;
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	done = access_process_vm(ltask, dest_address, mem, size, 1);
+#else
+	done = __access_process_vm(ltask, dest_address, mem, size, 1);
+#endif
+
+	if (done != size)
+	{
+		printf("mach_vm_copy(): only wrote %d bytes, %d expected\n", done, size);
+		rv = KERN_NO_SPACE;
+	}
+
+failure:
+	vfree(mem);
+	return rv;
+}
+
+kern_return_t
+vm_copy(
+	vm_map_t	map,
+	vm_address_t	source_address,
+	vm_size_t	size,
+	vm_address_t	dest_address)
+{
+	return mach_vm_copy(map, source_address, size, dest_address);
 }
 
