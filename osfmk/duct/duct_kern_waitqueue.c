@@ -418,13 +418,54 @@ wait_queue_wakeup64_all_locked(
 
 thread_t
 wait_queue_wakeup64_identity_locked(
-        wait_queue_t wq,
+        wait_queue_t waitq,
         event64_t event,
         wait_result_t result,
         boolean_t unlock)
 {
-        printk (KERN_NOTICE "BUG: wait_queue_wakeup64_identity_locked () called\n");
-        return 0;
+	thread_t receiver;
+	assert (wait_queue_held (waitq));
+
+	// _wait_queue_select64_one
+	xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, event);
+
+	printk ( KERN_NOTICE "- waitq: 0x%p, walked: 0x%p\n",
+			 waitq, walked_waitq);
+
+	// printk (KERN_NOTICE "- walked_waitq->linux_waitqh: 0x%p\n", &(walked_waitq->linux_waitqh));
+
+	// __wake_up (&walked_waitq->linux_waitqh, TASK_NORMAL, 1, (void *) event);
+	unsigned long   flags;
+	spin_lock_irqsave (&walked_waitq->linux_waitqh.lock, flags);
+
+	receiver        = THREAD_NULL;
+	linux_wait_queue_t    * lwait   = NULL;
+	linux_wait_queue_t    * lwait_curr;
+	linux_wait_queue_t    * lwait_next;
+
+	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.task_list, task_list) {
+			if ( lwait_curr->private &&
+				 lwait_curr->func (lwait_curr, TASK_NORMAL, 0, (void *) event) ) {
+					lwait   = lwait_curr;
+					break;
+			}
+	}
+
+	if (lwait) {
+			struct task_struct    * ltask   = lwait->private;
+			receiver    = darling_thread_get(ltask->pid);
+			// thread_lock (receiver);
+	}
+	spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
+
+	// Needed for kevpsetfd
+	// It doesn't enqueue itself as an IPC thread waiting for a message,
+	// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
+	if (receiver == NULL)
+		wake_up(&walked_waitq->linux_waitqh);
+
+	printk (KERN_NOTICE "- receiver: 0x%p\n", receiver);
+	return receiver;
 }
 
 kern_return_t
