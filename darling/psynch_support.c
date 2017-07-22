@@ -1,3 +1,4 @@
+// Ported to Darling by Lubos Dolezel
 /*
  * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
  *
@@ -1477,7 +1478,7 @@ out:
  *  psynch_cvclrprepost: This system call clears pending prepost if present.
  */
 int
-psynch_cvclrprepost(__unused proc_t p, struct psynch_cvclrprepost_args * uap, __unused int * retval)
+psynch_cvclrprepost(__unused proc_t p, struct psynch_cvclrprepost_args * uap, __unused uint32_t * retval)
 {
 	user_addr_t cond  = uap->cv;
 	uint32_t cgen = uap->cvgen;
@@ -2618,6 +2619,13 @@ pth_global_hashinit()
 		printf("Pthread support LOGS when sync kernel primitives misused\n");
 	}
 #endif
+}
+
+void
+pth_global_hashexit()
+{
+	kfree(pth_glob_hashtbl);
+	pth_glob_hashtbl = NULL;
 }
 
 void

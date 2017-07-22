@@ -47,12 +47,11 @@
 #include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
 #include "task_registry.h"
-#include "psynch/pthread_kill.h"
-#include "psynch/psynch_cv.h"
-#include "psynch/psynch_mutex.h"
+#include "pthread_kill.h"
 #include "debug_print.h"
 #include "evprocfd.h"
 #include "evpsetfd.h"
+#include "psynch_support.h"
 
 typedef long (*trap_handler)(task_t, ...);
 
@@ -94,6 +93,10 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_psynch_cvwait_trap, psynch_cvwait_trap),
 	TRAP(NR_psynch_cvsignal_trap, psynch_cvsignal_trap),
 	TRAP(NR_psynch_cvbroad_trap, psynch_cvbroad_trap),
+	TRAP(NR_psynch_rw_rdlock, psynch_rw_rdlock_trap),
+	TRAP(NR_psynch_rw_wrlock, psynch_rw_wrlock_trap),
+	TRAP(NR_psynch_rw_unlock, psynch_rw_unlock_trap),
+	TRAP(NR_psynch_cvclrprepost, psynch_cvclrprepost_trap),
 
 	// MACH IPC
 	TRAP(NR_mach_reply_port, mach_reply_port_entry),
@@ -141,6 +144,7 @@ static int mach_init(void)
 
 	darling_task_init();
 	darling_xnu_init();
+	pth_global_hashinit();
 
 	err = misc_register(&mach_dev);
 	if (err < 0)
@@ -156,6 +160,7 @@ fail:
 static void mach_exit(void)
 {
 	darling_xnu_deinit();
+	pth_global_hashexit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 }
@@ -805,6 +810,29 @@ failure:
 	path_put(&path);
 	return error;
 }
+
+// These ported BSD syscalls have a different way of reporting errors.
+// This is because BSD (unlike Linux) doesn't report errors by returning a negative number.
+#define PSYNCH_ENTRY(name) \
+	int name##_trap(task_t task, struct name##_args* in_args) \
+	{ \
+		copyargs(args, in_args); \
+		uint32_t retval = 0; \
+		int error = name(task, &args, &retval); \
+		if (error) \
+			return -error; \
+		return retval; \
+	}
+
+PSYNCH_ENTRY(psynch_mutexwait);
+PSYNCH_ENTRY(psynch_mutexdrop);
+PSYNCH_ENTRY(psynch_cvwait);
+PSYNCH_ENTRY(psynch_cvsignal);
+PSYNCH_ENTRY(psynch_cvbroad);
+PSYNCH_ENTRY(psynch_rw_rdlock);
+PSYNCH_ENTRY(psynch_rw_wrlock);
+PSYNCH_ENTRY(psynch_rw_unlock);
+PSYNCH_ENTRY(psynch_cvclrprepost);
 
 module_init(mach_init);
 module_exit(mach_exit);

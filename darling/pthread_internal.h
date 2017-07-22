@@ -58,5 +58,8 @@ pth_proc_hashinit(task_t p);
 void
 pth_global_hashinit(void);
 
+void
+pth_global_hashexit(void);
+
 #endif /* _SYS_PTHREAD_INTERNAL_H_ */
 

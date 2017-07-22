@@ -72,4 +72,14 @@ int kernel_printk_entry(task_t task, struct kernel_printk_args* args);
 int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* args);
 int path_at_entry(task_t task, struct path_at_args* args);
 
+int psynch_mutexwait_trap(task_t task, struct psynch_mutexwait_args* args);
+int psynch_mutexdrop_trap(task_t task, struct psynch_mutexdrop_args* args);
+int psynch_cvwait_trap(task_t task, struct psynch_cvwait_args* args);
+int psynch_cvsignal_trap(task_t task, struct psynch_cvsignal_args* args);
+int psynch_cvbroad_trap(task_t task, struct psynch_cvbroad_args* args);
+int psynch_rw_rdlock_trap(task_t task, struct psynch_rw_rdlock_args* args);
+int psynch_rw_wrlock_trap(task_t task, struct psynch_rw_wrlock_args* args);
+int psynch_rw_unlock_trap(task_t task, struct psynch_rw_unlock_args* args);
+int psynch_cvclrprepost_trap(task_t task, struct psynch_cvclrprepost_args* args);
+
 #endif

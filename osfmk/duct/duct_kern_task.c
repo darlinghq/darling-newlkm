@@ -104,6 +104,9 @@ void duct_task_init (void)
 
 }
 
+extern void pth_proc_hashinit(task_t t);
+extern void pth_proc_hashdelete(task_t t);
+
 void duct_task_destroy(task_t task)
 {
         if (task == TASK_NULL) {
@@ -111,11 +114,10 @@ void duct_task_destroy(task_t task)
         }
 
         ipc_space_terminate (task->itk_space);
+        pth_proc_hashdelete(task);
         task_deallocate(task);
 
 }
-
-extern void pth_proc_hashinit(task_t t);
 
 kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task, struct task_struct* ltask)
 {

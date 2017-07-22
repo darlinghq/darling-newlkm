@@ -78,6 +78,10 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_stop_after_exec,
 	NR_kernel_printk, // 0x28
 	NR_path_at,
+	NR_psynch_rw_rdlock,
+	NR_psynch_rw_wrlock,
+	NR_psynch_rw_unlock,
+	NR_psynch_cvclrprepost,
 };
 
 struct path_at_args
