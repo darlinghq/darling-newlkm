@@ -225,6 +225,7 @@ __END_DECLS
 struct thread_call {
 	struct call_entry tc_call;
 	struct delayed_work tc_work;
+	int free;
 };
 #else
 struct thread_call {

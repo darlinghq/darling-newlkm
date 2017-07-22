@@ -120,7 +120,7 @@ DEFINE_MUTEX(pthread_list_mlock);
 #define LIST_FOREACH(entry, head, member) list_for_each_entry(entry, head, member)
 #define LIST_REMOVE(entry, member) list_del(&(entry)->member)
 #define LIST_INSERT_HEAD(list, what, member) list_add(&(what)->member, list)
-#define LIST_FIRST(head) list_first_entry(head, struct ksyn_wait_queue, kw_hash)
+#define LIST_FIRST(head) (list_empty(head) ? NULL : list_first_entry(head, struct ksyn_wait_queue, kw_hash))
 
 struct list_head* pth_glob_hashtbl;
 u_long pthhash;
@@ -471,6 +471,7 @@ int kwq_find_rw_lowest(ksyn_wait_queue_t kwq, int flags, uint32_t premgen, int *
 ksyn_waitq_element_t ksyn_queue_find_seq(ksyn_wait_queue_t kwq, ksyn_queue_t kq, uint32_t seq, int remove);
 int kwq_handle_overlap(ksyn_wait_queue_t kwq, uint32_t lgenval, uint32_t ugenval, uint32_t rw_wc, uint32_t *updatebitsp, int flags , int * blockp);
 int kwq_handle_downgrade(ksyn_wait_queue_t kwq, uint32_t mgen, int flags, uint32_t premgen, int * blockp);
+void psynch_wq_cleanup(__unused void *  param, __unused void * param1);
 
 static void
 UPDATE_CVKWQ(ksyn_wait_queue_t kwq, uint32_t mgen, uint32_t ugen, uint32_t rw_wc, __unused uint64_t tid, __unused int wqtype)
@@ -733,6 +734,7 @@ psynch_mutexwait(__unused proc_t p, struct psynch_mutexwait_args * uap, uint32_t
 	uth = current_uthread();
 
 	kwe = &uth->uu_kwe;
+	sema_init(&kwe->linux_sem, 0);
 	kwe->kwe_lockseq = uap->mgen;
 	kwe->kwe_uth = uth;
 	kwe->kwe_psynchretval = 0;
@@ -1567,6 +1569,7 @@ psynch_rw_rdlock(__unused proc_t p, struct psynch_rw_rdlock_args * uap, uint32_t
 
 	/* preserve the seq number */
 	kwe = &uth->uu_kwe;
+	sema_init(&kwe->linux_sem, 0);
 	kwe->kwe_lockseq = lgen;
 	kwe->kwe_uth = uth;
 	kwe->kwe_psynchretval = 0;
@@ -1882,7 +1885,9 @@ psynch_rw_wrlock(__unused proc_t p, struct psynch_rw_wrlock_args * uap, uint32_t
 	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWWRLOCK | DBG_FUNC_START, (uint32_t)rwlock, lgen, ugen, rw_wc, 0);
 #endif /* _PSYNCH_TRACE_ */
 	uth = current_uthread();
+
 	kwe = &uth->uu_kwe;
+	sema_init(&kwe->linux_sem, 0);
 	kwe->kwe_lockseq = lgen;
 	kwe->kwe_uth = uth;
 	kwe->kwe_psynchretval = 0;
@@ -2588,6 +2593,20 @@ hashinit(int elements, int type, u_long *hashmask)
 }
 
 
+void
+psynch_init(void)
+{
+	pth_global_hashinit();
+	psynch_thcall = thread_call_allocate(psynch_wq_cleanup, NULL);
+}
+
+void
+psynch_exit(void)
+{
+	thread_call_free(psynch_thcall);
+	pth_global_hashexit();
+}
+
 /* ************************************************************************** */
 void
 pth_global_hashinit()
@@ -3152,7 +3171,7 @@ ksyn_block_thread_locked(ksyn_wait_queue_t kwq, uint64_t abstime, ksyn_waitq_ele
 	else
 		kret = thread_block_parameter(continuation, parameter);
 #else
-	int lret = down_interruptible_timeout(&kwe->linux_sem, abstime);
+	int lret = down_interruptible_timeout(&kwe->linux_sem, abstime ? abstime : LINUX_MAX_SCHEDULE_TIMEOUT);
 	if (lret == -LINUX_ETIME)
 		kret = THREAD_TIMED_OUT;
 	else if (lret == -LINUX_EINTR)
@@ -4023,8 +4042,7 @@ ksyn_queue_removefirst(ksyn_queue_t kq, ksyn_wait_queue_t kwq)
 		kwq->kw_inqueue--;
 	
 		if(kq->ksynq_count != 0) {
-			// q_kwe = TAILQ_FIRST(&kq->ksynq_kwelist);
-			q_kwe = list_first_entry(&kq->ksynq_kwelist, struct ksyn_waitq_element, kwe_list);
+			q_kwe = TAILQ_FIRST(&kq->ksynq_kwelist);
 			kq->ksynq_firstnum = (q_kwe->kwe_lockseq & PTHRW_COUNT_MASK);
 		} else {
 			kq->ksynq_firstnum = 0;

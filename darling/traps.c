@@ -144,7 +144,7 @@ static int mach_init(void)
 
 	darling_task_init();
 	darling_xnu_init();
-	pth_global_hashinit();
+	psynch_init();
 
 	err = misc_register(&mach_dev);
 	if (err < 0)
@@ -160,7 +160,7 @@ fail:
 static void mach_exit(void)
 {
 	darling_xnu_deinit();
-	pth_global_hashexit();
+	psynch_exit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 }

@@ -28,10 +28,10 @@ void
 pth_proc_hashdelete(task_t p);
 
 void
-pth_global_hashinit(void);
+psynch_init(void);
 
 void
-pth_global_hashexit(void);
+psynch_exit(void);
 
 #endif
 

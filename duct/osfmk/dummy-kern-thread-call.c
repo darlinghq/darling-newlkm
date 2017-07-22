@@ -214,6 +214,7 @@ thread_call_allocate_with_priority(
         return 0;
 }
 
+#if 0
 /*
  *  thread_call_allocate:
  *
@@ -242,6 +243,7 @@ thread_call_free(
         kprintf("not implemented: thread_call_free()\n");
         return 0;
 }
+#endif
 
 /*
  *  thread_call_enter:
