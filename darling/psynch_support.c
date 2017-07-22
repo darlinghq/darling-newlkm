@@ -117,10 +117,10 @@ DEFINE_MUTEX(pthread_list_mlock);
 #define TAILQ_INSERT_TAIL(head, entry, member) list_add_tail(&(entry)->member, head)
 #define TAILQ_INSERT_BEFORE(where, what, member) list_add_tail(&(what)->member, &(where)->member)
 
-#define LIST_FOREACH(entry, head, member) list_for_each_entry(entry, head, member)
+#define LIST_FOREACH(entry, head, member) typeof(entry) __foreach_tmp; list_for_each_entry_safe(entry, __foreach_tmp, head, member)
 #define LIST_REMOVE(entry, member) list_del(&(entry)->member)
 #define LIST_INSERT_HEAD(list, what, member) list_add(&(what)->member, list)
-#define LIST_FIRST(head) (list_empty(head) ? NULL : list_first_entry(head, struct ksyn_wait_queue, kw_hash))
+#define LIST_FIRST(head, member) (list_empty(head) ? NULL : list_first_entry(head, struct ksyn_wait_queue, member))
 
 struct list_head* pth_glob_hashtbl;
 u_long pthhash;
@@ -2727,7 +2727,7 @@ pth_proc_hashdelete(proc_t p)
 
 	pthread_list_lock();
 	for(i= 0; i < hashsize; i++) {
-		while ((kwq = LIST_FIRST(&hashptr[i])) != NULL) {
+		while ((kwq = LIST_FIRST(&hashptr[i], kw_hash)) != NULL) {
 			if ((kwq->kw_pflags & KSYN_WQ_INHASH) != 0) {
 				kwq->kw_pflags &= ~KSYN_WQ_INHASH;
 				LIST_REMOVE(kwq, kw_hash);
@@ -3136,7 +3136,7 @@ psynch_wq_cleanup(__unused void *  param, __unused void * param1)
 	pthread_list_unlock();
 	
 	
-	while ((kwq = LIST_FIRST(&freelist)) != NULL) {
+	while ((kwq = LIST_FIRST(&freelist, kw_list)) != NULL) {
 		LIST_REMOVE(kwq, kw_list);
 #ifndef __DARLING__
 		lck_mtx_destroy(&kwq->kw_lock, pthread_lck_grp);
