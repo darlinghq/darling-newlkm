@@ -368,6 +368,9 @@ struct task {
 	/* Statistics accumulated for terminated threads from this task */
 	uint32_t	task_timer_wakeups_bin_1;
 	uint32_t	task_timer_wakeups_bin_2;
+#ifdef __DARLING__
+	struct list_head* p_pthhash;
+#endif
 };
 
 #define task_lock(task)		lck_mtx_lock(&(task)->lock)

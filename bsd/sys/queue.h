@@ -367,6 +367,7 @@ struct {								\
 } while (0)
 
 
+#ifndef __DARLING__
 /*
  * List declarations.
  */
@@ -383,6 +384,7 @@ struct {								\
 	struct type *le_next;	/* next element */			\
 	struct type **le_prev;	/* address of previous next element */	\
 }
+#endif
 
 /*
  * List functions.

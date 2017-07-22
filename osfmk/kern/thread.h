@@ -97,6 +97,10 @@
 
 #include <sys/cdefs.h>
 
+#ifdef __DARLING__
+#include <darling/pthread_internal.h>
+#endif
+
 #ifdef	MACH_KERNEL_PRIVATE
 
 #include <cputypes.h>
@@ -442,6 +446,7 @@ struct thread {
 #if defined (__DARLING__)
         struct task_struct        * linux_task;
         // linux_wait_queue_t          lwait;
+	struct ksyn_waitq_element uu_kwe;
 #endif
 };
 

@@ -122,7 +122,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef NSEC_PER_MSEC
 
 // for xnu/bsd/queue.h
-#undef LIST_HEAD
+// #undef LIST_HEAD
 
 // for xnu/bsd/sys/cdefs.h
 #undef __CONCAT

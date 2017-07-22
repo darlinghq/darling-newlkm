@@ -147,8 +147,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define LINUX_LIST_HEAD(name) \
         struct list_head name   = LINUX_LIST_HEAD_INIT (name)
 
-#undef LIST_HEAD_INIT
-#undef LIST_HEAD
+//#undef LIST_HEAD_INIT
+//#undef LIST_HEAD
 
 // for arch/arm/include/asm/signal.h
 /*

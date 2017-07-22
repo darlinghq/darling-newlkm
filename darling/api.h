@@ -292,38 +292,47 @@ struct pthread_kill_args
 
 struct psynch_cvwait_args
 {
-	uint64_t cv;
-	uint32_t cvgen;
+	unsigned long cv;
+	uint64_t cvlsgen;
 	uint32_t cvugen;
-	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
-	uint64_t sec;
-	/* Called usec, but seems to contain nsec */
-	uint64_t usec;
+	unsigned long mutex;
+	uint64_t mugen;
+	uint32_t flags;
+	int64_t sec;
+	uint32_t nsec;
 };
 
 struct psynch_cvsignal_args
 {
-	uint64_t cv;
-	uint32_t cvgen;
+	unsigned long cv;
+	uint64_t cvlsgen;
 	uint32_t cvugen;
-	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
 	int thread_port;
+	unsigned long mutex;
+	uint64_t mugen;
+	uint64_t tid;
 	uint32_t flags;
 };
 
 struct psynch_cvbroad_args
 {
 	uint64_t cv;
-	uint32_t cvgen;
-	uint32_t diffgen;
+	uint64_t cvlsgen;
+	uint64_t cvudgen;
+	uint32_t flags;
 	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
+	uint64_t mugen;
 	uint64_t tid;
+};
+
+struct psynch_cvclrprepost_args
+{
+	uint64_t cv;
+	uint32_t cvgen;
+	uint32_t cvugen;
+	uint32_t cvsgen;
+	uint32_t prepocnt;
+	uint32_t preposeq;
 	uint32_t flags;
 };
 
@@ -369,6 +378,33 @@ struct set_dyld_info_args
 struct kernel_printk_args
 {
 	char buf[512];
+};
+
+struct psynch_rw_rdlock_args
+{
+	uint64_t rwlock;
+	uint32_t lgenval;
+	uint32_t ugenval;
+	uint32_t rw_wc;
+	int flags;
+};
+
+struct psynch_rw_wrlock_args
+{
+	uint64_t rwlock;
+	uint32_t lgenval;
+	uint32_t ugenval;
+	uint32_t rw_wc;
+	int flags;
+};
+
+struct psynch_rw_unlock_args
+{
+	uint64_t rwlock;
+	uint32_t lgenval;
+	uint32_t ugenval;
+	uint32_t rw_wc;
+	int flags;
 };
 
 #pragma pack (pop)

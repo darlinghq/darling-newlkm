@@ -115,6 +115,8 @@ void duct_task_destroy(task_t task)
 
 }
 
+extern void pth_proc_hashinit(task_t t);
+
 kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task, struct task_struct* ltask)
 {
         task_t            new_task;
@@ -127,6 +129,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
     #endif
 
         new_task = (task_t) duct_zalloc(task_zone);
+        pth_proc_hashinit(new_task);
 
         // printk (KERN_NOTICE "task create internal's new task: 0x%x", (unsigned int) new_task);
 
