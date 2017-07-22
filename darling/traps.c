@@ -43,6 +43,7 @@
 #include <kern/task.h>
 #include <kern/ipc_tt.h>
 #include <kern/queue.h>
+#include <vm/vm_map.h>
 #include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
 #include "task_registry.h"
@@ -346,8 +347,19 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 	const unsigned int num_traps = sizeof(mach_traps) / sizeof(mach_traps[0]);
 	const struct trap_entry* entry;
 	long rv;
+	pid_t owner;
 
 	task_t task = (task_t) file->private_data;
+
+	rcu_read_lock();
+	owner = task_tgid_nr(task->map->linux_task);
+	rcu_read_unlock();
+
+	if (owner != task_tgid_nr(linux_current))
+	{
+		debug_msg("Your /dev/mach fd was opened in a different process!\n");
+		return -LINUX_EINVAL;
+	}
 
 	ioctl_num -= DARLING_MACH_API_BASE;
 
