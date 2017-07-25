@@ -36,6 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_pre_xnu.h"
 
 #include "duct_kern_waitqueue.h"
+#include "duct_kern_printf.h"
 
 // #include <mach/mach_types.h>
 #include <kern/mach_param.h>
