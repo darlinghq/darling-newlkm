@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "duct.h"
+
 #include "duct_pre_xnu.h"
 #include "duct_kern_task.h"
 #include "duct_kern_zalloc.h"
@@ -48,6 +49,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vm/vm_map.h>
 #include <darling/task_registry.h>
+#define current linux_current
+#include <linux/mm.h>
+#include <linux/sched.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/cputime.h>
 
 task_t            kernel_task;
 zone_t            task_zone;
@@ -352,6 +358,14 @@ void task_reference_wrapper(task_t t)
 {
 	task_reference(t);
 }
+
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
+typedef u64 cputime_t;
+
+// On new kernels, cputime is in nanoseconds
+#define cputime_to_usecs(v) ((v) / 1000)
+#endif
 
 // The following two functions are copied from kernel/sched/cputime.c
 // because the are not made available to kernel modules

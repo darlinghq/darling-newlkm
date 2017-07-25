@@ -44,6 +44,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <vm/vm_map.h>
 
+#define current linux_current
+#include <linux/sched/mm.h>
+
 #define BAD_ADDR(x)     ((unsigned long)(x) >= TASK_SIZE)
 
 #undef vmalloc
