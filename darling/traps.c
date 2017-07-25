@@ -127,6 +127,13 @@ static const struct trap_entry mach_traps[60] = {
 	
 	// TASKS
 	TRAP(NR_task_for_pid_trap, task_for_pid_entry),
+	TRAP(NR_pid_for_task_trap, pid_for_task_entry),
+
+	// BSD
+	TRAP(NR_getuid, getuid_entry),
+	TRAP(NR_getgid, getgid_entry),
+	TRAP(NR_setuid, setuid_entry),
+	TRAP(NR_setgid, setgid_entry),
 };
 #undef TRAP
 
@@ -184,6 +191,8 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		return -LINUX_EINVAL;
 
 	file->private_data = new_task;
+	// [1] = euid
+	// [2] = egid
 	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
 	
 	// Are we being opened after fork or execve?
@@ -204,6 +213,10 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		if (bootstrap_port != NULL)
 			task_set_bootstrap_port(new_task, bootstrap_port);
 		
+		// Inherit UID and GID
+		new_task->audit_token.val[1] = old_task->audit_token.val[1];
+		new_task->audit_token.val[2] = old_task->audit_token.val[2];
+
 		// find the old fd and close it (later)
 		files = linux_current->files;
 		
@@ -248,12 +261,18 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		
 			task_deallocate(parent_task);
 
+			// Inherit UID and GID
+			new_task->audit_token.val[1] = parent_task->audit_token.val[1];
+			new_task->audit_token.val[2] = parent_task->audit_token.val[2];
+
 			ppid_fork = ppid;
 		}
 		else
 		{
 			// PID 1 case (or manually run mldr)
 			debug_msg("This task has no Darling parent\n");
+
+			// UID and GID are left as 0
 		}
 	}
 	
@@ -833,6 +852,30 @@ PSYNCH_ENTRY(psynch_rw_rdlock);
 PSYNCH_ENTRY(psynch_rw_wrlock);
 PSYNCH_ENTRY(psynch_rw_unlock);
 PSYNCH_ENTRY(psynch_cvclrprepost);
+
+int getuid_entry(task_t task, void* unused)
+{
+	return task->audit_token.val[1];
+}
+
+int getgid_entry(task_t task, void* unused)
+{
+	return task->audit_token.val[2];
+}
+
+int setuid_entry(task_t task, void* uid)
+{
+	int newuid = (int) uid;
+	task->audit_token.val[1] = newuid;
+	return 0;
+}
+
+int setgid_entry(task_t task, void* gid)
+{
+	int newgid = (int) gid;
+	task->audit_token.val[2] = newgid;
+	return 0;
+}
 
 module_init(mach_init);
 module_exit(mach_exit);
