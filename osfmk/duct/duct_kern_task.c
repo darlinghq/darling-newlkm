@@ -353,6 +353,67 @@ void task_reference_wrapper(task_t t)
 	task_reference(t);
 }
 
+// The following two functions are copied from kernel/sched/cputime.c
+// because the are not made available to kernel modules
+/*
+ * Accumulate raw cputime values of dead tasks (sig->[us]time) and live
+ * tasks (sum on group iteration) belonging to @tsk's group.
+ */
+void __thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
+{
+        struct signal_struct *sig = tsk->signal;
+        cputime_t utime, stime;
+        struct task_struct *t;
+        unsigned int seq, nextseq;
+        unsigned long flags;
+
+        /*
+         * Update current task runtime to account pending time since last
+         * scheduler action or thread_group_cputime() call. This thread group
+         * might have other running tasks on different CPUs, but updating
+         * their runtime can affect syscall performance, so we skip account
+         * those pending times and rely only on values updated on tick or
+         * other scheduler action.
+         */
+#if 0
+        if (same_thread_group(linux_current, tsk))
+                (void) task_sched_runtime(linux_current);
+#endif
+
+        rcu_read_lock();
+        /* Attempt a lockless read on the first round. */
+        nextseq = 0;
+        do {
+                seq = nextseq;
+                flags = read_seqbegin_or_lock_irqsave(&sig->stats_lock, &seq);
+                times->utime = sig->utime;
+                times->stime = sig->stime;
+                times->sum_exec_runtime = sig->sum_sched_runtime;
+
+                for_each_thread(tsk, t) {
+                        task_cputime(t, &utime, &stime);
+                        times->utime += utime;
+                        times->stime += stime;
+                        times->sum_exec_runtime += t->se.sum_exec_runtime;
+                }
+                /* If lockless access failed, take the lock. */
+                nextseq = 1;
+        } while (need_seqretry(&sig->stats_lock, seq));
+        done_seqretry_irqrestore(&sig->stats_lock, seq, flags);
+        rcu_read_unlock();
+}
+
+
+static void __thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
+{
+        struct task_cputime cputime;
+
+        __thread_group_cputime(p, &cputime);
+
+        *ut = cputime.utime;
+        *st = cputime.stime;
+}
+
 kern_return_t
 task_info(
     task_t                  task,
@@ -404,6 +465,99 @@ task_info(
 		} else {
 			*task_info_count = TASK_LEGACY_DYLD_INFO_COUNT;
 		}
+		break;
+	}
+	case TASK_BASIC_INFO_64:
+	case TASK_BASIC_INFO_32:
+	{
+		struct task_struct* ltask = task->map->linux_task;
+		struct mm_struct* mm = get_task_mm(ltask);
+		unsigned long anon, file, shmem, total_rss;
+		//cputime_t utime, stime;
+		uint64_t utimeus, stimeus;
+
+		anon = get_mm_counter(mm, MM_ANONPAGES);
+		file = get_mm_counter(mm, MM_FILEPAGES);
+		shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+		total_rss = anon + file + shmem;
+
+		//__thread_group_cputime_adjusted(ltask, &utime, &stime);
+		//utimeus = cputime_to_usecs(utime);
+		//stimeus = cputime_to_usecs(stime);
+		utimeus = stimeus = 0; // Dunno how this is accounted on Linux
+
+		if (flavor == TASK_BASIC_INFO_64)
+		{
+			if (*task_info_count < TASK_BASIC_INFO_64_COUNT)
+			{
+				error = KERN_INVALID_ARGUMENT;
+				break;
+			}
+
+			*task_info_count = TASK_BASIC_INFO_64_COUNT;
+
+			struct task_basic_info_64* info = (struct task_basic_info_64*) task_info_out;
+
+			info->suspend_count = 0;
+			info->virtual_size = PAGE_SIZE * mm->total_vm;
+			info->resident_size = PAGE_SIZE * total_rss;
+			info->user_time.seconds = utimeus / USEC_PER_SEC;
+			info->user_time.microseconds = utimeus % USEC_PER_SEC;
+			info->system_time.seconds = stimeus / USEC_PER_SEC;
+			info->system_time.microseconds = stimeus % USEC_PER_SEC;
+			info->policy = 0;
+		}
+		else
+		{
+			if (*task_info_count < TASK_BASIC_INFO_32_COUNT)
+			{
+				error = KERN_INVALID_ARGUMENT;
+				break;
+			}
+
+			*task_info_count = TASK_BASIC_INFO_32_COUNT;
+
+			struct task_basic_info_32* info = (struct task_basic_info_32*) task_info_out;
+
+			info->suspend_count = 0;
+			info->virtual_size = PAGE_SIZE * mm->total_vm;
+			info->resident_size = PAGE_SIZE * total_rss;
+			info->user_time.seconds = utimeus / USEC_PER_SEC;
+			info->user_time.microseconds = utimeus % USEC_PER_SEC;
+			info->system_time.seconds = stimeus / USEC_PER_SEC;
+			info->system_time.microseconds = stimeus % USEC_PER_SEC;
+			info->policy = 0;
+		}
+
+		error = KERN_SUCCESS;
+		break;
+	}
+	case TASK_THREAD_TIMES_INFO:
+	{
+		struct task_struct* ltask = task->map->linux_task;
+		cputime_t utime, stime;
+		uint64_t utimeus, stimeus;
+		task_thread_times_info_data_t* info = (task_thread_times_info_data_t*) task_info_out;
+
+		if (*task_info_count < TASK_THREAD_TIMES_INFO_COUNT)
+		{
+			error = KERN_INVALID_ARGUMENT;
+			break;
+		}
+
+		*task_info_count = TASK_THREAD_TIMES_INFO_COUNT;
+
+		__thread_group_cputime_adjusted(ltask, &utime, &stime);
+
+		utimeus = cputime_to_usecs(utime);
+		stimeus = cputime_to_usecs(stime);
+
+		info->user_time.seconds = utimeus / USEC_PER_SEC;
+		info->user_time.microseconds = utimeus % USEC_PER_SEC;
+		info->system_time.seconds = stimeus / USEC_PER_SEC;
+		info->system_time.microseconds = stimeus % USEC_PER_SEC;
+
+		error = KERN_SUCCESS;
 		break;
 	}
 	default:

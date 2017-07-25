@@ -304,7 +304,7 @@ void
 task_name_deallocate(
     task_name_t     task_name)
 {
-        kprintf("not implemented: task_name_deallocate()\n");
+    task_deallocate((task_t) task_name);
 }
 
 

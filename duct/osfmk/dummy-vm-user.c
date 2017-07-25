@@ -942,6 +942,7 @@ vm_behavior_set(
  *	XXX Dependency: syscall_vm_region() also supports only one flavor.
  */
 
+#if 0
 kern_return_t
 mach_vm_region(
 	vm_map_t		 map,
@@ -955,6 +956,8 @@ mach_vm_region(
         kprintf("not implemented: mach_vm_region()\n");
         return 0;
 }
+#endif
+
 /*
  *	vm_region_64 and vm_region:
  *

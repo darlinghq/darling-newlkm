@@ -36,6 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_pre_xnu.h"
 #include "duct_vm_user.h"
 #include "duct_kern_printf.h"
+#include <ipc/ipc_port.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
 #include "access_process_vm.h"
@@ -246,4 +247,106 @@ vm_copy(
 {
 	return mach_vm_copy(map, source_address, size, dest_address);
 }
+
+kern_return_t
+mach_vm_region(
+    vm_map_t         map,
+    mach_vm_offset_t    *address,       /* IN/OUT */
+    mach_vm_size_t  *size,          /* OUT */
+    vm_region_flavor_t   flavor,        /* IN */
+    vm_region_info_t     info,          /* OUT */
+    mach_msg_type_number_t  *count,         /* IN/OUT */
+    mach_port_t     *object_name)       /* OUT */
+{
+	switch (flavor)
+	{
+		case VM_REGION_BASIC_INFO:
+		case VM_REGION_BASIC_INFO_64:
+		{
+			kern_return_t rv = KERN_SUCCESS;
+			struct mm_struct* mm;
+			struct vm_area_struct* vma;
+			struct task_struct* ltask = map->linux_task;
+
+			mm = ltask->mm;
+			if (!mm || !mmget_not_zero(mm))
+				return KERN_FAILURE;
+
+			down_read(&mm->mmap_sem);
+
+			vma = find_vma(mm, *address);
+			if (vma == NULL)
+			{
+				rv = KERN_INVALID_ADDRESS;
+				goto out;
+			}
+
+			*address = vma->vm_start;
+			*size = vma->vm_end - vma->vm_start;
+
+			if (flavor == VM_REGION_BASIC_INFO_64)
+			{
+				vm_region_basic_info_64_t out = (vm_region_basic_info_64_t) info;
+
+				if (*count < VM_REGION_BASIC_INFO_COUNT_64)
+					return KERN_INVALID_ARGUMENT;
+				*count = VM_REGION_BASIC_INFO_COUNT_64;
+
+				out->protection = 0;
+
+				if (vma->vm_flags & VM_READ)
+					out->protection |= VM_PROT_READ;
+				if (vma->vm_flags & VM_WRITE)
+					out->protection |= VM_PROT_WRITE;
+				if (vma->vm_flags & VM_EXEC)
+					out->protection = VM_PROT_EXECUTE;
+
+				out->offset = vma->vm_pgoff * PAGE_SIZE;
+				out->shared = !!(vma->vm_flags & VM_MAYSHARE);
+				out->behavior = VM_BEHAVIOR_DEFAULT;
+				out->user_wired_count = 0;
+				out->inheritance = 0;
+				out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+				out->reserved = FALSE;
+			}
+			else
+			{
+				vm_region_basic_info_t out = (vm_region_basic_info_t) info;
+
+				if (*count < VM_REGION_BASIC_INFO_COUNT)
+					return KERN_INVALID_ARGUMENT;
+				*count = VM_REGION_BASIC_INFO_COUNT;
+
+				out->protection = 0;
+
+				if (vma->vm_flags & VM_READ)
+					out->protection |= VM_PROT_READ;
+				if (vma->vm_flags & VM_WRITE)
+					out->protection |= VM_PROT_WRITE;
+				if (vma->vm_flags & VM_EXEC)
+					out->protection = VM_PROT_EXECUTE;
+
+				out->offset = vma->vm_pgoff * PAGE_SIZE;
+				out->shared = !!(vma->vm_flags & VM_MAYSHARE);
+				out->behavior = VM_BEHAVIOR_DEFAULT;
+				out->user_wired_count = 0;
+				out->inheritance = 0;
+				out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+				out->reserved = FALSE;
+			}
+
+out:
+			up_read(&mm->mmap_sem);
+			mmput(mm);
+
+			if (object_name)
+				*object_name = IP_NULL;
+
+			return rv;
+		}
+		default:
+			return KERN_INVALID_ARGUMENT;
+	}
+}
+
 
