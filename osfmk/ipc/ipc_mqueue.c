@@ -74,6 +74,7 @@
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_printf.h>
+#include <duct/duct_kern_waitqueue.h>
 #endif
 
 #include <mach/port.h>
