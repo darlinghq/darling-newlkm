@@ -412,8 +412,19 @@ wait_queue_wakeup64_all_locked(
         wait_result_t result,
         boolean_t unlock)
 {
-        printk (KERN_NOTICE "BUG: wait_queue_wakeup64_all_locked () called\n");
+        printf ("BUG: wait_queue_wakeup64_all_locked () called\n");
         return 0;
+}
+
+// Needed for kevpsetfd
+// It doesn't enqueue itself as an IPC thread waiting for a message,
+// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
+
+void wait_queue_notify(wait_queue_t waitq,
+        event64_t event)
+{
+	xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, event);
+	wake_up(&walked_waitq->linux_waitqh);
 }
 
 thread_t
@@ -458,13 +469,7 @@ wait_queue_wakeup64_identity_locked(
 	}
 	spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
 
-	// Needed for kevpsetfd
-	// It doesn't enqueue itself as an IPC thread waiting for a message,
-	// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
-	if (receiver == NULL)
-		wake_up(&walked_waitq->linux_waitqh);
-
-	printk (KERN_NOTICE "- receiver: 0x%p\n", receiver);
+	printf ("- receiver: 0x%p\n", receiver);
 	return receiver;
 }
 

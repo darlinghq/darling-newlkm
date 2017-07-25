@@ -283,6 +283,9 @@ ipc_mqueue_add(
 
 			if (th == THREAD_NULL)
 			{
+#ifdef __DARLING__
+				wait_queue_notify(port_waitq, IPC_MQUEUE_RECEIVE);
+#endif
 				printf("THREAD_NULL\n");
 				goto leave;
 			}
@@ -562,6 +565,11 @@ ipc_mqueue_post(
 			 */
 			assert(mqueue->imq_msgcount > 0);
 			ipc_kmsg_enqueue_macro(&mqueue->imq_messages, kmsg);
+
+#ifdef __DARLING__
+			wait_queue_notify(waitq, IPC_MQUEUE_RECEIVE);
+#endif
+
 			break;
 		}
 	
