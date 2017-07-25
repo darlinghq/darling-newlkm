@@ -45,7 +45,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vm/vm_map.h>
 
 #define current linux_current
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #include <linux/sched/mm.h>
+#endif
 
 #define BAD_ADDR(x)     ((unsigned long)(x) >= TASK_SIZE)
 

@@ -52,8 +52,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define current linux_current
 #include <linux/mm.h>
 #include <linux/sched.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #include <linux/sched/mm.h>
 #include <linux/sched/cputime.h>
+#endif
 
 task_t            kernel_task;
 zone_t            task_zone;
