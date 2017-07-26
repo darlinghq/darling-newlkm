@@ -109,7 +109,7 @@ DEFINE_MUTEX(pthread_list_mlock);
 #define LIST_ENTRY(where) struct list_head
 #define LIST_INIT INIT_LIST_HEAD
 
-#define TAILQ_FIRST(head) list_first_entry(head, struct ksyn_waitq_element, kwe_list)
+#define TAILQ_FIRST(head) (list_empty(head) ? NULL : list_first_entry(head, struct ksyn_waitq_element, kwe_list))
 #define TAILQ_LAST(head, member) list_last_entry(head, struct ksyn_waitq_element, kwe_list)
 #define TAILQ_FOREACH_SAFE(elem, list, entry, temp) list_for_each_entry_safe(elem, temp, list, entry)
 #define TAILQ_REMOVE(list, elem, member) list_del(&(elem)->member)
@@ -2922,6 +2922,7 @@ loop:
 					kwq->kw_owner = tid;
 				} else if ((kwq->kw_iocount == 1) && (kwq->kw_dropcount == kwq->kw_iocount)) {
 					kwq->kw_pflags |= KSYN_WQ_WAITING;
+					pthread_list_unlock();
 					/* wait for the wq to be free */
 #ifndef __DARLING__
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
