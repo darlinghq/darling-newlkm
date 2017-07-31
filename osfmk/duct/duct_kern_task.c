@@ -407,7 +407,9 @@ void __thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
                 times->sum_exec_runtime = sig->sum_sched_runtime;
 
                 for_each_thread(tsk, t) {
-                        task_cputime(t, &utime, &stime);
+                        // task_cputime(t, &utime, &stime); // not inlined under certain configs (and not exported)
+                        utime = t->utime;
+                        stime = t->stime;
                         times->utime += utime;
                         times->stime += stime;
                         times->sum_exec_runtime += t->se.sum_exec_runtime;
