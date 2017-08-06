@@ -87,4 +87,6 @@ int getgid_entry(task_t task, void* unused);
 int setuid_entry(task_t task, void* uid);
 int setgid_entry(task_t task, void* gid);
 
+int get_tracer_entry(task_t, void* pid);
+
 #endif

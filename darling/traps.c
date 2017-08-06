@@ -81,6 +81,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_stop_after_exec, stop_after_exec_entry),
 	TRAP(NR_kernel_printk, kernel_printk_entry),
 	TRAP(NR_path_at, path_at_entry),
+	TRAP(NR_get_tracer, get_tracer_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -865,16 +866,51 @@ int getgid_entry(task_t task, void* unused)
 
 int setuid_entry(task_t task, void* uid)
 {
-	int newuid = (int) uid;
+	int newuid = (int)(long) uid;
 	task->audit_token.val[1] = newuid;
 	return 0;
 }
 
 int setgid_entry(task_t task, void* gid)
 {
-	int newgid = (int) gid;
+	int newgid = (int)(long) gid;
 	task->audit_token.val[2] = newgid;
 	return 0;
+}
+
+// Following 2 functions have been copied from kernel/pid.c,
+// because these functions aren't exported to modules.
+static struct task_struct *__find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
+{
+	return pid_task(find_pid_ns(nr, ns), PIDTYPE_PID);
+}
+
+static struct task_struct *__find_task_by_vpid(pid_t vnr)
+{
+	return __find_task_by_pid_ns(vnr, task_active_pid_ns(linux_current));
+}
+
+// Same as parsing TracerPid from procfs, but expecting native
+// applications to parse text files from kernel feels like
+// a bad joke.
+int get_tracer_entry(task_t self, void* pid_in)
+{
+	struct task_struct* task;
+	int tracer = -1;
+	
+	rcu_read_lock();
+	task = __find_task_by_vpid((int)(long) pid_in);
+	if (task == NULL)
+		goto out;
+
+	task = ptrace_parent(task);
+	if (task != NULL)
+		tracer = task_pid_vnr(task);
+
+out:
+	rcu_read_unlock();
+
+	return tracer;
 }
 
 module_init(mach_init);
