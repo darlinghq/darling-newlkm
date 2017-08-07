@@ -87,6 +87,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_getuid,
 	NR_getgid,
 	NR_get_tracer,
+	NR_tid_for_thread,
 };
 
 struct path_at_args

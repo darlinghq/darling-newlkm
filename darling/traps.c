@@ -82,6 +82,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_kernel_printk, kernel_printk_entry),
 	TRAP(NR_path_at, path_at_entry),
 	TRAP(NR_get_tracer, get_tracer_entry),
+	TRAP(NR_tid_for_thread, tid_for_thread_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -761,6 +762,20 @@ int pid_for_task_entry(task_t task, struct pid_for_task* in_args)
 		return KERN_INVALID_ADDRESS;
 	
 	return KERN_SUCCESS;
+}
+
+int tid_for_thread_entry(task_t task, void* tport_in)
+{
+	int tid;
+	thread_t t = port_name_to_thread((int)(long) tport_in);
+
+	if (!t)
+		return -1;
+
+	tid = task_pid_vnr(t->linux_task);
+	thread_deallocate(t);
+
+	return tid;
 }
 
 // This call exists only because we do Mach-O loading in user space.
