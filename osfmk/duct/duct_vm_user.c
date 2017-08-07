@@ -295,7 +295,10 @@ mach_vm_region(
 				vm_region_basic_info_64_t out = (vm_region_basic_info_64_t) info;
 
 				if (*count < VM_REGION_BASIC_INFO_COUNT_64)
-					return KERN_INVALID_ARGUMENT;
+				{
+					rv = KERN_INVALID_ARGUMENT;
+					goto out;
+				}
 				*count = VM_REGION_BASIC_INFO_COUNT_64;
 
 				out->protection = 0;
@@ -320,7 +323,10 @@ mach_vm_region(
 				vm_region_basic_info_t out = (vm_region_basic_info_t) info;
 
 				if (*count < VM_REGION_BASIC_INFO_COUNT)
-					return KERN_INVALID_ARGUMENT;
+				{
+					rv = KERN_INVALID_ARGUMENT;
+					goto out;
+				}
 				*count = VM_REGION_BASIC_INFO_COUNT;
 
 				out->protection = 0;
@@ -355,4 +361,83 @@ out:
 	}
 }
 
+
+kern_return_t
+mach_vm_region_recurse(
+    vm_map_t            map,
+    mach_vm_address_t       *address,
+    mach_vm_size_t      *size,
+    uint32_t            *depth,
+    vm_region_recurse_info_t    info,
+    mach_msg_type_number_t  *infoCnt)
+{
+	if (depth != NULL)
+		*depth = 0;
+
+	kern_return_t rv = KERN_SUCCESS;
+	struct mm_struct* mm;
+	struct vm_area_struct* vma;
+	struct task_struct* ltask = map->linux_task;
+
+	mm = ltask->mm;
+	if (!mm || !mmget_not_zero(mm))
+		return KERN_FAILURE;
+
+	down_read(&mm->mmap_sem);
+
+	vma = find_vma(mm, *address);
+	if (vma == NULL)
+	{
+		rv = KERN_INVALID_ADDRESS;
+		goto out;
+	}
+
+	*address = vma->vm_start;
+	*size = vma->vm_end - vma->vm_start;
+
+	if (*infoCnt == VM_REGION_SUBMAP_SHORT_INFO_COUNT_64)
+	{
+		vm_region_submap_info_64_t out = (vm_region_submap_info_64_t) info;
+
+		memset(out, 0, sizeof(*out));
+		out->protection = 0;
+
+		if (vma->vm_flags & VM_READ)
+			out->protection |= VM_PROT_READ;
+		if (vma->vm_flags & VM_WRITE)
+			out->protection |= VM_PROT_WRITE;
+		if (vma->vm_flags & VM_EXEC)
+			out->protection = VM_PROT_EXECUTE;
+
+		out->offset = vma->vm_pgoff * PAGE_SIZE;
+		out->share_mode = (vma->vm_flags & VM_MAYSHARE) ? SM_SHARED : SM_PRIVATE;
+		out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+	}
+	else if (*infoCnt == VM_REGION_SUBMAP_SHORT_INFO_COUNT_64)
+	{
+		vm_region_submap_short_info_64_t out = (vm_region_submap_short_info_64_t) info;
+
+		memset(out, 0, sizeof(*out));
+		out->protection = 0;
+
+		if (vma->vm_flags & VM_READ)
+			out->protection |= VM_PROT_READ;
+		if (vma->vm_flags & VM_WRITE)
+			out->protection |= VM_PROT_WRITE;
+		if (vma->vm_flags & VM_EXEC)
+			out->protection = VM_PROT_EXECUTE;
+
+		out->offset = vma->vm_pgoff * PAGE_SIZE;
+		out->share_mode = (vma->vm_flags & VM_MAYSHARE) ? SM_SHARED : SM_PRIVATE;
+		out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+	}
+	else
+		rv = KERN_INVALID_ARGUMENT;
+
+out:
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+
+	return rv;
+}
 

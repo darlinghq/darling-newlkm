@@ -1004,6 +1004,7 @@ vm_region(
  *	submaps in a target map
  *
  */
+#if 0
 kern_return_t
 mach_vm_region_recurse(
 	vm_map_t			map,
@@ -1016,6 +1017,7 @@ mach_vm_region_recurse(
         kprintf("not implemented: mach_vm_region_recurse()\n");
         return 0;
 }
+#endif
 /*
  *	vm_region_recurse: A form of vm_region which follows the
  *	submaps in a target map
