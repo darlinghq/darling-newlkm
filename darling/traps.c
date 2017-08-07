@@ -176,6 +176,7 @@ static void mach_exit(void)
 
 extern kern_return_t task_get_special_port(task_t, int which, ipc_port_t*);
 extern kern_return_t task_set_special_port(task_t, int which, ipc_port_t);
+static void darling_ipc_inherit(task_t old_task, task_t new_task);
 
 int mach_dev_open(struct inode* ino, struct file* file)
 {
@@ -205,15 +206,10 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		// 1) Take over the previously used bootstrap port
 		// 2) Find the old fd used before execve and close it
 		
-		ipc_port_t bootstrap_port;
 		int fd;
 		struct files_struct* files;
 		
-		task_get_bootstrap_port(old_task, &bootstrap_port);
-		
-		debug_msg("Setting bootstrap port from old task: %p\n", bootstrap_port);
-		if (bootstrap_port != NULL)
-			task_set_bootstrap_port(new_task, bootstrap_port);
+		darling_ipc_inherit(old_task, new_task);
 		
 		// Inherit UID and GID
 		new_task->audit_token.val[1] = old_task->audit_token.val[1];
@@ -254,13 +250,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		debug_msg("- Fork case detected, ppid=%d, parent_task=%p\n", ppid, parent_task);
 		if (parent_task != NULL)
 		{
-			ipc_port_t bootstrap_port;
-			task_get_bootstrap_port(parent_task, &bootstrap_port);
-		
-			debug_msg("Setting bootstrap port from parent: %p\n", bootstrap_port);
-			if (bootstrap_port != NULL)
-				task_set_bootstrap_port(new_task, bootstrap_port);
-		
+			darling_ipc_inherit(parent_task, new_task);
 			task_deallocate(parent_task);
 
 			// Inherit UID and GID
@@ -314,6 +304,32 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	}
 	
 	return 0;
+}
+
+// Only select ports are inherited across fork or execve.
+// Copy them over.
+static void darling_ipc_inherit(task_t old_task, task_t new_task)
+{
+	int i;
+
+	// Inherit the bootstrap port
+	ipc_port_t bootstrap_port;
+	task_get_bootstrap_port(old_task, &bootstrap_port);
+	
+	debug_msg("Setting bootstrap port from old/parent task: %p\n", bootstrap_port);
+	if (bootstrap_port != NULL)
+		task_set_bootstrap_port(new_task, bootstrap_port);
+
+	// Copy exception ports
+	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++)
+	{
+		if (IP_VALID(old_task->exc_actions[i].port))
+		{
+			new_task->exc_actions[i].port = ipc_port_copy_send(old_task->exc_actions[i].port);
+			new_task->exc_actions[i].behavior = old_task->exc_actions[i].behavior;
+			new_task->exc_actions[i].privileged = old_task->exc_actions[i].privileged;
+		}
+	}
 }
 
 int mach_dev_release(struct inode* ino, struct file* file)
