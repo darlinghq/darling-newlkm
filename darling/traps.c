@@ -132,10 +132,8 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_pid_for_task_trap, pid_for_task_entry),
 
 	// BSD
-	TRAP(NR_getuid, getuid_entry),
-	TRAP(NR_getgid, getgid_entry),
-	TRAP(NR_setuid, setuid_entry),
-	TRAP(NR_setgid, setgid_entry),
+	TRAP(NR_getuidgid, getuidgid_entry),
+	TRAP(NR_setuidgid, setuidgid_entry),
 };
 #undef TRAP
 
@@ -885,27 +883,27 @@ PSYNCH_ENTRY(psynch_rw_wrlock);
 PSYNCH_ENTRY(psynch_rw_unlock);
 PSYNCH_ENTRY(psynch_cvclrprepost);
 
-int getuid_entry(task_t task, void* unused)
+int getuidgid_entry(task_t task, struct uidgid* in_args)
 {
-	return task->audit_token.val[1];
-}
+	struct uidgid rv = {
+		.uid = task->audit_token.val[1],
+		.gid = task->audit_token.val[2]
+	};
 
-int getgid_entry(task_t task, void* unused)
-{
-	return task->audit_token.val[2];
-}
-
-int setuid_entry(task_t task, void* uid)
-{
-	int newuid = (int)(long) uid;
-	task->audit_token.val[1] = newuid;
+	if (copy_to_user(in_args, &rv, sizeof(rv)))
+		return -LINUX_EFAULT;
 	return 0;
 }
 
-int setgid_entry(task_t task, void* gid)
+int setuidgid_entry(task_t task, struct uidgid* in_args)
 {
-	int newgid = (int)(long) gid;
-	task->audit_token.val[2] = newgid;
+	copyargs(args, in_args);
+
+	if (args.uid != -1)
+		task->audit_token.val[1] = args.uid;
+	if (args.gid != -1)
+		task->audit_token.val[2] = args.gid;
+
 	return 0;
 }
 

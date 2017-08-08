@@ -83,10 +83,8 @@ int psynch_rw_wrlock_trap(task_t task, struct psynch_rw_wrlock_args* args);
 int psynch_rw_unlock_trap(task_t task, struct psynch_rw_unlock_args* args);
 int psynch_cvclrprepost_trap(task_t task, struct psynch_cvclrprepost_args* args);
 
-int getuid_entry(task_t task, void* unused);
-int getgid_entry(task_t task, void* unused);
-int setuid_entry(task_t task, void* uid);
-int setgid_entry(task_t task, void* gid);
+int getuidgid_entry(task_t task, struct uidgid* args);
+int setuidgid_entry(task_t task, struct uidgid* args);
 
 int get_tracer_entry(task_t, void* pid);
 
