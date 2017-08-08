@@ -86,6 +86,14 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_tid_for_thread,
 	NR_getuidgid,
 	NR_setuidgid,
+	NR_task_name_for_pid_trap,
+};
+
+struct task_name_for_pid
+{
+	int task_port;
+	int pid;
+	int name_out;
 };
 
 struct uidgid

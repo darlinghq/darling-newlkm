@@ -130,6 +130,7 @@ static const struct trap_entry mach_traps[60] = {
 	// TASKS
 	TRAP(NR_task_for_pid_trap, task_for_pid_entry),
 	TRAP(NR_pid_for_task_trap, pid_for_task_entry),
+	TRAP(NR_task_name_for_pid_trap, task_name_for_pid_entry),
 
 	// BSD
 	TRAP(NR_getuidgid, getuidgid_entry),
@@ -753,6 +754,45 @@ int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 	port_name = ipc_port_copyout_send(sright, task->itk_space);
 	
 	if (copy_to_user(args.task_port, &port_name, sizeof(port_name)))
+		return KERN_INVALID_ADDRESS;
+
+	return KERN_SUCCESS;
+}
+
+int task_name_for_pid_entry(task_t task, struct task_name_for_pid* in_args)
+{
+	struct pid* pidobj;
+	unsigned int pid = 0;
+	task_t task_out;
+	int port_name;
+	ipc_port_t sright;
+
+	copyargs(args, in_args);
+
+	// Convert virtual PID to global PID
+	rcu_read_lock();
+
+	pidobj = find_vpid(args.pid);
+	if (pidobj != NULL)
+		pid = pid_nr(pidobj);
+
+	rcu_read_unlock();
+
+	printk(KERN_DEBUG "- task_name_for_pid(): pid %d -> %d\n", args.pid, pid);
+	if (pid == 0)
+		return KERN_FAILURE;
+	
+	// Lookup task in task registry
+	task_out = darling_task_get(pid);
+	if (task_out == NULL)
+		return KERN_FAILURE;
+	
+	// Turn it into a send right
+	task_reference(task_out);
+	sright = convert_task_name_to_port(task_out);
+	port_name = ipc_port_copyout_send(sright, task->itk_space);
+	
+	if (copy_to_user(&in_args->name_out, &port_name, sizeof(port_name)))
 		return KERN_INVALID_ADDRESS;
 
 	return KERN_SUCCESS;

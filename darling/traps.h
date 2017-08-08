@@ -63,6 +63,7 @@ int fork_wait_for_child_entry(task_t task);
 
 int evproc_create_entry(task_t task, struct evproc_create* args);
 int task_for_pid_entry(task_t task, struct task_for_pid* args);
+int task_name_for_pid_entry(task_t task, struct task_name_for_pid* args);
 int pid_for_task_entry(task_t task, struct pid_for_task* args);
 int tid_for_thread_entry(task_t task, void* tport_in);
 
