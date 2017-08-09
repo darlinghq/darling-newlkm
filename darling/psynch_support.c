@@ -2835,6 +2835,7 @@ loop:
 #ifndef __DARLING__
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
 #else
+					pthread_list_unlock();
 					wait_event(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING));
 #endif
 					/* does not have list lock */
@@ -2927,6 +2928,7 @@ loop:
 #ifndef __DARLING__
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
 #else
+					pthread_list_unlock();
 					wait_event(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING));
 #endif
 
