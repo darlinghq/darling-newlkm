@@ -275,7 +275,11 @@ mach_vm_region(
 			struct task_struct* ltask = map->linux_task;
 
 			mm = ltask->mm;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
 			if (!mm || !mmget_not_zero(mm))
+#else
+			if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+#endif
 				return KERN_FAILURE;
 
 			down_read(&mm->mmap_sem);
@@ -380,7 +384,11 @@ mach_vm_region_recurse(
 	struct task_struct* ltask = map->linux_task;
 
 	mm = ltask->mm;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
 	if (!mm || !mmget_not_zero(mm))
+#else
+	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+#endif
 		return KERN_FAILURE;
 
 	down_read(&mm->mmap_sem);
