@@ -490,13 +490,17 @@ task_info(
 	{
 		struct task_struct* ltask = task->map->linux_task;
 		struct mm_struct* mm = get_task_mm(ltask);
-		unsigned long anon, file, shmem, total_rss;
+		unsigned long anon, file, shmem = 0, total_rss;
 		//cputime_t utime, stime;
 		uint64_t utimeus, stimeus;
 
 		anon = get_mm_counter(mm, MM_ANONPAGES);
 		file = get_mm_counter(mm, MM_FILEPAGES);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0)
 		shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+#endif
+
 		total_rss = anon + file + shmem;
 
 		//__thread_group_cputime_adjusted(ltask, &utime, &stime);
