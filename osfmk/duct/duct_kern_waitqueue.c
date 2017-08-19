@@ -466,7 +466,10 @@ wait_queue_wakeup64_identity_locked(
 	if (lwait) {
 			struct task_struct    * ltask   = lwait->private;
 			receiver    = darling_thread_get(ltask->pid);
-			// thread_lock (receiver);
+			if (receiver != NULL) {
+				thread_lock (receiver);
+			} else
+				printf("- BUG? Cannot darling_thread_get(%d)\n", ltask->pid);
 	}
 	spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
 
@@ -571,7 +574,7 @@ int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, in
                 return 0;
         }
 
-        thread_lock (thread);
+        // thread_lock (thread);
         thread->wait_event      = DUCT_EVENT64_READY;
         // thread_unlock (thread);
 
