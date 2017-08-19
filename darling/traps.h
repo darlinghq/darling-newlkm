@@ -88,5 +88,6 @@ int getuidgid_entry(task_t task, struct uidgid* args);
 int setuidgid_entry(task_t task, struct uidgid* args);
 
 int get_tracer_entry(task_t, void* pid);
+int set_tracer_entry(task_t, struct set_tracer_args* args);
 
 #endif

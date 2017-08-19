@@ -88,8 +88,6 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_setuidgid,
 	NR_task_name_for_pid_trap,
 	NR_set_tracer,
-	NR_set_thread_state,
-	NR_get_thread_state,
 };
 
 struct set_tracer_args

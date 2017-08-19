@@ -370,6 +370,7 @@ struct task {
 	uint32_t	task_timer_wakeups_bin_2;
 #ifdef __DARLING__
 	struct list_head* p_pthhash;
+	int tracer;
 #endif
 };
 

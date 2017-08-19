@@ -82,6 +82,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_kernel_printk, kernel_printk_entry),
 	TRAP(NR_path_at, path_at_entry),
 	TRAP(NR_get_tracer, get_tracer_entry),
+	TRAP(NR_set_tracer, set_tracer_entry),
 	TRAP(NR_tid_for_thread, tid_for_thread_entry),
 
 	// KQUEUE
@@ -947,39 +948,41 @@ int setuidgid_entry(task_t task, struct uidgid* in_args)
 	return 0;
 }
 
-// Following 2 functions have been copied from kernel/pid.c,
-// because these functions aren't exported to modules.
-static struct task_struct *__find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
-{
-	return pid_task(find_pid_ns(nr, ns), PIDTYPE_PID);
-}
-
-static struct task_struct *__find_task_by_vpid(pid_t vnr)
-{
-	return __find_task_by_pid_ns(vnr, task_active_pid_ns(linux_current));
-}
-
-// Same as parsing TracerPid from procfs, but expecting native
-// applications to parse text files from kernel feels like
-// a bad joke.
 int get_tracer_entry(task_t self, void* pid_in)
 {
-	struct task_struct* task;
-	int tracer = -1;
-	
-	rcu_read_lock();
-	task = __find_task_by_vpid((int)(long) pid_in);
-	if (task == NULL)
-		goto out;
+	task_t target_task;
+	int rv;
 
-	task = ptrace_parent(task);
-	if (task != NULL)
-		tracer = task_pid_vnr(task);
+	target_task = darling_task_get((int)(long) pid_in);
+	if (target_task == NULL)
+		return -LINUX_ESRCH;
 
-out:
-	rcu_read_unlock();
+	rv = target_task->tracer;
+	task_deallocate(target_task);
 
-	return tracer;
+	return rv;
+}
+
+int set_tracer_entry(task_t self, struct set_tracer_args* in_args)
+{
+	task_t target_task;
+	int rv = 0;
+
+	copyargs(args, in_args);
+	target_task = darling_task_get(args.target);
+
+	if (target_task == NULL)
+		return -LINUX_ESRCH;
+
+	if (args.tracer <= 0)
+		target_task->tracer = 0;
+	else if (target_task->tracer == 0)
+		target_task->tracer = args.tracer;
+	else
+		rv = -LINUX_EPERM; // already traced
+
+	task_deallocate(target_task);
+	return rv;
 }
 
 module_init(mach_init);
