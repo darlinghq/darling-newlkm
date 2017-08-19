@@ -447,6 +447,11 @@ struct thread {
         struct task_struct        * linux_task;
         // linux_wait_queue_t          lwait;
 	struct ksyn_waitq_element uu_kwe;
+#ifdef __x86_64__
+	x86_thread_state_t thread_state;
+	x86_float_state_t float_state;
+	// TODO: debug regs state?
+#endif
 #endif
 };
 

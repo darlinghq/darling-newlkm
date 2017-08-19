@@ -209,6 +209,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		int fd;
 		struct files_struct* files;
 		
+		new_task->tracer = old_task->tracer;
 		darling_ipc_inherit(old_task, new_task);
 		
 		// Inherit UID and GID
@@ -250,6 +251,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		debug_msg("- Fork case detected, ppid=%d, parent_task=%p\n", ppid, parent_task);
 		if (parent_task != NULL)
 		{
+			new_task->tracer = parent_task->tracer;
 			darling_ipc_inherit(parent_task, new_task);
 			task_deallocate(parent_task);
 
