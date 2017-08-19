@@ -954,8 +954,15 @@ int get_tracer_entry(task_t self, void* pid_in)
 {
 	task_t target_task;
 	int rv;
+	int pid = (int)(long) pid_in;
 
-	target_task = darling_task_get((int)(long) pid_in);
+	if (pid == 0)
+	{
+		task_reference(self);
+		target_task = self;
+	}
+	else
+		target_task = darling_task_get(pid);
 	if (target_task == NULL)
 		return -LINUX_ESRCH;
 
@@ -971,7 +978,13 @@ int set_tracer_entry(task_t self, struct set_tracer_args* in_args)
 	int rv = 0;
 
 	copyargs(args, in_args);
-	target_task = darling_task_get(args.target);
+	if (args.target == 0)
+	{
+		task_reference(self);
+		target_task = self;
+	}
+	else
+		target_task = darling_task_get(args.target);
 
 	if (target_task == NULL)
 		return -LINUX_ESRCH;
