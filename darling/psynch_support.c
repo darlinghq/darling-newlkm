@@ -2836,7 +2836,8 @@ loop:
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
 #else
 					pthread_list_unlock();
-					wait_event(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING));
+					if (wait_event_interruptible(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING)) != 0)
+						return LINUX_EINTR;
 #endif
 					/* does not have list lock */
 					goto loop;
@@ -2929,7 +2930,8 @@ loop:
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
 #else
 					pthread_list_unlock();
-					wait_event(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING));
+					if (wait_event_interruptible(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING)) != 0)
+						return LINUX_EINTR;
 #endif
 
 					// lck_mtx_destroy(&nkwq->kw_lock, pthread_lck_grp);
@@ -3007,7 +3009,7 @@ ksyn_wqrelease(ksyn_wait_queue_t kwq, ksyn_wait_queue_t ckwq, int qfreenow, int 
 #ifndef __DARLING__
 			wakeup(&kwq->kw_pflags);
 #else
-			wake_up(&kwq->linux_wq);
+			wake_up_interruptible(&kwq->linux_wq);
 #endif
 		}
 
@@ -3045,7 +3047,7 @@ ksyn_wqrelease(ksyn_wait_queue_t kwq, ksyn_wait_queue_t ckwq, int qfreenow, int 
 #ifndef __DARLING__
 				wakeup(&kwq->kw_pflags);
 #else
-				wake_up(&kwq->linux_wq);
+				wake_up_interruptible(&kwq->linux_wq);
 #endif
 			}
 			if ((ckwq->kw_pre_rwwc == 0) && (ckwq->kw_inqueue == 0) && (ckwq->kw_pre_intrcount == 0)) {
