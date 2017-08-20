@@ -89,8 +89,12 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_evproc_create, evproc_create_entry),
 	TRAP(NR_evfilt_machport_open, evfilt_machport_open_entry),
 
-	// PSYNCH
+	// PTHREAD
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
+	TRAP(NR_pthread_markcancel, pthread_markcancel_entry),
+	TRAP(NR_pthread_canceled, pthread_canceled_entry),
+
+	// PSYNCH
 	TRAP(NR_psynch_mutexwait_trap, psynch_mutexwait_trap),
 	TRAP(NR_psynch_mutexdrop_trap, psynch_mutexdrop_trap),
 	TRAP(NR_psynch_cvwait_trap, psynch_cvwait_trap),
@@ -331,6 +335,7 @@ static void darling_ipc_inherit(task_t old_task, task_t new_task)
 			new_task->exc_actions[i].port = ipc_port_copy_send(old_task->exc_actions[i].port);
 			new_task->exc_actions[i].behavior = old_task->exc_actions[i].behavior;
 			new_task->exc_actions[i].privileged = old_task->exc_actions[i].privileged;
+			debug_msg("Copied over exception port %p\n", new_task->exc_actions[i].port);
 		}
 	}
 }
@@ -999,6 +1004,43 @@ int set_tracer_entry(task_t self, struct set_tracer_args* in_args)
 
 	task_deallocate(target_task);
 	return rv;
+}
+
+int pthread_markcancel_entry(task_t task, void* tport_in)
+{
+	// mark as canceled if cancelable
+	thread_t t = port_name_to_thread((int)(long) tport_in);
+
+	if (!t)
+		return -LINUX_ESRCH;
+
+	darling_thread_markcanceled(t->linux_task->pid);
+	thread_deallocate(t);
+
+	return 0;
+}
+
+int pthread_canceled_entry(task_t task, void* arg)
+{
+	switch ((int)(long) arg)
+	{
+		case 0:
+			// is cancelable & canceled?
+			if (darling_thread_canceled())
+				return 0;
+			else
+				return -LINUX_EINVAL;
+		case 1:
+			// enable cancelation
+			darling_thread_cancelable(true);
+			return 0;
+		case 2:
+			// disable cancelation
+			darling_thread_cancelable(false);
+			return 0;
+		default:
+			return -LINUX_EINVAL;
+	}
 }
 
 module_init(mach_init);

@@ -56,6 +56,9 @@ void darling_task_post_notification(unsigned int pid, unsigned int event, unsign
 
 void darling_thread_register(thread_t t);
 void darling_thread_deregister(thread_t t);
+_Bool darling_thread_canceled(void);
+void darling_thread_markcanceled(unsigned int pid);
+void darling_thread_cancelable(_Bool cancelable);
 
 // Poor man's task-local storage
 typedef void(*task_key_dtor)(void*);

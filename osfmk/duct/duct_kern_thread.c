@@ -580,6 +580,10 @@ void duct_thread_deallocate (thread_t thread)
         duct_zfree (thread_zone, thread);
 }
 
+struct task_struct* thread_get_linux_task(thread_t thread)
+{
+	return thread->linux_task;
+}
 
 #if 0
 kern_return_t thread_set_cthread_self (uint32_t cthread)

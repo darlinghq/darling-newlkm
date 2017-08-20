@@ -54,6 +54,7 @@ extern kern_return_t thread_set_cthread_self (uint32_t cthread);
 
 #define XNU_USE_MACHTRAP_WRAPPERS_THREAD
 
+extern struct task_struct* thread_get_linux_task(thread_t thread);
 
 #if defined (XNU_USE_MACHTRAP_WRAPPERS_THREAD)
 extern kern_return_t xnusys_thread_set_cthread_self (uint32_t cthread);

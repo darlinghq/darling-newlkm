@@ -60,7 +60,7 @@
 #undef current_proc
 #define zfree(where, what) kfree(what)
 #define FREE(ptr, usage) kfree(ptr)
-#define __pthread_testcancel(x)
+#define __pthread_testcancel(x) if (darling_thread_canceled()) return LINUX_EINTR;
 //#define panic(str, arg...) WARN(1, str)
 #define task_threadmax 1024
 #define lck_mtx_destroy(lock, prop)
@@ -2836,8 +2836,11 @@ loop:
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
 #else
 					pthread_list_unlock();
-					if (wait_event_interruptible(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING)) != 0)
+					if (wait_event_interruptible(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING) || darling_thread_canceled()) != 0
+						|| darling_thread_canceled())
+					{
 						return LINUX_EINTR;
+					}
 #endif
 					/* does not have list lock */
 					goto loop;
@@ -2930,8 +2933,11 @@ loop:
 					(void)msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
 #else
 					pthread_list_unlock();
-					if (wait_event_interruptible(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING)) != 0)
+					if (wait_event_interruptible(kwq->linux_wq, !(kwq->kw_pflags & KSYN_WQ_WAITING) || darling_thread_canceled()) != 0
+						|| darling_thread_canceled())
+					{
 						return LINUX_EINTR;
+					}
 #endif
 
 					// lck_mtx_destroy(&nkwq->kw_lock, pthread_lck_grp);

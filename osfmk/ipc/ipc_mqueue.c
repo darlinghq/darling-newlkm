@@ -986,7 +986,7 @@ ipc_mqueue_receive_on_thread(
                         break;
                 }
 
-                if (signal_pending (linux_current)) {
+                if (signal_pending (linux_current) || darling_thread_canceled()) {
                         wresult     = THREAD_INTERRUPTED;
                         break;
                 }
