@@ -729,10 +729,39 @@ int evproc_create_entry(task_t task, struct evproc_create* in_args)
 	return evprocfd_create(pid, args.flags, NULL);
 }
 
-int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
+unsigned int vpid_to_pid(unsigned int vpid)
 {
 	struct pid* pidobj;
 	unsigned int pid = 0;
+
+	rcu_read_lock();
+
+	pidobj = find_vpid(vpid);
+	if (pidobj != NULL)
+		pid = pid_nr(pidobj);
+
+	rcu_read_unlock();
+	return pid;
+}
+
+unsigned int pid_to_vpid(unsigned int pid)
+{
+	struct pid* pidobj;
+	unsigned int vpid = 0;
+
+	rcu_read_lock();
+
+	pidobj = find_pid_ns(pid, &init_pid_ns);
+	if (pidobj != NULL)
+		vpid = pid_vnr(pidobj);
+
+	rcu_read_unlock();
+	return vpid;
+}
+
+int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
+{
+	unsigned int pid;
 	task_t task_out;
 	int port_name;
 	ipc_port_t sright;
@@ -740,13 +769,7 @@ int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 	copyargs(args, in_args);
 
 	// Convert virtual PID to global PID
-	rcu_read_lock();
-
-	pidobj = find_vpid(args.pid);
-	if (pidobj != NULL)
-		pid = pid_nr(pidobj);
-
-	rcu_read_unlock();
+	pid = vpid_to_pid(args.pid);
 
 	printk(KERN_DEBUG "- task_for_pid(): pid %d -> %d\n", args.pid, pid);
 	if (pid == 0)
@@ -968,11 +991,11 @@ int get_tracer_entry(task_t self, void* pid_in)
 		target_task = self;
 	}
 	else
-		target_task = darling_task_get(pid);
+		target_task = darling_task_get(vpid_to_pid(pid));
 	if (target_task == NULL)
 		return -LINUX_ESRCH;
 
-	rv = target_task->tracer;
+	rv = pid_to_vpid(target_task->tracer);
 	task_deallocate(target_task);
 
 	return rv;
@@ -990,7 +1013,7 @@ int set_tracer_entry(task_t self, struct set_tracer_args* in_args)
 		target_task = self;
 	}
 	else
-		target_task = darling_task_get(args.target);
+		target_task = darling_task_get(vpid_to_pid(args.target));
 
 	if (target_task == NULL)
 		return -LINUX_ESRCH;
@@ -998,7 +1021,7 @@ int set_tracer_entry(task_t self, struct set_tracer_args* in_args)
 	if (args.tracer <= 0)
 		target_task->tracer = 0;
 	else if (target_task->tracer == 0)
-		target_task->tracer = args.tracer;
+		target_task->tracer = vpid_to_pid(args.tracer);
 	else
 		rv = -LINUX_EPERM; // already traced
 
