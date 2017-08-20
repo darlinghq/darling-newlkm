@@ -266,6 +266,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 			// PID 1 case (or manually run mldr)
 			debug_msg("This task has no Darling parent\n");
 
+			new_task->tracer = 0;
 			// UID and GID are left as 0
 		}
 	}
