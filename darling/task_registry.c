@@ -548,13 +548,6 @@ void darling_task_set_dyld_info(unsigned long all_img_location, unsigned long al
 	e->proc_dyld_info_allimg_len = all_img_length;
 
 	complete_all(&e->proc_dyld_info);
-
-	// POSIX_SPAWN_START_SUSPENDED implementation.
-	if (e->do_sigstop)
-	{
-		e->do_sigstop = false;
-		kill_pgrp(task_pid(current), SIGSTOP, 0);
-	}
 }
 
 void darling_task_get_dyld_info(unsigned int pid, unsigned long long* all_img_location, unsigned long long* all_img_length)
@@ -582,6 +575,12 @@ void darling_task_mark_start_suspended(void)
 {
 	struct registry_entry* e = darling_task_get_current_entry();
 	e->do_sigstop = true;
+}
+
+_Bool darling_task_marked_start_suspended(void)
+{
+	struct registry_entry* e = darling_task_get_current_entry();
+	return e->do_sigstop;
 }
 
 _Bool darling_thread_canceled(void)

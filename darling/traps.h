@@ -89,8 +89,10 @@ int setuidgid_entry(task_t task, struct uidgid* args);
 
 int get_tracer_entry(task_t, void* pid);
 int set_tracer_entry(task_t, struct set_tracer_args* args);
+int pid_get_state_entry(task_t task, void* pid_in);
 
 int pthread_markcancel_entry(task_t task, void* arg);
 int pthread_canceled_entry(task_t task, void* arg);
+int started_suspended_entry(task_t task, void* arg);
 
 #endif

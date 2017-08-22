@@ -36,6 +36,7 @@
 
 #include <kern/task.h>
 #include <kern/thread_call.h>
+#include <duct/duct_kern_printf.h>
 #include <duct/duct_post_xnu.h>
 
 #include <linux/list.h>
@@ -100,7 +101,7 @@ static int __test_panics__;
 static int __test_aborts__;
 static int __test_prints__;
 
-#define __FAILEDUSERTEST__(str)
+#define __FAILEDUSERTEST__(str) printf("psynch: " str)
 
 #define ECVCERORR       256
 #define ECVPERORR       512

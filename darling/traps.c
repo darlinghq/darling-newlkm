@@ -79,11 +79,13 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_fork_wait_for_child, fork_wait_for_child_entry),
 	TRAP(NR_set_dyld_info, set_dyld_info_entry),
 	TRAP(NR_stop_after_exec, stop_after_exec_entry),
+	TRAP(NR_started_suspended, started_suspended_entry),
 	TRAP(NR_kernel_printk, kernel_printk_entry),
 	TRAP(NR_path_at, path_at_entry),
 	TRAP(NR_get_tracer, get_tracer_entry),
 	TRAP(NR_set_tracer, set_tracer_entry),
 	TRAP(NR_tid_for_thread, tid_for_thread_entry),
+	TRAP(NR_pid_get_state, pid_get_state_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -1064,6 +1066,39 @@ int pthread_canceled_entry(task_t task, void* arg)
 		default:
 			return -LINUX_EINVAL;
 	}
+}
+
+// The following 2 functions have been copied from kernel/pid.c,
+// because these functions aren't exported to modules.
+static struct task_struct *__find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
+{
+	return pid_task(find_pid_ns(nr, ns), PIDTYPE_PID);
+}
+
+static struct task_struct *__find_task_by_vpid(pid_t vnr)
+{
+	return __find_task_by_pid_ns(vnr, task_active_pid_ns(linux_current));
+}
+
+
+int pid_get_state_entry(task_t task_self, void* pid_in)
+{
+	struct task_struct* task;
+	int rv = 0;
+
+	rcu_read_lock();
+
+	task = __find_task_by_vpid((int)(long) pid_in);
+	if (task != NULL)
+		rv = task->state;
+
+	rcu_read_unlock();
+	return rv;
+}
+
+int started_suspended_entry(task_t task, void* arg)
+{
+	return darling_task_marked_start_suspended();
 }
 
 module_init(mach_init);

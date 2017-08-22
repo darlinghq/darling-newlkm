@@ -46,6 +46,7 @@ void darling_task_fork_child_done(void);
 void darling_task_set_dyld_info(unsigned long all_img_location, unsigned long all_img_length);
 void darling_task_get_dyld_info(unsigned int pid, unsigned long long* all_img_location, unsigned long long* all_img_length);
 void darling_task_mark_start_suspended(void);
+_Bool darling_task_marked_start_suspended(void);
 
 struct evprocfd_ctx;
 _Bool darling_task_notify_register(unsigned int pid, struct evprocfd_ctx* efd);
