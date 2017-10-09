@@ -302,6 +302,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	if (fd_old != -1)
 	{
 		debug_msg("Closing old fd before execve: %d\n", fd_old);
+		old_task->map->linux_task = NULL;
 		sys_close(fd_old);
 	}
 	
@@ -346,6 +347,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 {
 	thread_t thread, cur_thread;
 	task_t my_task = (task_t) file->private_data;
+	bool exec_case;
 	
 	// close(/dev/mach) may happen on any thread, even on a thread that
 	// has never seen any ioctl() calls into LKM.
@@ -356,6 +358,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		thread_self_trap_entry(my_task);
 	}
 	
+	exec_case = my_task->map->linux_task == NULL;
 	darling_task_deregister(my_task);
 	// darling_thread_deregister(NULL);
 	
@@ -389,7 +392,8 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	//duct_task_destroy(my_task);
 	
 	//duct_thread_destroy(cur_thread);
-	darling_thread_deregister(cur_thread);
+	if (!exec_case)
+		darling_thread_deregister(cur_thread);
 
 	return 0;
 }
@@ -783,7 +787,6 @@ int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 		return KERN_FAILURE;
 	
 	// Turn it into a send right
-	task_reference(task_out);
 	sright = convert_task_to_port(task_out);
 	port_name = ipc_port_copyout_send(sright, task->itk_space);
 	
@@ -822,7 +825,6 @@ int task_name_for_pid_entry(task_t task, struct task_name_for_pid* in_args)
 		return KERN_FAILURE;
 	
 	// Turn it into a send right
-	task_reference(task_out);
 	sright = convert_task_name_to_port(task_out);
 	port_name = ipc_port_copyout_send(sright, task->itk_space);
 	
