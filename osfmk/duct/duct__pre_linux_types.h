@@ -74,6 +74,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // include/linux/wait.h
 #define wait_queue_t                linux_wait_queue_t
+// LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
+#define wait_queue_entry_t          linux_wait_queue_t
+#define __wait_queue                wait_queue_entry
+#define __wait_queue_head           wait_queue_head
 
 //#define cpumask_t                   linux_cpumask_t
 

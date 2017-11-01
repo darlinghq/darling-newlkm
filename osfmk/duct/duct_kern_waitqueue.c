@@ -455,7 +455,12 @@ wait_queue_wakeup64_identity_locked(
 	linux_wait_queue_t    * lwait_curr;
 	linux_wait_queue_t    * lwait_next;
 
-	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.task_list, task_list) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
+	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.head, entry)
+#else
+	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.task_list, task_list)
+#endif
+        {
 			if ( lwait_curr->private &&
 				 lwait_curr->func (lwait_curr, TASK_NORMAL, 0, (void *) event) ) {
 					lwait   = lwait_curr;

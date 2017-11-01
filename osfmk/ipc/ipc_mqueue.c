@@ -969,7 +969,11 @@ ipc_mqueue_receive_on_thread(
         // linux_init_wait_func_proc (&lwait, duct_autoremove_wake_function, linux_current);
         lwait.private       = linux_current;
         lwait.func          = duct_autoremove_wake_function;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
+        INIT_LIST_HEAD (&lwait.entry);
+#else
         INIT_LIST_HEAD (&lwait.task_list);
+#endif
         lwait.flags         = 0;
 
 
