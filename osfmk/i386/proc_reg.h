@@ -216,7 +216,8 @@ static inline void set_ds(uint16_t ds)
 }
 #endif
 
-#ifndef get_fs
+// See #362
+#if 0
 static inline uint16_t get_fs(void)
 {
 	uint16_t fs;
@@ -225,7 +226,7 @@ static inline uint16_t get_fs(void)
 }
 #endif
 
-#ifndef set_fs
+#if 0
 static inline void set_fs(uint16_t fs)
 {
 	__asm__ volatile("mov %0, %%fs" : : "r" (fs));
