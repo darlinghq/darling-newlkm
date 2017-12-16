@@ -52,6 +52,7 @@
 #include "evprocfd.h"
 #include "evpsetfd.h"
 #include "psynch_support.h"
+#include "isr.h"
 
 typedef long (*trap_handler)(task_t, ...);
 
@@ -153,9 +154,14 @@ static struct miscdevice mach_dev = {
 
 extern void darling_xnu_init(void);
 extern void darling_xnu_deinit(void);
+
 static int mach_init(void)
 {
 	int err = 0;
+
+	err = isr_install();
+	if (err < 0)
+	    goto fail;
 
 	darling_task_init();
 	darling_xnu_init();
@@ -165,6 +171,7 @@ static int mach_init(void)
 	if (err < 0)
 	    goto fail;
 
+	isr_install();
 	printk(KERN_INFO "Darling Mach: kernel emulation loaded, API version " DARLING_MACH_API_VERSION_STR "\n");
 	return 0;
 
@@ -178,6 +185,8 @@ static void mach_exit(void)
 	psynch_exit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
+
+	isr_uninstall();
 }
 
 extern kern_return_t task_get_special_port(task_t, int which, ipc_port_t*);
