@@ -272,7 +272,8 @@ ifneq ($(KERNELRELEASE),)
 		pexpert/duct/duct_gen_bootargs.o \
 		pexpert/duct/duct_pe_kprintf.o \
 		darling/isr_proc.o \
-		darling/isr.o
+		darling/isr.o \
+		darling/binfmt.o
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
