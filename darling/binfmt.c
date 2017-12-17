@@ -18,19 +18,43 @@
  */
 
 #include "binfmt.h"
+#undef PAGE_MASK
+#undef PAGE_SHIFT
+#undef PAGE_SIZE
 #include <mach-o/loader.h>
 #include <mach-o/fat.h>
+#undef __unused
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/fs.h>
+#include <linux/file.h>
+#include <asm/mman.h>
+
+struct load_results
+{
+	unsigned long mh;
+	unsigned long entry_point;
+	unsigned long stack_size;
+	unsigned long dyld_all_image_location;
+	unsigned long dyld_all_image_size;
+	uint8_t uuid[16];
+};
 
 static int macho_load(struct linux_binprm* bprm);
-static int load_fat(struct linux_binprm* bprm, uint32_t bprefs[4]);
-static int load32(struct linux_binprm* bprm, struct fat_arch* farch);
-static int load64(struct linux_binprm* bprm, struct fat_arch* farch);
+static int load_fat(struct linux_binprm* bprm, struct file* file, uint32_t bprefs[4], uint32_t arch, struct load_results* lr);
+static int load32(struct linux_binprm* bprm, struct file* file, struct fat_arch* farch, bool expect_dylinker, struct load_results* lr);
+static int load64(struct linux_binprm* bprm, struct file* file, struct fat_arch* farch, bool expect_dylinker, struct load_results* lr);
+static int load(struct linux_binprm* bprm, struct file* file, uint32_t *bprefs, uint32_t arch, struct load_results* lr);
+static int native_prot(int prot);
+
+#define PAGE_ALIGN(x) ((x) & ~(PAGE_SIZE-1))
+#define PAGE_ROUNDUP(x) (((((x)-1) / PAGE_SIZE)+1) * PAGE_SIZE)
 
 static struct linux_binfmt macho_format = {
 	.module = THIS_MODULE,
 	.load_binary = macho_load,
 	.load_shlib = NULL,
-	.core_dump = NULL,
+	.core_dump = NULL, // TODO: We will want this eventually
 	.min_coredump = PAGE_SIZE
 };
 
@@ -46,31 +70,65 @@ void macho_binfmt_exit(void)
 
 int macho_load(struct linux_binprm* bprm)
 {
-	uint32_t magic;
 	uint32_t bprefs[4] = { 0, 0, 0, 0 };
+	int err;
+	struct load_results lr;
 
 	// TODO: parse binprefs out of env
 	
-	magic = *(uint32_t*) bprm->buf;
+	memset(&lr, 0, sizeof(lr));
+	err = load(bprm, bprm->file, bprefs, 0, &lr);
+
+	if (err)
+		goto out;
+
+	// TODO: Map commpage
+	// TODO: Set DYLD_INFO
+	// TODO: Map pagezero
+	// TODO: prng seed in apple[]
+
+out:
+	return err;
+}
+
+int load(struct linux_binprm* bprm,
+		struct file* file,
+		uint32_t *bprefs,
+		uint32_t arch,
+		struct load_results* lr)
+{
+	uint32_t magic = *(uint32_t*)bprm->buf;
 
 	if (magic == MH_MAGIC_64 || magic == MH_CIGAM_64)
 	{
-		return load64(bprm, NULL);
+		// Make sure the loader has the right cputype
+		if (arch && ((struct mach_header*) bprm->buf)->cputype != arch)
+			return -ENOEXEC;
+
+		return load64(bprm, file, NULL, false, lr);
 	}
 	else if (magic == MH_MAGIC || magic == MH_CIGAM)
 	{
+		// Make sure the loader has the right cputype
+		if (arch && ((struct mach_header*) bprm->buf)->cputype != arch)
+			return -ENOEXEC;
+
 		// TODO: make process 32-bit
-		return load32(bprm, NULL);
+		return load32(bprm, file, NULL, false, lr);
 	}
 	else if (magic == FAT_MAGIC || magic == FAT_CIGAM)
 	{
-		return load_fat(bprm, bprefs);
+		return load_fat(bprm, file, bprefs, arch, lr);
 	}
 	else
 		return -ENOEXEC;
 }
 
-int load_fat(struct linux_binprm* bprm, uint32_t bprefs[4])
+int load_fat(struct linux_binprm* bprm,
+		struct file* file,
+		uint32_t bprefs[4],
+		uint32_t forced_arch,
+		struct load_results* lr)
 {
 	struct fat_header* fhdr = (struct fat_header*) bprm->buf;
 	const bool swap = fhdr->magic == FAT_CIGAM;
@@ -103,32 +161,40 @@ int load_fat(struct linux_binprm* bprm, uint32_t bprefs[4])
 			SWAP32(arch->align);
 		}
 
-		int j;
-		for (j = 0; j < 4; j++)
+		if (!forced_arch)
 		{
-			if (bprefs[j] && arch->cputype == bprefs[j])
+			int j;
+			for (j = 0; j < 4; j++)
 			{
-				if (bpref_index == -1 || bpref_index > j)
+				if (bprefs[j] && arch->cputype == bprefs[j])
 				{
-					best_arch = arch;
-					bpref_index = j;
-					break;
+					if (bpref_index == -1 || bpref_index > j)
+					{
+						best_arch = arch;
+						bpref_index = j;
+						break;
+					}
 				}
 			}
-		}
 
-		if (bpref_index == -1)
-		{
+			if (bpref_index == -1)
+			{
 #if defined(__x86_64__)
-			if (arch->cputype == CPU_TYPE_X86_64)
-				best_arch = arch;
-			else if (best_arch == NULL && arch->cputype == CPU_TYPE_X86)
-				best_arch = arch;
+				if (arch->cputype == CPU_TYPE_X86_64)
+					best_arch = arch;
+				else if (best_arch == NULL && arch->cputype == CPU_TYPE_X86)
+					best_arch = arch;
 #elif defined (__aarch64__)
 #warning TODO: arm
 #else
 #error Unsupported CPU architecture
 #endif
+			}
+		}
+		else
+		{
+			if (arch->cputype == forced_arch)
+				best_arch = arch;
 		}
 	}
 
@@ -136,9 +202,9 @@ int load_fat(struct linux_binprm* bprm, uint32_t bprefs[4])
 		return -ENOEXEC;
 
 	if (best_arch->cputype & CPU_ARCH_ABI64)
-		return load64(bprm, best_arch);
+		return load64(bprm, file, best_arch, forced_arch != 0, lr);
 	else
-		return load32(bprm, best_arch);
+		return load32(bprm, file, best_arch, forced_arch != 0, lr);
 }
 
 #define GEN_64BIT
@@ -148,4 +214,18 @@ int load_fat(struct linux_binprm* bprm, uint32_t bprefs[4])
 #define GEN_32BIT
 #include "loader.c"
 #undef GEN_32BIT
+
+int native_prot(int prot)
+{
+	int protOut = 0;
+
+	if (prot & VM_PROT_READ)
+		protOut |= PROT_READ;
+	if (prot & VM_PROT_WRITE)
+		protOut |= PROT_WRITE;
+	if (prot & VM_PROT_EXECUTE)
+		protOut |= PROT_EXEC;
+
+	return protOut;
+}
 
