@@ -93,6 +93,8 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 			err = -ENOMEM;
 			goto out;
 		}
+		if (slide + mmapSize > lr->vm_addr_max)
+			lr->vm_addr_max = slide + mmapSize;
 
 		pie = true;
 	}
@@ -129,10 +131,10 @@ no_slide:
 
 				if (seg->filesize < seg->vmsize)
 				{
+					unsigned long map_addr;
 					if (slide != 0)
 					{
 						// Some segments' filesize != vmsize, thus this mprotect().
-						unsigned long map_addr;
 
 						map_addr = vm_mmap(NULL, (seg->vmaddr + slide), seg->vmsize, native_prot(seg->maxprot),
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
@@ -146,7 +148,6 @@ no_slide:
 					else
 					{
 						size_t size = seg->vmsize - seg->filesize;
-						unsigned long map_addr;
 
 						map_addr = vm_mmap(NULL, PAGE_ALIGN(seg->vmaddr + seg->vmsize - size), PAGE_ROUNDUP(size), native_prot(seg->maxprot),
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
@@ -172,6 +173,9 @@ no_slide:
 					if (seg->fileoff == 0)
 						mappedHeader = (struct MACH_HEADER_STRUCT*) (seg->vmaddr + slide);
 				}
+
+				if (seg->vmaddr + slide + seg->vmsize > lr->vm_addr_max)
+					lr->vm_addr_max = seg->vmaddr + slide + seg->vmsize;
 
 				if (strcmp(SEG_DATA, seg->segname) == 0)
 				{

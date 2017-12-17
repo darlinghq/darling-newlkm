@@ -53,6 +53,7 @@
 #include "evpsetfd.h"
 #include "psynch_support.h"
 #include "isr.h"
+#include "binfmt.h"
 
 typedef long (*trap_handler)(task_t, ...);
 
@@ -167,6 +168,8 @@ static int mach_init(void)
 	darling_xnu_init();
 	psynch_init();
 
+	macho_binfmt_init();
+
 	err = misc_register(&mach_dev);
 	if (err < 0)
 	    goto fail;
@@ -186,6 +189,7 @@ static void mach_exit(void)
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 
+	macho_binfmt_exit();
 	isr_uninstall();
 }
 
