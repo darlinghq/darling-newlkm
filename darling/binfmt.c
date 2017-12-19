@@ -34,6 +34,7 @@
 #include <asm/elf.h>
 #include <linux/ptrace.h>
 #include "debug_print.h"
+#include "task_registry.h"
 
 struct load_results
 {
@@ -46,6 +47,8 @@ struct load_results
 
 	unsigned long vm_addr_max;
 };
+
+extern struct file* commpage_install(void);
 
 static int macho_load(struct linux_binprm* bprm);
 static int test_load(struct linux_binprm* bprm);
@@ -60,7 +63,7 @@ static int setup_stack(struct linux_binprm* bprm, struct load_results* lr);
 // #define PAGE_ALIGN(x) ((x) & ~(PAGE_SIZE-1))
 #define PAGE_ROUNDUP(x) (((((x)-1) / PAGE_SIZE)+1) * PAGE_SIZE)
 
-static struct linux_binfmt macho_format = {
+struct linux_binfmt macho_format = {
 	.module = THIS_MODULE,
 	.load_binary = macho_load,
 	.load_shlib = NULL,
@@ -110,7 +113,10 @@ int macho_load(struct linux_binprm* bprm)
 	err = load(bprm, bprm->file, bprefs, 0, &lr);
 
 	if (err)
+	{
+		debug_msg("Binary failed to load: %d\n", err);
 		goto out;
+	}
 
 	set_binfmt(&macho_format);
 
@@ -123,8 +129,19 @@ int macho_load(struct linux_binprm* bprm)
 	// Setup the stack
 	setup_stack(bprm, &lr);
 
-	// TODO: Map commpage
-	// TODO: Set DYLD_INFO
+	// Map commpage
+	struct file* file = commpage_install();
+	if (IS_ERR(file))
+	{
+		err = PTR_ERR(file);
+		send_sig(SIGKILL, current, 0);
+		return err;
+	}
+	
+	fput(file);
+
+	// Set DYLD_INFO
+	darling_task_set_dyld_info(lr.dyld_all_image_location, lr.dyld_all_image_size);
 
 	debug_msg("Entry point: %p\n", (void*) lr.entry_point);
 	start_thread(regs, lr.entry_point, bprm->p);

@@ -179,7 +179,7 @@ ifneq ($(KERNELRELEASE),)
 		darling/down_interruptible.o \
 		darling/traps.o \
 		darling/task_registry.o \
-		darling/license.o \
+		darling/module.o \
 		darling/host_info.o \
 		darling/evprocfd.o \
 		darling/evpsetfd.o \
@@ -273,7 +273,8 @@ ifneq ($(KERNELRELEASE),)
 		pexpert/duct/duct_pe_kprintf.o \
 		darling/isr_proc.o \
 		darling/isr.o \
-		darling/binfmt.o
+		darling/binfmt.o \
+		darling/commpage.o
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
