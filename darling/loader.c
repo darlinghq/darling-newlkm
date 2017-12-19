@@ -45,6 +45,13 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	int err = 0;
 	uint32_t i, p;
 
+#ifdef GEN_32BIT
+	if (!expect_dylinker)
+	{
+		set_personality_ia32(false);
+	}
+#endif
+
 	fat_offset = farch ? farch->offset : 0;
 
 	if (kernel_read(file, fat_offset, (char*) &header, sizeof(header)) != sizeof(header))
@@ -205,6 +212,7 @@ no_slide:
 				entryPoint = ((uint32_t*) lc)[14];
 #endif
 				entryPoint += slide;
+
 				break;
 			}
 			case LC_LOAD_DYLINKER:
@@ -237,6 +245,7 @@ no_slide:
 				if (IS_ERR(dylinker))
 				{
 					err = PTR_ERR(dylinker);
+					debug_msg("Failed to load dynamic linker for executable, error %d\n", err);
 					goto out;
 				}
 				if (kernel_read(dylinker, 0, bprm->buf, sizeof(bprm->buf)) != sizeof(bprm->buf))
@@ -277,7 +286,8 @@ no_slide:
 
 	if (header.filetype == MH_EXECUTE)
 		lr->mh = (uintptr_t) mappedHeader;
-	lr->entry_point = entryPoint;
+	if (entryPoint)
+		lr->entry_point = entryPoint;
 
 out:
 	kfree(cmds);

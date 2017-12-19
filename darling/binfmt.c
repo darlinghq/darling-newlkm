@@ -31,6 +31,9 @@
 #include <linux/uaccess.h>
 #include <linux/string.h>
 #include <asm/mman.h>
+#include <asm/elf.h>
+#include <linux/ptrace.h>
+#include "debug_print.h"
 
 struct load_results
 {
@@ -80,6 +83,7 @@ int macho_load(struct linux_binprm* bprm)
 	uint32_t bprefs[4] = { 0, 0, 0, 0 };
 	int err;
 	struct load_results lr;
+	struct pt_regs* regs = current_pt_regs();
 
 	// TODO: parse binprefs out of env
 	
@@ -122,6 +126,8 @@ int macho_load(struct linux_binprm* bprm)
 	// TODO: Map commpage
 	// TODO: Set DYLD_INFO
 
+	debug_msg("Entry point: %p\n", (void*) lr.entry_point);
+	start_thread(regs, lr.entry_point, bprm->p);
 out:
 	return err;
 }
@@ -175,6 +181,7 @@ int setup_stack(struct linux_binprm* bprm, struct load_results* lr)
 
 	kfree(executable_buf);
 	executable_buf = NULL;
+	bprm->p = (unsigned long) sp;
 
 	// XXX: skip this for static executables, but we don't support them anyway...
 	if (__put_user(lr->mh, sp++))
@@ -263,7 +270,6 @@ int setup_stack(struct linux_binprm* bprm, struct load_results* lr)
 	// TODO: produce malloc_entropy, e.g. malloc_entropy=0x9536cc569d9595cf,0x831942e402da316b
 	// TODO: produce main_stack?
 	
-	bprm->p = (unsigned long) sp;
 out:
 	if (executable_buf)
 		kfree(executable_buf);
@@ -306,6 +312,8 @@ int load(struct linux_binprm* bprm,
 int test_load(struct linux_binprm* bprm)
 {
 	uint32_t magic = *(uint32_t*)bprm->buf;
+
+	// TODO: This function should check if the dynamic loader is present and valid
 
 	if (magic == MH_MAGIC_64 || magic == MH_CIGAM_64)
 	{
@@ -494,4 +502,32 @@ int native_prot(int prot)
 
 	return protOut;
 }
+
+// Copied from arch/x86/kernel/process_64.c
+// Why on earth isn't this exported?!
+#ifdef __x86_64__
+static void
+start_thread_common(struct pt_regs *regs, unsigned long new_ip,
+		    unsigned long new_sp,
+		    unsigned int _cs, unsigned int _ss, unsigned int _ds)
+{
+	loadsegment(fs, 0);
+	loadsegment(es, _ds);
+	loadsegment(ds, _ds);
+	load_gs_index(0);
+	regs->ip		= new_ip;
+	regs->sp		= new_sp;
+	regs->cs		= _cs;
+	regs->ss		= _ss;
+	regs->flags		= X86_EFLAGS_IF;
+	force_iret();
+}
+
+void
+start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
+{
+	start_thread_common(regs, new_ip, new_sp,
+			    __USER_CS, __USER_DS, 0);
+}
+#endif
 
