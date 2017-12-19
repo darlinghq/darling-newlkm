@@ -293,7 +293,7 @@ no_slide:
 
 	if (header.filetype == MH_EXECUTE)
 		lr->mh = (uintptr_t) mappedHeader;
-	if (entryPoint)
+	if (entryPoint && !lr->entry_point)
 		lr->entry_point = entryPoint;
 
 out:
