@@ -35,6 +35,7 @@
 #include <linux/ptrace.h>
 #include "debug_print.h"
 #include "task_registry.h"
+#include "commpage.h"
 
 struct load_results
 {
@@ -46,6 +47,7 @@ struct load_results
 	uint8_t uuid[16];
 
 	unsigned long vm_addr_max;
+	bool _32on64;
 };
 
 extern struct file* commpage_install(void);
@@ -58,7 +60,9 @@ static int load32(struct linux_binprm* bprm, struct file* file, struct fat_arch*
 static int load64(struct linux_binprm* bprm, struct file* file, struct fat_arch* farch, bool expect_dylinker, struct load_results* lr);
 static int load(struct linux_binprm* bprm, struct file* file, uint32_t *bprefs, uint32_t arch, struct load_results* lr);
 static int native_prot(int prot);
-static int setup_stack(struct linux_binprm* bprm, struct load_results* lr);
+static int setup_stack64(struct linux_binprm* bprm, struct load_results* lr);
+static int setup_stack32(struct linux_binprm* bprm, struct load_results* lr);
+static int setup_space(struct linux_binprm* bprm);
 
 // #define PAGE_ALIGN(x) ((x) & ~(PAGE_SIZE-1))
 #define PAGE_ROUNDUP(x) (((((x)-1) / PAGE_SIZE)+1) * PAGE_SIZE)
@@ -100,15 +104,6 @@ int macho_load(struct linux_binprm* bprm)
 	if (err)
 		goto out;
 
-	setup_new_exec(bprm);
-	install_exec_creds(bprm);
-
-	err = setup_arg_pages(bprm, STACK_TOP, false);
-	if (err)
-		goto out;
-
-	current->mm->start_stack = bprm->p;
-	
 	memset(&lr, 0, sizeof(lr));
 	err = load(bprm, bprm->file, bprefs, 0, &lr);
 
@@ -127,7 +122,10 @@ int macho_load(struct linux_binprm* bprm)
 	// TODO: fill in start_code, end_code, start_data, end_data
 
 	// Setup the stack
-	setup_stack(bprm, &lr);
+	if (lr._32on64)
+		setup_stack32(bprm, &lr);
+	else
+		setup_stack64(bprm, &lr);
 
 	// Map commpage
 	struct file* file = commpage_install();
@@ -143,155 +141,37 @@ int macho_load(struct linux_binprm* bprm)
 	// Set DYLD_INFO
 	darling_task_set_dyld_info(lr.dyld_all_image_location, lr.dyld_all_image_size);
 
-	debug_msg("Entry point: %p\n", (void*) lr.entry_point);
+	debug_msg("Entry point: %p, stack: %p, mh: %p\n", (void*) lr.entry_point, (void*) bprm->p, (void*) lr.mh);
+
+	//unsigned int* pp = (unsigned int*)bprm->p;
+	//int i;
+	//for (i = 0; i < 30; i++)
+	//{
+	//	debug_msg("sp @%p: 0x%x\n", pp, *pp);
+	//	pp++;
+	//}
+
 	start_thread(regs, lr.entry_point, bprm->p);
 out:
 	return err;
 }
 
-static const char EXECUTABLE_PATH[] = "executable_path=";
-int setup_stack(struct linux_binprm* bprm, struct load_results* lr)
+int setup_space(struct linux_binprm* bprm)
 {
-	int err = 0;
-	// unsigned char rand_bytes[16];
-	char *executable_path, *executable_buf;
-	unsigned long __user* argv;
-	unsigned long __user* envp;
-	unsigned long __user* applep;
-	unsigned long __user* sp;
-	char __user* exepath_user;
-	size_t exepath_len;
+	unsigned long stackAddr = test_thread_flag(TIF_IA32) ? commpage_address(false) : STACK_TOP;
 
-	// Produce executable_path=... for applep
-	executable_buf = kmalloc(4096, GFP_KERNEL);
-	if (!executable_buf)
-		return -ENOMEM;
+	setup_new_exec(bprm);
+	install_exec_creds(bprm);
 
-	executable_path = d_path(&bprm->file->f_path, executable_buf, 4095);
-	if (IS_ERR(executable_path))
-	{
-		err = -ENAMETOOLONG;
-		goto out;
-	}
+	// TODO: Mach-O supports executable stacks
 
-	exepath_len = strlen(executable_path);
-	sp = (unsigned long*) bprm->p;
-	sp -= bprm->argc + bprm->envc + 40 + exepath_len;
-	exepath_user = (char __user*) bprm->p - exepath_len - sizeof(EXECUTABLE_PATH);
-
-	if (!find_extend_vma(current->mm, (unsigned long) sp))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-
-	if (copy_to_user(exepath_user, EXECUTABLE_PATH, sizeof(EXECUTABLE_PATH)-1))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-	if (copy_to_user(exepath_user + sizeof(EXECUTABLE_PATH)-1, executable_path, exepath_len + 1))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-
-	kfree(executable_buf);
-	executable_buf = NULL;
-	bprm->p = (unsigned long) sp;
-
-	// XXX: skip this for static executables, but we don't support them anyway...
-	if (__put_user(lr->mh, sp++))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-	if (__put_user(bprm->argc, sp++))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-
-	unsigned long p = current->mm->arg_start;
-	int argc = bprm->argc;
-
-	argv = sp;
-	envp = argv + argc + 1;
-	applep = envp + bprm->envc + 1;
-
-	// Fill in argv pointers
-	while (argc--)
-	{
-		if (__put_user(p, argv++))
-		{
-			err = -EFAULT;
-			goto out;
-		}
-
-		size_t len = strnlen_user((void __user*) p, MAX_ARG_STRLEN);
-		if (!len || len > MAX_ARG_STRLEN)
-		{
-			err = -EINVAL;
-			goto out;
-		}
-
-		p += len;
-	}
-	if (__put_user(0, argv++))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-	current->mm->arg_end = current->mm->env_start = p;
-
-	// Fill in envp pointers
-	int envc = bprm->envc;
-	while (envc--)
-	{
-		if (__put_user(p, envp++))
-		{
-			err = -EFAULT;
-			goto out;
-		}
-
-		size_t len = strnlen_user((void __user*) p, MAX_ARG_STRLEN);
-		if (!len || len > MAX_ARG_STRLEN)
-		{
-			err = -EINVAL;
-			goto out;
-		}
-
-		p += len;
-	}
-	if (__put_user(0, envp++))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-	current->mm->env_end = p;
-
-	if (__put_user(exepath_user, applep++))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-	if (__put_user(0, applep++))
-	{
-		err = -EFAULT;
-		goto out;
-	}
-
-	// get_random_bytes(rand_bytes, sizeof(rand_bytes));
-
-	// TODO: produce stack_guard, e.g. stack_guard=0xcdd5c48c061b00fd (must contain 00 somewhere!)
-	// TODO: produce malloc_entropy, e.g. malloc_entropy=0x9536cc569d9595cf,0x831942e402da316b
-	// TODO: produce main_stack?
-	
-out:
-	if (executable_buf)
-		kfree(executable_buf);
-	return err;
+	// Explanation:
+	// By default, STACK_TOP would cause the stack to be placed just above the commpage on i386
+	// and would collide with it eventually.
+	return setup_arg_pages(bprm, stackAddr, EXSTACK_DISABLE_X);
 }
+
+static const char EXECUTABLE_PATH[] = "executable_path=";
 
 int load(struct linux_binprm* bprm,
 		struct file* file,
@@ -499,11 +379,13 @@ int load_fat(struct linux_binprm* bprm,
 }
 
 #define GEN_64BIT
-#include "loader.c"
+#include "binfmt_loader.c"
+#include "binfmt_stack.c"
 #undef GEN_64BIT
 
 #define GEN_32BIT
-#include "loader.c"
+#include "binfmt_loader.c"
+#include "binfmt_stack.c"
 #undef GEN_32BIT
 
 int native_prot(int prot)
@@ -543,8 +425,11 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 void
 start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
+	bool ia32 = test_thread_flag(TIF_IA32);
 	start_thread_common(regs, new_ip, new_sp,
-			    __USER_CS, __USER_DS, 0);
+			ia32 ? __USER32_CS : __USER_CS,
+			__USER_DS,
+			ia32 ? __USER_DS : 0);
 }
 #endif
 

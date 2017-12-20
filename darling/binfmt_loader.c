@@ -64,12 +64,14 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	int err = 0;
 	uint32_t i, p;
 
-#ifdef GEN_32BIT
 	if (!expect_dylinker)
 	{
+#ifdef GEN_32BIT
+		lr->_32on64 = true;
 		set_personality_ia32(false);
-	}
 #endif
+		setup_space(bprm);
+	}
 
 	fat_offset = farch ? farch->offset : 0;
 
