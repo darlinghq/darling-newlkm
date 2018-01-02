@@ -37,6 +37,9 @@
 #include "task_registry.h"
 #include "commpage.h"
 
+// To get LINUX_SIGRTMIN
+#include <rtsig.h>
+
 struct load_results
 {
 	unsigned long mh;
@@ -108,6 +111,11 @@ int macho_load(struct linux_binprm* bprm)
 		err = PTR_ERR(xnu_task);
 		goto out;
 	}
+
+	// Block SIGNAL_SIGEXC_TOGGLE and SIGNAL_SIGEXC_THUPDATE.
+	// See sigexc.c in libsystem_kernel.
+	sigaddset(&current->blocked, LINUX_SIGRTMIN);
+	sigaddset(&current->blocked, LINUX_SIGRTMIN+1);
 	
 	// Remove the running executable
 	// This is the point of no return.
