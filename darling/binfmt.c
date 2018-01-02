@@ -50,7 +50,8 @@ struct load_results
 	bool _32on64;
 };
 
-extern struct file* commpage_install(void);
+extern struct file* xnu_task_setup(void);
+extern int commpage_install(struct file* xnu_task);
 
 static int macho_load(struct linux_binprm* bprm);
 static int test_load(struct linux_binprm* bprm);
@@ -91,6 +92,7 @@ int macho_load(struct linux_binprm* bprm)
 	int err;
 	struct load_results lr;
 	struct pt_regs* regs = current_pt_regs();
+	struct file* xnu_task;
 
 	// TODO: parse binprefs out of env
 	
@@ -98,8 +100,17 @@ int macho_load(struct linux_binprm* bprm)
 	err = test_load(bprm);
 	if (err)
 		goto out;
+
+	// Setup a new XNU task
+	xnu_task = xnu_task_setup();
+	if (IS_ERR(xnu_task))
+	{
+		err = PTR_ERR(xnu_task);
+		goto out;
+	}
 	
 	// Remove the running executable
+	// This is the point of no return.
 	err = flush_old_exec(bprm);
 	if (err)
 		goto out;
@@ -109,6 +120,7 @@ int macho_load(struct linux_binprm* bprm)
 
 	if (err)
 	{
+		fput(xnu_task);
 		debug_msg("Binary failed to load: %d\n", err);
 		goto out;
 	}
@@ -121,22 +133,23 @@ int macho_load(struct linux_binprm* bprm)
 
 	// TODO: fill in start_code, end_code, start_data, end_data
 
+	// Map commpage
+	err = commpage_install(xnu_task);
+
+	// The ref to the task is now held by the commpage mapping
+	fput(xnu_task);
+
+	if (err != 0)
+	{
+		send_sig(SIGKILL, current, 0);
+		return err;
+	}
+
 	// Setup the stack
 	if (lr._32on64)
 		setup_stack32(bprm, &lr);
 	else
 		setup_stack64(bprm, &lr);
-
-	// Map commpage
-	struct file* file = commpage_install();
-	if (IS_ERR(file))
-	{
-		err = PTR_ERR(file);
-		send_sig(SIGKILL, current, 0);
-		return err;
-	}
-	
-	fput(file);
 
 	// Set DYLD_INFO
 	darling_task_set_dyld_info(lr.dyld_all_image_location, lr.dyld_all_image_size);

@@ -323,17 +323,6 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	task_deallocate(new_task);
 	thread_deallocate(new_thread);
 	
-	// execve case only:
-	// We do this after running darling_task_register & darling_thread_register
-	// and avoid calling deregister beforehand, so that death notifications don't fire
-	// in case of execve.
-	if (fd_old != -1)
-	{
-		debug_msg("Closing old fd before execve: %d\n", fd_old);
-		old_task->map->linux_task = NULL;
-		sys_close(fd_old);
-	}
-	
 	// fork case only
 	if (ppid_fork != -1)
 	{
@@ -425,12 +414,11 @@ int mach_dev_mmap(struct file* file, struct vm_area_struct *vma)
 	return 0;
 }
 
-struct file* commpage_install(void)
+struct file* xnu_task_setup(void)
 {
 	struct file* file;
 	int err;
 	unsigned long addr;
-	bool _64bit = !test_thread_flag(TIF_IA32);
 
 	file = anon_inode_getfile("[commpage]", &mach_chardev_ops, NULL, O_RDWR);
 	if (IS_ERR(file))
@@ -443,14 +431,17 @@ struct file* commpage_install(void)
 		return ERR_PTR(err);
 	}
 
-	addr = vm_mmap(file, commpage_address(_64bit), commpage_length(_64bit), PROT_READ, MAP_SHARED | MAP_FIXED, 0);
-	if (!addr || IS_ERR_VALUE(addr))
-	{
-		fput(file);
-		return ERR_PTR(addr);
-	}
-
 	return file;
+}
+
+int commpage_install(struct file* xnu_task)
+{
+	unsigned long addr;
+	bool _64bit = !test_thread_flag(TIF_IA32);
+
+	addr = vm_mmap(xnu_task, commpage_address(_64bit), commpage_length(_64bit), PROT_READ, MAP_SHARED | MAP_FIXED, 0);
+
+	return addr;
 }
 
 int mach_dev_release(struct inode* ino, struct file* file)
