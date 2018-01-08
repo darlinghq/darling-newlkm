@@ -33,6 +33,7 @@
 #include <asm/mman.h>
 #include <asm/elf.h>
 #include <linux/ptrace.h>
+#include <linux/version.h>
 #include "debug_print.h"
 #include "task_registry.h"
 #include "commpage.h"

@@ -63,6 +63,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	uint32_t fat_offset;
 	int err = 0;
 	uint32_t i, p;
+	loff_t pos;
 
 	if (!expect_dylinker)
 	{
@@ -73,9 +74,13 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 		setup_space(bprm);
 	}
 
-	fat_offset = farch ? farch->offset : 0;
+	fat_offset = pos = farch ? farch->offset : 0;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+	if (kernel_read(file, (char*) &header, sizeof(header), &pos) != sizeof(header))
+#else
 	if (kernel_read(file, fat_offset, (char*) &header, sizeof(header)) != sizeof(header))
+#endif
 		return -EIO;
 
 	if (header.filetype != (expect_dylinker ? MH_DYLINKER : MH_EXECUTE))
@@ -85,7 +90,11 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	if (!cmds)
 		return -ENOMEM;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+	if (kernel_read(file, cmds, header.sizeofcmds, &pos) != header.sizeofcmds)
+#else
 	if (kernel_read(file, fat_offset + sizeof(header), cmds, header.sizeofcmds) != header.sizeofcmds)
+#endif
 	{
 		kfree(cmds);
 		return -EIO;
@@ -257,7 +266,12 @@ no_slide:
 					debug_msg("Failed to load dynamic linker for executable, error %d\n", err);
 					goto out;
 				}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+				pos = 0;
+				if (kernel_read(dylinker, bprm->buf, sizeof(bprm->buf), &pos) != sizeof(bprm->buf))
+#else
 				if (kernel_read(dylinker, 0, bprm->buf, sizeof(bprm->buf)) != sizeof(bprm->buf))
+#endif
 				{
 					err = -EIO;
 					fput(dylinker);
