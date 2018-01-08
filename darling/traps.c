@@ -441,7 +441,9 @@ int commpage_install(struct file* xnu_task)
 
 	addr = vm_mmap(xnu_task, commpage_address(_64bit), commpage_length(_64bit), PROT_READ, MAP_SHARED | MAP_FIXED, 0);
 
-	return addr;
+	if (IS_ERR((void __force *)addr))
+		return (long)addr;
+	return 0;
 }
 
 int mach_dev_release(struct inode* ino, struct file* file)

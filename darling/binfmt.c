@@ -150,6 +150,7 @@ int macho_load(struct linux_binprm* bprm)
 
 	if (err != 0)
 	{
+		debug_msg("Failed to install commpage: %d\n", err);
 		send_sig(SIGKILL, current, 0);
 		return err;
 	}

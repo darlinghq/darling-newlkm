@@ -30,7 +30,8 @@
 #define INT_NUMBER 0x83
 
 extern void isr_proc(void);
-extern struct file* commpage_install(void);
+extern struct file* xnu_task_setup(void);
+extern int commpage_install(struct file* f);
 
 extern struct file_operations mach_chardev_ops;
 extern struct linux_binfmt macho_format;
@@ -76,7 +77,8 @@ void isr_proc_impl(struct pt_regs* regs)
 		else
 		{
 			// Probably a process after forking. Set it up.
-			machdev_file = commpage_install();
+			machdev_file = xnu_task_setup();
+			
 			if (IS_ERR(machdev_file))
 			{
 				printk(KERN_ERR "Failed to map commpage\n");
@@ -84,6 +86,7 @@ void isr_proc_impl(struct pt_regs* regs)
 
 				return;
 			}
+			commpage_install(machdev_file);
 		}
 	}
 
