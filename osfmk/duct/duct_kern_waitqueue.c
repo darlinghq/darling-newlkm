@@ -471,12 +471,13 @@ wait_queue_wakeup64_identity_locked(
 	if (lwait) {
 			struct task_struct    * ltask   = lwait->private;
 			receiver    = darling_thread_get(ltask->pid);
-			if (receiver != NULL) {
-				thread_lock (receiver);
-			} else
+			if (receiver == NULL)
 				printf("- BUG? Cannot darling_thread_get(%d)\n", ltask->pid);
 	}
 	spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
+
+	if (receiver != NULL)
+		thread_lock(receiver);
 
 	printf ("- receiver: 0x%p\n", receiver);
 	return receiver;
