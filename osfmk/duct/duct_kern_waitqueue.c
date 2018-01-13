@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "duct.h"
+#include <linux/delay.h>
 #include "duct_pre_xnu.h"
 
 #include "duct_kern_waitqueue.h"
@@ -47,6 +48,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_post_xnu.h"
 
 
+#define delay udelay
 #define WAIT_QUEUE_MAX              thread_max
 #define WAIT_QUEUE_SET_MAX          task_max * 3
 #define WAIT_QUEUE_LINK_MAX         PORT_MAX / 2 + (WAIT_QUEUE_MAX * WAIT_QUEUE_SET_MAX) / 64
@@ -648,3 +650,51 @@ wait_queue_member(
 
 	return ret;
 }
+
+kern_return_t
+wait_queue_set_unlink_all_nofree(
+        wait_queue_set_t wq_set,
+        queue_t         links)
+{
+        wait_queue_link_t wql;
+        wait_queue_t wq;
+        queue_t q;
+        spl_t s;
+
+        if (!wait_queue_is_set(wq_set)) {
+                return KERN_INVALID_ARGUMENT;
+        }
+
+retry:
+        s = splsched();
+        wqs_lock(wq_set);
+
+        /* remove the wait queues that are members of our set */
+        q = &wq_set->wqs_setlinks;
+
+        wql = (wait_queue_link_t)queue_first(q);
+        while (!queue_end(q, (queue_entry_t)wql)) {
+                WAIT_QUEUE_SET_LINK_CHECK(wq_set, wql);
+                wq = wql->wql_queue;
+                if (wait_queue_lock_try(wq)) {
+                        duct_wait_queue_unlink_locked(wq, wq_set, wql);
+                        wait_queue_unlock(wq);
+                        enqueue(links, &wql->wql_links);
+                        wql = (wait_queue_link_t)queue_first(q);
+                } else {
+                        wqs_unlock(wq_set);
+                        splx(s);
+                        delay(1);
+                        goto retry;
+                }
+        }
+
+        /* remove this set from sets it belongs to */
+        wait_queue_unlink_all_nofree_locked(&wq_set->wqs_wait_queue, links);
+
+        wqs_unlock(wq_set);
+        splx(s);
+
+        return(KERN_SUCCESS);
+}
+
