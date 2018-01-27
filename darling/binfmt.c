@@ -24,6 +24,12 @@
 #include <mach-o/loader.h>
 #include <mach-o/fat.h>
 #undef __unused
+
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0)
+#	include <linux/sched/task_stack.h>
+#endif
+
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
