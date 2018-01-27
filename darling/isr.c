@@ -25,6 +25,7 @@
 #include <asm/desc.h>
 #include <linux/ptrace.h>
 #include <linux/semaphore.h>
+#include <linux/irqflags.h>
 #include "commpage.h"
 
 #define INT_NUMBER 0x83
@@ -43,7 +44,7 @@ void isr_proc_impl(struct pt_regs* regs)
 	unsigned int call_nr = regs->orig_ax;
 	unsigned long arg = regs->cx;
 
-	printk(KERN_NOTICE "int 0x83: call_nr=%d, arg=0x%x\n", call_nr, arg);
+	printk(KERN_NOTICE "(%d/%d) int 0x83: call_nr=%d, arg=0x%x\n", current->tgid, current->pid, call_nr, arg);
 	// Find the vm_area_struct governing the commpage
 	// so that we can get the file* for this XNU task.
 
@@ -99,6 +100,7 @@ void isr_proc_impl(struct pt_regs* regs)
 static unsigned long idtpage;
 static struct desc_ptr idtreg;
 
+#if 0 // Doesn't work with Linux 4.14 KPTI kernels
 int isr_install(void)
 {
 	struct desc_ptr newidtr;
@@ -141,19 +143,29 @@ void isr_uninstall(void)
 		free_page(idtpage);
 	}
 }
+#endif
 
-#if 0
-// This approach doesn't work, because "gate" is r/o
 int isr_install(void)
 {
 	struct desc_ptr idtreg;
 	gate_desc* gate;
+	unsigned long flags;
 
 	store_idt(&idtreg);
 
 	gate = (gate_desc*) idtreg.address;
 
+	// We're being VERY naughty here, but there's no legal way of adding an interrupt vector
+	// from a LKM and after kernel initialization.
+	local_irq_save(flags); // Disable interrupts
+	write_cr0(read_cr0 () & (~ 0x10000)); // Kill CPU-enforced page protection
+
+	// TODO: deal with CONFIG_PAGE_TABLE_ISOLATION
+
 	pack_gate(&gate[INT_NUMBER], GATE_INTERRUPT, (unsigned long)isr_proc, 0x3, 0, __KERNEL_CS);
+
+	write_cr0(read_cr0 () | 0x10000);
+	local_irq_restore(flags);
 
 	return 0;
 }
@@ -162,11 +174,18 @@ void isr_uninstall(void)
 {
 	struct desc_ptr idtreg;
 	gate_desc* gate;
+	unsigned long flags;
 
 	store_idt(&idtreg);
 
 	gate = (gate_desc*) idtreg.address;
+
+	local_irq_save(flags);
+	write_cr0(read_cr0 () & (~ 0x10000));
+
 	memset(&gate[INT_NUMBER], 0, sizeof(gate[0]));
+
+	write_cr0(read_cr0 () | 0x10000);
+	local_irq_restore(flags);
 }
-#endif
 
