@@ -153,6 +153,11 @@ CFLAGS_device_server.o := $(miggen_cflags)
 CFLAGS_clock_reply_user.o := $(miggen_cflags)
 CFLAGS_notify_user.o := $(miggen_cflags)
 
+# KERNELVERSION is a dmks variable to specify the right version of the kernel.
+# If this is not done like this, then when updating your kernel, you will
+# build against the wrong kernel
+KERNELVERSION = $(shell uname -r)
+
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
 ifneq ($(KERNELRELEASE),)
@@ -275,7 +280,7 @@ ifneq ($(KERNELRELEASE),)
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
 else
-	KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+	KERNELDIR ?= /lib/modules/$(KERNELVERSION)/build
 	PWD := $(shell pwd)
 default:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
@@ -283,7 +288,7 @@ default:
 endif
 
 all:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	$(MAKE) -C /lib/modules/$(KERNELVERSION)/build M=$(PWD) modules
 
 clean:
 	find . \( -name '*.o' -or -name '*.ko' \) -delete
