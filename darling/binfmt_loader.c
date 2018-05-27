@@ -65,6 +65,9 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	uint32_t i, p;
 	loff_t pos;
 
+	struct cred *override_cred = NULL;
+	const struct cred *old_cred;
+
 	if (!expect_dylinker)
 	{
 #ifdef GEN_32BIT
@@ -137,6 +140,13 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	}
 no_slide:
 
+	// We need to have CAP_SYS_RAWIO to be able to map __PAGEZERO
+	// and to be able to run pretty much any 32-bit binary on systems
+	// that set mmap_min_addr as high as 64K.
+	override_cred = prepare_creds();
+	cap_raise(override_cred->cap_effective, CAP_SYS_RAWIO);
+	old_cred = override_creds(override_cred);
+
 	for (i = 0, p = 0; i < header.ncmds; i++)
 	{
 		struct load_command* lc;
@@ -156,28 +166,12 @@ no_slide:
 					if (slide != 0)
 					{
 						unsigned long addr = seg->vmaddr;
-						struct cred *override_cred = NULL;
-						const struct cred *old_cred;
 
 						if (addr != 0)
 							addr += slide;
-						else
-						{
-							// Special handling for __PAGEZERO:
-							// In order to be able to map __PAGEZERO, we have to be CAP_SYS_RAWIO capable
-							override_cred = prepare_creds();
-							cap_raise(override_cred->cap_effective, CAP_SYS_RAWIO);
-							old_cred = override_creds(override_cred);
-						}
 
 						map_addr = vm_mmap(NULL, addr, seg->vmsize, native_prot(seg->maxprot),
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
-
-						if (override_cred != NULL)
-						{
-							revert_creds(old_cred);
-							put_cred(override_cred);
-						}
 
 						if (BAD_ADDR(map_addr))
 						{
@@ -329,6 +323,12 @@ no_slide:
 
 out:
 	kfree(cmds);
+
+	if (override_cred != NULL)
+	{
+		revert_creds(old_cred);
+		put_cred(override_cred);
+	}
 
 	return err;
 }
