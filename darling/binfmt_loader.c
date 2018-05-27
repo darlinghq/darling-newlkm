@@ -156,13 +156,28 @@ no_slide:
 					if (slide != 0)
 					{
 						unsigned long addr = seg->vmaddr;
+						struct cred *override_cred = NULL;
+						const struct cred *old_cred;
 
-						// Special handling for __PAGEZERO
 						if (addr != 0)
 							addr += slide;
+						else
+						{
+							// Special handling for __PAGEZERO:
+							// In order to be able to map __PAGEZERO, we have to be CAP_SYS_RAWIO capable
+							override_cred = prepare_creds();
+							cap_raise(override_cred->cap_effective, CAP_SYS_RAWIO);
+							old_cred = override_creds(override_cred);
+						}
 
 						map_addr = vm_mmap(NULL, addr, seg->vmsize, native_prot(seg->maxprot),
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
+
+						if (override_cred != NULL)
+						{
+							revert_creds(old_cred);
+							put_cred(override_cred);
+						}
 
 						if (BAD_ADDR(map_addr))
 						{
