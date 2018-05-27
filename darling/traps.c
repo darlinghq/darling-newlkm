@@ -52,7 +52,6 @@
 #include "evprocfd.h"
 #include "evpsetfd.h"
 #include "psynch_support.h"
-#include "isr.h"
 #include "binfmt.h"
 #include "commpage.h"
 
@@ -164,10 +163,6 @@ static int mach_init(void)
 {
 	int err = 0;
 
-	err = isr_install();
-	if (err < 0)
-	    goto fail;
-
 	darling_task_init();
 	darling_xnu_init();
 	psynch_init();
@@ -180,8 +175,6 @@ static int mach_init(void)
 	// err = misc_register(&mach_dev);
 	// if (err < 0)
 	// 	goto fail;
-
-	isr_install();
 
 	printk(KERN_INFO "Darling Mach: kernel emulation loaded, API version " DARLING_MACH_API_VERSION_STR "\n");
 	return 0;
@@ -202,7 +195,6 @@ static void mach_exit(void)
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 
 	macho_binfmt_exit();
-	isr_uninstall();
 
 	commpage_free(commpage32);
 	commpage_free(commpage64);
@@ -250,6 +242,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		new_task->audit_token.val[1] = old_task->audit_token.val[1];
 		new_task->audit_token.val[2] = old_task->audit_token.val[2];
 
+#if 0
 		// find the old fd and close it (later)
 		files = linux_current->files;
 		
@@ -270,6 +263,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		}
 		
 		spin_unlock(&files->file_lock);
+#endif
 	}
 	else
 	{
@@ -501,12 +495,50 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	return 0;
 }
 
+static struct file* mach_dev_afterfork(struct file* oldfile)
+{
+	if (unlikely(linux_current->mm->binfmt != &macho_format))
+	{
+		printk(KERN_NOTICE "Mach ioctl called from a non Mach-O process.\n");
+		return NULL;
+	}
+
+	struct file* newfile = xnu_task_setup();
+	if (IS_ERR(newfile))
+	{
+		printk(KERN_ERR "xnu_task_setup() failed\n");
+		return NULL;
+	}
+
+	commpage_install(newfile);
+
+	// Swap out the fd's file* for a new one
+	spin_lock(&linux_current->files->file_lock);
+
+	struct fdtable *fdt = files_fdtable(linux_current->files);
+	int i;
+
+	for (i = 0; i < fdt->max_fds; i++)
+	{
+		if (fdt->fd[i] == oldfile)
+		{
+			fput(oldfile);
+			fdt->fd[i] = get_file(newfile);
+		}
+	}
+
+	spin_unlock(&linux_current->files->file_lock);
+
+	return newfile;
+}
+
 long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioctl_paramv)
 {
 	const unsigned int num_traps = sizeof(mach_traps) / sizeof(mach_traps[0]);
 	const struct trap_entry* entry;
-	long rv;
+	long rv = 0;
 	pid_t owner;
+	bool need_fput = false;
 
 	task_t task = (task_t) file->private_data;
 
@@ -516,18 +548,33 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 
 	if (owner != task_tgid_nr(linux_current))
 	{
-		debug_msg("Your /dev/mach fd was opened in a different process!\n");
-		return -LINUX_EINVAL;
+		if ((file = mach_dev_afterfork(file)) == NULL)
+		{
+			debug_msg("Your /dev/mach fd was opened in a different process!\n");
+			return -LINUX_EINVAL;
+		}
+		else
+		{
+			// We need to hold an extra reference throughout this call, or else a bad guy's
+			// thread might try to kill our fd while we execute.
+			need_fput = true;
+		}
 	}
 
 	ioctl_num -= DARLING_MACH_API_BASE;
 
 	if (ioctl_num >= num_traps)
-		return -LINUX_ENOSYS;
+	{
+		rv = -LINUX_ENOSYS;
+		goto out;
+	}
 
 	entry = &mach_traps[ioctl_num];
 	if (!entry->handler)
-		return -LINUX_ENOSYS;
+	{
+		rv = -LINUX_ENOSYS;
+		goto out;
+	}
 
 	debug_msg("function %s (0x%x) called...\n", entry->name, ioctl_num);
 
@@ -540,6 +587,13 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 	rv = entry->handler(task, ioctl_paramv);
 
 	debug_msg("...%s returned %ld\n", entry->name, rv);
+out:
+	if (need_fput)
+	{
+		debug_msg("Need fput!\n");
+		fput(file);
+	}
+
 	return rv;
 }
 

@@ -272,8 +272,6 @@ ifneq ($(KERNELRELEASE),)
 		$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o \
 		pexpert/duct/duct_gen_bootargs.o \
 		pexpert/duct/duct_pe_kprintf.o \
-		darling/isr_proc.o \
-		darling/isr.o \
 		darling/binfmt.o \
 		darling/commpage.o
 

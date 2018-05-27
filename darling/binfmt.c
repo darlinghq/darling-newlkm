@@ -40,6 +40,9 @@
 #include <asm/elf.h>
 #include <linux/ptrace.h>
 #include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,9)
+#include <linux/sched/task_stack.h>
+#endif
 #include "debug_print.h"
 #include "task_registry.h"
 #include "commpage.h"
@@ -58,6 +61,7 @@ struct load_results
 
 	unsigned long vm_addr_max;
 	bool _32on64;
+	int kernfd;
 };
 
 extern struct file* xnu_task_setup(void);
@@ -151,8 +155,15 @@ int macho_load(struct linux_binprm* bprm)
 	// Map commpage
 	err = commpage_install(xnu_task);
 
+	lr.kernfd = get_unused_fd_flags(O_RDWR | O_CLOEXEC);
+	
+	if (lr.kernfd >= 0)
+		fd_install(lr.kernfd, xnu_task);
+	else
+		err = lr.kernfd;
+
 	// The ref to the task is now held by the commpage mapping
-	fput(xnu_task);
+	// fput(xnu_task);
 
 	if (err != 0)
 	{
