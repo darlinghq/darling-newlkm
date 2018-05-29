@@ -56,6 +56,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/ \
 	-I$(BUILD_ROOT)/darling \
 	-I$(MIGDIR)/osfmk \
+	-I$(MIGDIR)/../startup \
 	-DARCH_PRIVATE \
 	-DDRIVER_PRIVATE \
 	-D_KERNEL_BUILD \
@@ -179,7 +180,7 @@ ifneq ($(KERNELRELEASE),)
 		darling/down_interruptible.o \
 		darling/traps.o \
 		darling/task_registry.o \
-		darling/license.o \
+		darling/module.o \
 		darling/host_info.o \
 		darling/evprocfd.o \
 		darling/evpsetfd.o \
@@ -271,6 +272,10 @@ ifneq ($(KERNELRELEASE),)
 		$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o \
 		pexpert/duct/duct_gen_bootargs.o \
 		pexpert/duct/duct_pe_kprintf.o \
+		darling/isr_proc.o \
+		darling/isr.o \
+		darling/binfmt.o \
+		darling/commpage.o
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.

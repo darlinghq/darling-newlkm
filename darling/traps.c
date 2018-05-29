@@ -52,19 +52,25 @@
 #include "evprocfd.h"
 #include "evpsetfd.h"
 #include "psynch_support.h"
+#include "isr.h"
+#include "binfmt.h"
+#include "commpage.h"
 
 typedef long (*trap_handler)(task_t, ...);
+
+static void *commpage32, *commpage64;
 
 struct trap_entry {
 	trap_handler handler;
 	const char* name;
 };
 
-static struct file_operations mach_chardev_ops = {
+struct file_operations mach_chardev_ops = {
 	.open           = mach_dev_open,
 	.release        = mach_dev_release,
 	.unlocked_ioctl = mach_dev_ioctl,
 	.compat_ioctl   = mach_dev_ioctl,
+	.mmap           = mach_dev_mmap,
 	.owner          = THIS_MODULE
 };
 
@@ -145,39 +151,61 @@ static const struct trap_entry mach_traps[60] = {
 };
 #undef TRAP
 
-static struct miscdevice mach_dev = {
-	MISC_DYNAMIC_MINOR,
-	"mach",
-	&mach_chardev_ops,
-};
+// static struct miscdevice mach_dev = {
+// 	MISC_DYNAMIC_MINOR,
+// 	"mach",
+// 	&mach_chardev_ops,
+// };
 
 extern void darling_xnu_init(void);
 extern void darling_xnu_deinit(void);
+
 static int mach_init(void)
 {
 	int err = 0;
+
+	err = isr_install();
+	if (err < 0)
+	    goto fail;
 
 	darling_task_init();
 	darling_xnu_init();
 	psynch_init();
 
-	err = misc_register(&mach_dev);
-	if (err < 0)
-	    goto fail;
+	commpage32 = commpage_setup(false);
+	commpage64 = commpage_setup(true);
+
+	macho_binfmt_init();
+
+	// err = misc_register(&mach_dev);
+	// if (err < 0)
+	// 	goto fail;
+
+	isr_install();
 
 	printk(KERN_INFO "Darling Mach: kernel emulation loaded, API version " DARLING_MACH_API_VERSION_STR "\n");
 	return 0;
 
 fail:
 	printk(KERN_WARNING "Error loading Darling Mach: %d\n", err);
+
+	commpage_free(commpage32);
+	commpage_free(commpage64);
+
 	return err;
 }
 static void mach_exit(void)
 {
 	darling_xnu_deinit();
 	psynch_exit();
-	misc_deregister(&mach_dev);
+	// misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
+
+	macho_binfmt_exit();
+	isr_uninstall();
+
+	commpage_free(commpage32);
+	commpage_free(commpage64);
 }
 
 extern kern_return_t task_get_special_port(task_t, int which, ipc_port_t*);
@@ -295,17 +323,6 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	task_deallocate(new_task);
 	thread_deallocate(new_thread);
 	
-	// execve case only:
-	// We do this after running darling_task_register & darling_thread_register
-	// and avoid calling deregister beforehand, so that death notifications don't fire
-	// in case of execve.
-	if (fd_old != -1)
-	{
-		debug_msg("Closing old fd before execve: %d\n", fd_old);
-		old_task->map->linux_task = NULL;
-		sys_close(fd_old);
-	}
-	
 	// fork case only
 	if (ppid_fork != -1)
 	{
@@ -341,6 +358,92 @@ static void darling_ipc_inherit(task_t old_task, task_t new_task)
 			debug_msg("Copied over exception port %p\n", new_task->exc_actions[i].port);
 		}
 	}
+}
+
+// No vma from 4.11
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+static int mach_mmap_fault(struct vm_fault *vmf)
+#else
+static int mach_mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+#endif
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+	struct vm_area_struct *vma = vmf->vma;
+#endif
+	uint8_t* commpage = (uint8_t*) vma->vm_private_data;
+
+	vmf->page = vmalloc_to_page(commpage + (vmf->pgoff << PAGE_SHIFT));
+	if (!vmf->page)
+		return VM_FAULT_SIGBUS;
+
+	get_page(vmf->page);
+
+	return 0;
+}
+
+static const struct vm_operations_struct mach_mmap_ops = {
+	.fault      = mach_mmap_fault,
+};
+
+int mach_dev_mmap(struct file* file, struct vm_area_struct *vma)
+{
+	unsigned long length = vma->vm_end - vma->vm_start;
+
+	if (vma->vm_pgoff != 0)
+		return -LINUX_EINVAL;
+
+	if (test_thread_flag(TIF_IA32))
+	{
+		if (length != commpage_length(false))
+			return -LINUX_EINVAL;
+
+		vma->vm_private_data = commpage32;
+	}
+	else
+	{
+		if (length != commpage_length(true))
+			return -LINUX_EINVAL;
+
+		vma->vm_private_data = commpage64;
+	}
+
+	vma->vm_ops = &mach_mmap_ops;
+	vma->vm_flags |= VM_DONTCOPY | VM_DONTEXPAND;
+	vma->vm_flags &= ~VM_WRITE;
+
+	return 0;
+}
+
+struct file* xnu_task_setup(void)
+{
+	struct file* file;
+	int err;
+	unsigned long addr;
+
+	file = anon_inode_getfile("[commpage]", &mach_chardev_ops, NULL, O_RDWR);
+	if (IS_ERR(file))
+		return file;
+
+	err = mach_dev_open(NULL, file);
+	if (err != 0)
+	{
+		fput(file);
+		return ERR_PTR(err);
+	}
+
+	return file;
+}
+
+int commpage_install(struct file* xnu_task)
+{
+	unsigned long addr;
+	bool _64bit = !test_thread_flag(TIF_IA32);
+
+	addr = vm_mmap(xnu_task, commpage_address(_64bit), commpage_length(_64bit), PROT_READ, MAP_SHARED | MAP_FIXED, 0);
+
+	if (IS_ERR((void __force *)addr))
+		return (long)addr;
+	return 0;
 }
 
 int mach_dev_release(struct inode* ino, struct file* file)

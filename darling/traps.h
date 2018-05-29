@@ -30,6 +30,7 @@ extern void kprintf(const char* format, ...);
 int mach_dev_open(struct inode* ino, struct file* file);
 int mach_dev_release(struct inode* ino, struct file* file);
 long mach_dev_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_paramv);
+int mach_dev_mmap(struct file* file, struct vm_area_struct *vma);
 
 int mach_get_api_version(task_t task);
 int mach_reply_port_entry(task_t task);
