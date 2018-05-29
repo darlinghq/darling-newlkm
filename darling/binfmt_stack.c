@@ -38,6 +38,9 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	user_long_t __user* sp;
 	char __user* exepath_user;
 	size_t exepath_len;
+	char __user* kernfd_user;
+	char kernfd[12];
+	char __user* applep_contents[3];
 
 	// Produce executable_path=... for applep
 	executable_buf = kmalloc(4096, GFP_KERNEL);
@@ -54,10 +57,18 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	// printk(KERN_NOTICE "Stack top: %p\n", bprm->p);
 	exepath_len = strlen(executable_path);
 	sp = (user_long_t*) (bprm->p & ~(sizeof(user_long_t)-1));
-	sp -= bprm->argc + bprm->envc + 6 + exepath_len;
+	sp -= bprm->argc + bprm->envc + 6 + exepath_len + sizeof(kernfd)/4;
 	exepath_user = (char __user*) bprm->p - exepath_len - sizeof(EXECUTABLE_PATH);
 
 	if (!find_extend_vma(current->mm, (unsigned long) sp))
+	{
+		err = -EFAULT;
+		goto out;
+	}
+
+	snprintf(kernfd, sizeof(kernfd), "kernfd=%d", lr->kernfd);
+	kernfd_user = exepath_user - sizeof(kernfd);
+	if (copy_to_user(kernfd_user, kernfd, sizeof(kernfd)))
 	{
 		err = -EFAULT;
 		goto out;
@@ -73,6 +84,9 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 		err = -EFAULT;
 		goto out;
 	}
+	applep_contents[0] = exepath_user;
+	applep_contents[1] = kernfd_user;
+	applep_contents[2] = NULL;
 
 	kfree(executable_buf);
 	executable_buf = NULL;
@@ -148,15 +162,14 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	}
 	current->mm->env_end = p;
 
-	if (__put_user((user_long_t)(unsigned long) exepath_user, applep++))
+	int i;
+	for (i = 0; i < sizeof(applep_contents)/sizeof(applep_contents[0]); i++)
 	{
-		err = -EFAULT;
-		goto out;
-	}
-	if (__put_user((user_long_t) 0, applep++))
-	{
-		err = -EFAULT;
-		goto out;
+		if (__put_user((user_long_t)(unsigned long) applep_contents[i], applep++))
+		{
+			err = -EFAULT;
+			goto out;
+		}
 	}
 
 	// get_random_bytes(rand_bytes, sizeof(rand_bytes));
