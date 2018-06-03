@@ -175,7 +175,7 @@ no_slide:
 
 						if (BAD_ADDR(map_addr))
 						{
-							err = -ENOMEM;
+							err = (int) map_addr;
 							goto out;
 						}
 					}
@@ -187,7 +187,7 @@ no_slide:
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
 						if (BAD_ADDR(map_addr))
 						{
-							err = -ENOMEM;
+							err = (int) map_addr;
 							goto out;
 						}
 					}
