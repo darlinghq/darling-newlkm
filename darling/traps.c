@@ -237,6 +237,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		
 		new_task->tracer = old_task->tracer;
 		darling_ipc_inherit(old_task, new_task);
+		old_task->map->linux_task = NULL;
 		
 		// Inherit UID and GID
 		new_task->audit_token.val[1] = old_task->audit_token.val[1];
@@ -461,7 +462,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	
 	cur_thread = darling_thread_get_current();
 	
-	debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->tgid, my_task->ref_count);
+	debug_msg("Destroying XNU task for pid %d, refc %d, exec_case %d\n", linux_current->tgid, my_task->ref_count, exec_case);
 	
 	task_lock(my_task);
 	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
