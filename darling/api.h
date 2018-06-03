@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		12
+#define DARLING_MACH_API_VERSION		13
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -92,6 +92,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_pthread_canceled,
 	NR_pid_get_state,
 	NR_started_suspended,
+	NR_task_64bit,
 };
 
 struct set_tracer_args

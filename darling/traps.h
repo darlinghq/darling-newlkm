@@ -96,4 +96,6 @@ int pthread_markcancel_entry(task_t task, void* arg);
 int pthread_canceled_entry(task_t task, void* arg);
 int started_suspended_entry(task_t task, void* arg);
 
+int task_64bit_entry(task_t, void* pid_in);
+
 #endif

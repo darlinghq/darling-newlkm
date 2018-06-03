@@ -91,6 +91,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_set_tracer, set_tracer_entry),
 	TRAP(NR_tid_for_thread, tid_for_thread_entry),
 	TRAP(NR_pid_get_state, pid_get_state_entry),
+	TRAP(NR_task_64bit, task_64bit_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -1259,6 +1260,21 @@ int pid_get_state_entry(task_t task_self, void* pid_in)
 int started_suspended_entry(task_t task, void* arg)
 {
 	return darling_task_marked_start_suspended();
+}
+
+int task_64bit_entry(task_t task_self, void* pid_in)
+{
+	struct task_struct* task;
+	int rv = -LINUX_ESRCH;
+
+	rcu_read_lock();
+
+	task = __find_task_by_vpid((int)(long) pid_in);
+	if (task != NULL)
+		rv = task->mm->task_size > 0xffffffffull;
+
+	rcu_read_unlock();
+	return rv;
 }
 
 module_init(mach_init);
