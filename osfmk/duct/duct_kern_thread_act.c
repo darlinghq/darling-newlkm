@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2014-2017, Wenqi Chen
+COpyright (C) 2018 Lubos Dolezel
 
 Shanghai Mifu Infotech Co., Ltd
 B112-113, IF Industrial Park, 508 Chunking Road, Shanghai 201103, China
@@ -46,6 +47,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "duct_post_xnu.h"
 
+#define current linux_current
+#include <linux/mm.h>
+#include <linux/sched.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
+#include <linux/sched/mm.h>
+#include <linux/sched/cputime.h>
+#endif
+
 extern wait_queue_head_t global_wait_queue_head;
 
 kern_return_t duct_thread_terminate (thread_t thread)
@@ -82,6 +91,13 @@ kern_return_t duct_thread_terminate (thread_t thread)
         return result;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
+typedef u64 cputime_t;
+
+// On new kernels, cputime is in nanoseconds
+#define cputime_to_usecs(v) ((v) / 1000)
+#endif
+
 kern_return_t
 thread_info(
     thread_t                thread,
@@ -104,6 +120,34 @@ thread_info(
 			// Also used for PROC_PIDTHREADINFO
 			id->thread_handle = 0;
 			id->dispatch_qaddr = 0;
+
+			return KERN_SUCCESS;
+		}
+		case THREAD_BASIC_INFO:
+		{
+			if (*thread_info_count < THREAD_BASIC_INFO_COUNT)
+				return KERN_INVALID_ARGUMENT;
+			*thread_info_count = THREAD_BASIC_INFO_COUNT;
+
+			thread_basic_info_t out = (thread_basic_info_t) thread_info_out;
+			uint64_t utimeus, stimeus;
+
+			memset(out, 0, sizeof(*out));
+
+			utimeus = cputime_to_usecs(thread->linux_task->utime);
+			stimeus = cputime_to_usecs(thread->linux_task->stime);
+
+			out->user_time.seconds = utimeus / USEC_PER_SEC;
+			out->user_time.microseconds = utimeus % USEC_PER_SEC;
+			out->system_time.seconds = stimeus / USEC_PER_SEC;
+			out->system_time.microseconds = stimeus % USEC_PER_SEC;
+
+			if (thread->linux_task->state & TASK_UNINTERRUPTIBLE)
+				out->run_state = TH_STATE_UNINTERRUPTIBLE;
+			else if (task_is_stopped(thread->linux_task))
+				out->run_state = TH_STATE_STOPPED;
+			else
+				out->run_state = TH_STATE_RUNNING;
 
 			return KERN_SUCCESS;
 		}
