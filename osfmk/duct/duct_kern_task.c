@@ -509,10 +509,18 @@ task_info(
 
 		/* only set format on output for those expecting it */
 		if (*task_info_count >= TASK_DYLD_INFO_COUNT) {
-			bool is64bit = ltask->mm->task_size >= 0x100000000ull;
-			info->all_image_info_format = task_has_64BitAddr(task) ?
-				                 TASK_DYLD_ALL_IMAGE_INFO_64 : 
-				                 TASK_DYLD_ALL_IMAGE_INFO_32 ;
+			struct mm_struct* mm = get_task_mm(ltask);
+			
+			if (mm != NULL)
+			{
+				bool is64bit = mm->task_size >= 0x100000000ull;
+				info->all_image_info_format = task_has_64BitAddr(task) ?
+					                 TASK_DYLD_ALL_IMAGE_INFO_64 : 
+					                 TASK_DYLD_ALL_IMAGE_INFO_32 ;
+				mmput(mm);
+			}
+			else
+				info->all_image_info_format = 0;
 			*task_info_count = TASK_DYLD_INFO_COUNT;
 		} else {
 			*task_info_count = TASK_LEGACY_DYLD_INFO_COUNT;
@@ -524,18 +532,21 @@ task_info(
 	{
 		struct task_struct* ltask = task->map->linux_task;
 		struct mm_struct* mm = get_task_mm(ltask);
-		unsigned long anon, file, shmem = 0, total_rss;
+		unsigned long anon, file, shmem = 0, total_rss = 0;
 		//cputime_t utime, stime;
 		uint64_t utimeus, stimeus;
 
-		anon = get_mm_counter(mm, MM_ANONPAGES);
-		file = get_mm_counter(mm, MM_FILEPAGES);
+		if (mm != NULL)
+		{
+			anon = get_mm_counter(mm, MM_ANONPAGES);
+			file = get_mm_counter(mm, MM_FILEPAGES);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0)
-		shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+			shmem = get_mm_counter(mm, MM_SHMEMPAGES);
 #endif
 
-		total_rss = anon + file + shmem;
+			total_rss = anon + file + shmem;
+		}
 
 		//__thread_group_cputime_adjusted(ltask, &utime, &stime);
 		//utimeus = cputime_to_usecs(utime);
@@ -555,7 +566,7 @@ task_info(
 			struct task_basic_info_64* info = (struct task_basic_info_64*) task_info_out;
 
 			info->suspend_count = 0;
-			info->virtual_size = PAGE_SIZE * mm->total_vm;
+			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;
 			info->user_time.microseconds = utimeus % USEC_PER_SEC;
@@ -576,7 +587,7 @@ task_info(
 			struct task_basic_info_32* info = (struct task_basic_info_32*) task_info_out;
 
 			info->suspend_count = 0;
-			info->virtual_size = PAGE_SIZE * mm->total_vm;
+			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;
 			info->user_time.microseconds = utimeus % USEC_PER_SEC;
@@ -585,6 +596,8 @@ task_info(
 			info->policy = 0;
 		}
 
+		if (mm != NULL)
+			mmput(mm);
 		error = KERN_SUCCESS;
 		break;
 	}
@@ -628,27 +641,37 @@ task_info(
 			*task_info_count = TASK_VM_INFO_COUNT;
 
 		struct task_struct* ltask = task->map->linux_task;
-		struct mm_struct* mm = ltask->mm;
+		struct mm_struct* mm = get_task_mm(ltask);
 
 		task_vm_info_data_t* out = (task_vm_info_data_t*) task_info_out;
 		memset(out, 0, sizeof(*task_info_count));
 
 		unsigned long anon, file, shmem = 0, total_rss;
 		
-		anon = get_mm_counter(mm, MM_ANONPAGES);
-		file = get_mm_counter(mm, MM_FILEPAGES);
+		if (mm != NULL)
+		{
+			anon = get_mm_counter(mm, MM_ANONPAGES);
+			file = get_mm_counter(mm, MM_FILEPAGES);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0)
-		shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+			shmem = get_mm_counter(mm, MM_SHMEMPAGES);
 #endif
 
-		total_rss = anon + file + shmem;
+			total_rss = anon + file + shmem;
+		}
+		else
+			total_rss = 0;
 
 		out->page_size = PAGE_SIZE;
 		// out->max_address = mm->task_size;
 		out->resident_size = out->resident_size_peak = total_rss * PAGE_SIZE;
-		out->virtual_size = mm->total_vm * PAGE_SIZE;
+
+		if (mm != NULL)
+			out->virtual_size = mm->total_vm * PAGE_SIZE;
 		// TODO: There are more fields...
+
+		if (mm != NULL)
+			mmput(mm);
 
 		error = KERN_SUCCESS;
 		break;

@@ -55,6 +55,11 @@
 #include "binfmt.h"
 #include "commpage.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
+#define current linux_current
+#include <linux/sched/mm.h>
+#endif
+
 typedef long (*trap_handler)(task_t, ...);
 
 static void *commpage32, *commpage64;
@@ -1270,8 +1275,12 @@ int task_64bit_entry(task_t task_self, void* pid_in)
 	rcu_read_lock();
 
 	task = __find_task_by_vpid((int)(long) pid_in);
-	if (task != NULL && task->mm != NULL)
-		rv = task->mm->task_size > 0xffffffffull;
+	if (task != NULL)
+	{
+		struct mm_struct* mm = get_task_mm(task);
+		rv = mm->task_size > 0xffffffffull;
+		mmput(mm);
+	}
 
 	rcu_read_unlock();
 	return rv;
