@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2014-2017, Wenqi Chen
+Copyright (C) 2018 Lubos Dolezel
 
 Shanghai Mifu Infotech Co., Ltd
 B112-113, IF Industrial Park, 508 Chunking Road, Shanghai 201103, China
@@ -432,6 +433,39 @@ static void __thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut
         *st = cputime.stime;
 }
 
+#ifndef TASK_VM_INFO
+
+// Copied from newer XNU
+#define TASK_VM_INFO		22
+#define TASK_VM_INFO_PURGEABLE	23
+struct task_vm_info {
+        mach_vm_size_t  virtual_size;	    /* virtual memory size (bytes) */
+	integer_t	region_count;	    /* number of memory regions */
+	integer_t	page_size;
+        mach_vm_size_t  resident_size;	    /* resident memory size (bytes) */
+        mach_vm_size_t  resident_size_peak; /* peak resident size (bytes) */
+
+	mach_vm_size_t	device;
+	mach_vm_size_t	device_peak;
+	mach_vm_size_t	internal;
+	mach_vm_size_t	internal_peak;
+	mach_vm_size_t	external;
+	mach_vm_size_t	external_peak;
+	mach_vm_size_t	reusable;
+	mach_vm_size_t	reusable_peak;
+	mach_vm_size_t	purgeable_volatile_pmap;
+	mach_vm_size_t	purgeable_volatile_resident;
+	mach_vm_size_t	purgeable_volatile_virtual;
+	mach_vm_size_t	compressed;
+	mach_vm_size_t	compressed_peak;
+	mach_vm_size_t	compressed_lifetime;
+};
+typedef struct task_vm_info	task_vm_info_data_t;
+typedef struct task_vm_info	*task_vm_info_t;
+#define TASK_VM_INFO_COUNT	((mach_msg_type_number_t) \
+		(sizeof (task_vm_info_data_t) / sizeof (natural_t)))
+#endif
+
 kern_return_t
 task_info(
     task_t                  task,
@@ -578,6 +612,43 @@ task_info(
 		info->user_time.microseconds = utimeus % USEC_PER_SEC;
 		info->system_time.seconds = stimeus / USEC_PER_SEC;
 		info->system_time.microseconds = stimeus % USEC_PER_SEC;
+
+		error = KERN_SUCCESS;
+		break;
+	}
+	case TASK_VM_INFO:
+	{
+		if (*task_info_count < 32)
+		{
+			// kprintf("Bad task_info_count, got %d, expected %d\n", *task_info_count, TASK_VM_INFO_COUNT);
+			error = KERN_INVALID_ARGUMENT;
+			break;
+		}
+		else if (*task_info_count > TASK_VM_INFO_COUNT)
+			*task_info_count = TASK_VM_INFO_COUNT;
+
+		struct task_struct* ltask = task->map->linux_task;
+		struct mm_struct* mm = ltask->mm;
+
+		task_vm_info_data_t* out = (task_vm_info_data_t*) task_info_out;
+		memset(out, 0, sizeof(*task_info_count));
+
+		unsigned long anon, file, shmem = 0, total_rss;
+		
+		anon = get_mm_counter(mm, MM_ANONPAGES);
+		file = get_mm_counter(mm, MM_FILEPAGES);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,5,0)
+		shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+#endif
+
+		total_rss = anon + file + shmem;
+
+		out->page_size = PAGE_SIZE;
+		// out->max_address = mm->task_size;
+		out->resident_size = out->resident_size_peak = total_rss * PAGE_SIZE;
+		out->virtual_size = mm->total_vm * PAGE_SIZE;
+		// TODO: There are more fields...
 
 		error = KERN_SUCCESS;
 		break;

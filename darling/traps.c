@@ -1270,7 +1270,7 @@ int task_64bit_entry(task_t task_self, void* pid_in)
 	rcu_read_lock();
 
 	task = __find_task_by_vpid((int)(long) pid_in);
-	if (task != NULL)
+	if (task != NULL && task->mm != NULL)
 		rv = task->mm->task_size > 0xffffffffull;
 
 	rcu_read_unlock();
