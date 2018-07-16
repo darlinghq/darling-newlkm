@@ -453,7 +453,6 @@ wait_queue_wakeup64_identity_locked(
 	spin_lock_irqsave (&walked_waitq->linux_waitqh.lock, flags);
 
 	receiver        = THREAD_NULL;
-	linux_wait_queue_t    * lwait   = NULL;
 	linux_wait_queue_t    * lwait_curr;
 	linux_wait_queue_t    * lwait_next;
 
@@ -463,23 +462,23 @@ wait_queue_wakeup64_identity_locked(
 	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.task_list, task_list)
 #endif
         {
-			if ( lwait_curr->private &&
-				 lwait_curr->func (lwait_curr, TASK_NORMAL, 0, (void *) event) ) {
-					lwait   = lwait_curr;
+			if ( lwait_curr->private) {
+				struct task_struct    * ltask   = lwait_curr->private;
+				receiver    = darling_thread_get(ltask->pid);
+
+				if (receiver != NULL)
+					thread_lock(receiver);
+				else
+					printf("- BUG? Cannot darling_thread_get(%d)\n", ltask->pid);
+
+				if (lwait_curr->func (lwait_curr, TASK_NORMAL, 0, (void *) event) )
 					break;
+				if (receiver != NULL)
+					thread_unlock(receiver);
 			}
 	}
 
-	if (lwait) {
-			struct task_struct    * ltask   = lwait->private;
-			receiver    = darling_thread_get(ltask->pid);
-			if (receiver == NULL)
-				printf("- BUG? Cannot darling_thread_get(%d)\n", ltask->pid);
-	}
 	spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
-
-	if (receiver != NULL)
-		thread_lock(receiver);
 
 	printf ("- receiver: 0x%p\n", receiver);
 	return receiver;
