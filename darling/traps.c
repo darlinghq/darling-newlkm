@@ -1278,8 +1278,13 @@ int task_64bit_entry(task_t task_self, void* pid_in)
 	if (task != NULL)
 	{
 		struct mm_struct* mm = get_task_mm(task);
-		rv = mm->task_size > 0xffffffffull;
-		mmput(mm);
+		if (mm)
+		{
+			rv = mm->task_size > 0xffffffffull;
+			mmput(mm);
+		}
+		else
+			rv = 0;
 	}
 
 	rcu_read_unlock();
