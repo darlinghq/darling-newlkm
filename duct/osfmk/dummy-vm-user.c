@@ -226,7 +226,7 @@ mach_vm_protect(
 	boolean_t		set_maximum,
 	vm_prot_t		new_protection)
 {
-        kprintf("not implemented: mach_vm_protect()\n");
+        kprintf("no-op: mach_vm_protect()\n");
         return 0;
 }
 /*
@@ -244,7 +244,10 @@ vm_protect(
 	boolean_t		set_maximum,
 	vm_prot_t		new_protection)
 {
-        kprintf("not implemented: vm_protect()\n");
+	// There is currently no feasible way of doing mprotect() on a remote process.
+	// Hence we silently ignore this request and permit overwriting R/O memory pages
+	// in vm_write() with FOLL_FORCE.
+        kprintf("no-op: vm_protect()\n");
         return 0;
 }
 /*

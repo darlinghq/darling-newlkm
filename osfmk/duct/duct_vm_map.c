@@ -321,12 +321,13 @@ vm_map_copy_overwrite(
 		{
 			int wr;
 
+			// We use FOLL_FORCE because we cannot reasonably implement mach_vm_protect().
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
-			wr = access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE);
+			wr = access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE | FOLL_FORCE);
 #else
 			// Older kernels don't export access_process_vm(),
 			// so we need to fall back to our own copy in access_process_vm.h
-			wr = __access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE);
+			wr = __access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE | FOLL_FORCE);
 #endif
 			if (wr != copy->size) {
 					printk(KERN_ERR "Failed to copy memory\n");
