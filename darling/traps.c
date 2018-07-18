@@ -54,6 +54,7 @@
 #include "psynch_support.h"
 #include "binfmt.h"
 #include "commpage.h"
+#include "foreign_mm.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #define current linux_current
@@ -138,6 +139,8 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR__kernelrpc_mach_port_extract_member_trap, _kernelrpc_mach_port_extract_member_entry),
 	TRAP(NR__kernelrpc_mach_port_insert_member_trap, _kernelrpc_mach_port_insert_member_entry),
 	TRAP(NR__kernelrpc_mach_port_insert_right_trap, _kernelrpc_mach_port_insert_right_entry),
+	TRAP(NR__kernelrpc_mach_vm_allocate_trap, _kernelrpc_mach_vm_allocate_entry),
+	TRAP(NR__kernelrpc_mach_vm_deallocate_trap, _kernelrpc_mach_vm_deallocate_entry),
 
 	// MKTIMER
 	TRAP(NR_mk_timer_create_trap, mk_timer_create_entry),
@@ -176,6 +179,7 @@ static int mach_init(void)
 	commpage32 = commpage_setup(false);
 	commpage64 = commpage_setup(true);
 
+	foreignmm_init();
 	macho_binfmt_init();
 
 	// err = misc_register(&mach_dev);
@@ -190,6 +194,7 @@ fail:
 
 	commpage_free(commpage32);
 	commpage_free(commpage64);
+	foreignmm_exit();
 
 	return err;
 }
@@ -752,6 +757,99 @@ int _kernelrpc_mach_port_insert_member_entry(task_t task, struct mach_port_inser
 	out.pset = args.pset_right_name;
 
 	return _kernelrpc_mach_port_insert_member_trap(&out);
+}
+
+// This structure is also reused for mach_vm_deallocate
+struct vm_allocate_params
+{
+	unsigned long address, size;
+	int flags;
+	int prot;
+};
+
+static void mach_vm_allocate_helper(struct vm_allocate_params* params)
+{
+	params->address = vm_mmap(NULL, params->address, params->size, params->prot, params->flags, 0);
+}
+
+int _kernelrpc_mach_vm_allocate_entry(task_t task_self, struct mach_vm_allocate_args* in_args)
+{
+	copyargs(args, in_args);
+
+	int rv = KERN_SUCCESS;
+	task_t task = port_name_to_task(args.target);
+
+	if (!task)
+		return KERN_INVALID_TASK;
+
+	struct vm_allocate_params params;
+
+	params.flags = MAP_ANONYMOUS | MAP_PRIVATE;
+	if (!(args.flags & VM_FLAGS_ANYWHERE))
+		params.flags |= MAP_FIXED;
+
+	params.prot = PROT_READ | PROT_WRITE | PROT_EXEC;
+	params.address = args.address;
+	params.size = args.size;
+
+	struct mm_struct* mm = get_task_mm(task->map->linux_task);
+
+	if (mm != NULL)
+	{
+		foreignmm_execute(mm, (foreignmm_cb_t) mach_vm_allocate_helper, &params);
+		mmput(mm);
+
+		if (IS_ERR_VALUE(params.address))
+			rv = KERN_FAILURE;
+		else
+		{
+			uint64_t addr64 = params.address;
+			if (copy_to_user(&in_args->address, &addr64, sizeof(addr64)))
+				rv = KERN_INVALID_ARGUMENT;
+		}
+	}
+	else
+		rv = KERN_INVALID_TASK; // It's a zombie or something
+
+	task_deallocate(task);
+	return rv;
+}
+
+static void mach_vm_deallocate_helper(struct vm_allocate_params* params)
+{
+	params->address = vm_munmap(params->address, params->size);
+}
+
+int _kernelrpc_mach_vm_deallocate_entry(task_t task_self, struct mach_vm_deallocate_args* in_args)
+{
+	copyargs(args, in_args);
+
+	int rv = KERN_SUCCESS;
+	task_t task = port_name_to_task(args.target);
+
+	if (!task)
+		return KERN_INVALID_TASK;
+
+	struct vm_allocate_params params;
+
+	params.address = args.address;
+	params.size = args.size;
+
+	struct mm_struct* mm = get_task_mm(task->map->linux_task);
+
+	if (mm != NULL)
+	{
+		foreignmm_execute(mm, (foreignmm_cb_t) mach_vm_deallocate_helper, &params);
+		mmput(mm);
+
+		if (IS_ERR_VALUE(params.address))
+			rv = KERN_FAILURE;
+	}
+	else
+		rv = KERN_INVALID_TASK; // It's a zombie or something
+
+	task_deallocate(task);
+	return rv;
 }
 
 int semaphore_signal_entry(task_t task, struct semaphore_signal_args* in_args)

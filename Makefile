@@ -186,6 +186,7 @@ ifneq ($(KERNELRELEASE),)
 		darling/evpsetfd.o \
 		darling/pthread_kill.o \
 		darling/psynch_support.o \
+		darling/foreign_mm.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
