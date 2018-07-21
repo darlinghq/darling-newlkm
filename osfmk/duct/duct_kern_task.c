@@ -514,7 +514,7 @@ task_info(
 			if (mm != NULL)
 			{
 				bool is64bit = mm->task_size >= 0x100000000ull;
-				info->all_image_info_format = task_has_64BitAddr(task) ?
+				info->all_image_info_format = is64bit ?
 					                 TASK_DYLD_ALL_IMAGE_INFO_64 : 
 					                 TASK_DYLD_ALL_IMAGE_INFO_32 ;
 				mmput(mm);
