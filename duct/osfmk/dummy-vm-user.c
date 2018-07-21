@@ -537,8 +537,26 @@ mach_vm_read_overwrite(
 	mach_vm_address_t	data,
 	mach_vm_size_t	*data_size)
 {
-        kprintf("not implemented: mach_vm_read_overwrite()\n");
-        return 0;
+	kern_return_t	error;
+	vm_map_copy_t	copy;
+
+	if (map == VM_MAP_NULL)
+		return(KERN_INVALID_ARGUMENT);
+
+	error = vm_map_copyin(map, (vm_map_address_t)address,
+				(vm_map_size_t)size, FALSE, &copy);
+
+	if (KERN_SUCCESS == error) {
+		error = vm_map_copy_overwrite(current_thread()->map,
+ 					(vm_map_address_t)data, 
+					copy, FALSE);
+		if (KERN_SUCCESS == error) {
+			*data_size = size;
+			return error;
+		}
+		vm_map_copy_discard(copy);
+	}
+	return(error);
 }
 /*
  * vm_read_overwrite -
