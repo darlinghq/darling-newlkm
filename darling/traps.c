@@ -494,6 +494,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		else
 			queue_remove(&my_task->threads, thread, thread_t, task_threads);
 	}
+	my_task->thread_count = 0;
 	task_unlock(my_task);
 	duct_task_destroy(my_task);
 

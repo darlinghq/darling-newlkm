@@ -45,6 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "duct_post_xnu.h"
 #include <darling/task_registry.h>
+#include <darling/debug_print.h>
 
 static struct zone          *thread_zone;
 static lck_grp_attr_t       thread_lck_grp_attr;
@@ -576,7 +577,7 @@ void duct_thread_deallocate (thread_t thread)
 
         task_deallocate (task);
 
-        kprintf("Deallocating thread %p\n", thread);
+        debug_msg("Deallocating thread %p\n", thread);
         duct_zfree (thread_zone, thread);
 }
 
