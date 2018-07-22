@@ -405,10 +405,12 @@ void darling_task_deregister(task_t t)
 				break;
 
 			rb_erase(node, &all_tasks);
+			task_count--;
+
+			write_unlock(&my_task_lock);
 			darling_task_free(entry);
 
-			task_count--;
-			break;
+			return;
 		}
 	}
 
