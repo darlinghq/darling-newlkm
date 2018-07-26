@@ -1,6 +1,7 @@
 #include <linux/module.h>
 #include <linux/cred.h>
 #include <linux/sched.h>
+#include <linux/version.h>
 
 static int group = -1;
 
