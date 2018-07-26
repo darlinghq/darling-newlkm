@@ -172,6 +172,8 @@ thread_suspend(
 	{
 		return KERN_INVALID_ARGUMENT;
 	}
+	if (thread->task == NULL)
+		return KERN_FAILURE;
 	kprintf(KERN_DEBUG " - thread_suspend(): thread=%p, linux_task=%p\n", thread, thread->linux_task);
 	
 	smp_store_mb(thread->linux_task->state, TASK_STOPPED);
@@ -189,6 +191,8 @@ thread_resume(
 	{
 		return KERN_INVALID_ARGUMENT;
 	}
+	if (thread->linux_task == NULL)
+		return KERN_FAILURE;
 
 	smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
 	wake_up_process(thread->linux_task);

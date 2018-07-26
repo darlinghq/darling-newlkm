@@ -105,6 +105,11 @@ thread_info(
     thread_info_t           thread_info_out,
     mach_msg_type_number_t  *thread_info_count)
 {
+	if (thread == NULL)
+		return KERN_INVALID_ARGUMENT;
+	if (thread->linux_task == NULL)
+		return KERN_FAILURE;
+
 	switch (flavor)
 	{
 		case THREAD_IDENTIFIER_INFO:
@@ -168,6 +173,8 @@ thread_get_state(
     mach_msg_type_number_t  *state_count)   /*IN/OUT*/
 {
 	struct task_struct* ltask = thread->linux_task;
+	if (!ltask)
+		return KERN_FAILURE;
 
 #ifdef __x86_64__
 	switch (flavor)
@@ -319,6 +326,8 @@ thread_set_state(
     mach_msg_type_number_t  state_count)
 {
 	struct task_struct* ltask = thread->linux_task;
+	if (!ltask)
+		return KERN_FAILURE;
 
 #ifdef __x86_64__
 	switch (flavor)

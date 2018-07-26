@@ -444,6 +444,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
 
         new_thread->active = TRUE;
+        get_task_struct(linux_current);
         new_thread->linux_task = linux_current;
         *out_thread = new_thread;
 
@@ -576,6 +577,8 @@ void duct_thread_deallocate (thread_t thread)
         task_unlock(task);
 
         task_deallocate (task);
+		if (thread->linux_task != NULL)
+	        put_task_struct(thread->linux_task);
 
         debug_msg("Deallocating thread %p\n", thread);
         duct_zfree (thread_zone, thread);

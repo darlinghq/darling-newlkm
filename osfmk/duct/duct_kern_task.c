@@ -499,6 +499,10 @@ task_info(
 		// shortly after startup.
 
 		struct task_struct* ltask = task->map->linux_task;
+		if (!ltask) {
+			error = KERN_FAILURE;
+			break;
+		}
 		darling_task_get_dyld_info(ltask->pid,
 				&task->all_image_info_addr,
 				&task->all_image_info_size);
@@ -531,6 +535,13 @@ task_info(
 	case TASK_BASIC_INFO_32:
 	{
 		struct task_struct* ltask = task->map->linux_task;
+
+		if (!ltask)
+		{
+			error = KERN_FAILURE;
+			break;
+		}
+
 		struct mm_struct* mm = get_task_mm(ltask);
 		unsigned long anon, file, shmem = 0, total_rss = 0;
 		//cputime_t utime, stime;
@@ -613,6 +624,11 @@ task_info(
 			error = KERN_INVALID_ARGUMENT;
 			break;
 		}
+		if (ltask == NULL)
+		{
+			error = KERN_FAILURE;
+			break;
+		}
 
 		*task_info_count = TASK_THREAD_TIMES_INFO_COUNT;
 
@@ -641,6 +657,13 @@ task_info(
 			*task_info_count = TASK_VM_INFO_COUNT;
 
 		struct task_struct* ltask = task->map->linux_task;
+
+		if (!ltask)
+		{
+			error = KERN_FAILURE;
+			break;
+		}
+
 		struct mm_struct* mm = get_task_mm(ltask);
 
 		task_vm_info_data_t* out = (task_vm_info_data_t*) task_info_out;

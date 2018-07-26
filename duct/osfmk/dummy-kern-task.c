@@ -466,6 +466,8 @@ task_threads(
 
 	if (task == TASK_NULL)
 		return (KERN_INVALID_ARGUMENT);
+	if (task->map->linux_task == NULL)
+		return KERN_FAILURE;
 
 	size = 0; addr = NULL;
 
@@ -574,6 +576,9 @@ static kern_return_t state_to_task(task_t task, int state)
 		return KERN_INVALID_ARGUMENT;
 
 	ltask = task->map->linux_task;
+
+	if (ltask == NULL)
+		return KERN_FAILURE;
 
 	// read_lock(&tasklist_lock);
 	rcu_read_lock();

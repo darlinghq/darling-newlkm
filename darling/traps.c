@@ -248,7 +248,12 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		
 		new_task->tracer = old_task->tracer;
 		darling_ipc_inherit(old_task, new_task);
-		old_task->map->linux_task = NULL;
+
+		if (old_task->map->linux_task != NULL)
+		{
+			put_task_struct(old_task->map->linux_task);
+			old_task->map->linux_task = NULL;
+		}
 		
 		// Inherit UID and GID
 		new_task->audit_token.val[1] = old_task->audit_token.val[1];
@@ -495,6 +500,13 @@ int mach_dev_release(struct inode* ino, struct file* file)
 			queue_remove(&my_task->threads, thread, thread_t, task_threads);
 	}
 	my_task->thread_count = 0;
+	
+	if (my_task->map->linux_task != NULL)
+	{
+		put_task_struct(my_task->map->linux_task);
+		my_task->map->linux_task = NULL;
+	}
+
 	task_unlock(my_task);
 	duct_task_destroy(my_task);
 
@@ -503,7 +515,14 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	
 	//duct_thread_destroy(cur_thread);
 	if (!exec_case)
+	{
+		if (cur_thread->linux_task != NULL)
+		{
+			put_task_struct(cur_thread->linux_task);
+			cur_thread->linux_task = NULL;
+		}
 		darling_thread_deregister(cur_thread);
+	}
 
 	return 0;
 }
@@ -961,6 +980,12 @@ int thread_death_announce_entry(task_t task)
 	thread_t thread = darling_thread_get_current();
 	if (thread != NULL)
 	{
+		if (thread->linux_task != NULL)
+		{
+			put_task_struct(thread->linux_task);
+			thread->linux_task = NULL;
+		}
+
 		duct_thread_destroy(thread);
 		darling_thread_deregister(thread);
 		return 0;
@@ -1122,7 +1147,7 @@ int tid_for_thread_entry(task_t task, void* tport_in)
 	int tid;
 	thread_t t = port_name_to_thread((int)(long) tport_in);
 
-	if (!t)
+	if (!t || !t->linux_task)
 		return -1;
 
 	tid = task_pid_vnr(t->linux_task);

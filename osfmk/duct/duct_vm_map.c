@@ -129,7 +129,11 @@ void duct_vm_map_init (void)
 void duct_vm_map_deallocate(vm_map_t map)
 {
 	if (map != NULL)
+	{
 		duct_zfree(vm_map_zone, map);
+		if (map->linux_task != NULL)
+			put_task_struct(map->linux_task);
+	}
 }
 
 // Calling with a NULL task makes other funcs consider the map a kernel map
@@ -186,8 +190,10 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 #endif
 
 #if defined (__DARLING__)
-		result->linux_task = linux_task;
-        result->ref_count = 1;
+	if (linux_task)
+		get_task_struct(linux_task);
+	result->linux_task = linux_task;
+	result->ref_count = 1;
 #endif
 
         return(result);
