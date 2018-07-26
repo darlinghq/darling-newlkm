@@ -447,6 +447,8 @@ struct thread {
         struct task_struct        * linux_task;
         // linux_wait_queue_t          lwait;
 	struct ksyn_waitq_element uu_kwe;
+	uint64_t triggered_watchpoint_address;
+	unsigned int triggered_watchpoint_operation;
 #ifdef __x86_64__
 	x86_thread_state_t thread_state;
 	x86_float_state_t float_state;

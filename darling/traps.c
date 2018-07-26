@@ -98,6 +98,7 @@ static const struct trap_entry mach_traps[60] = {
 	TRAP(NR_tid_for_thread, tid_for_thread_entry),
 	TRAP(NR_pid_get_state, pid_get_state_entry),
 	TRAP(NR_task_64bit, task_64bit_entry),
+	TRAP(NR_last_triggered_watchpoint, last_triggered_watchpoint_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -1413,6 +1414,20 @@ int task_64bit_entry(task_t task_self, void* pid_in)
 
 	rcu_read_unlock();
 	return rv;
+}
+
+unsigned long last_triggered_watchpoint_entry(task_t task, struct last_triggered_watchpoint_args* in_args)
+{
+	thread_t thread = darling_thread_get_current();
+
+	struct last_triggered_watchpoint_args out;
+	out.address = thread->triggered_watchpoint_address;
+	out.flags = thread->triggered_watchpoint_operation;
+
+	if (copy_to_user(in_args, &out, sizeof(out)))
+		return -LINUX_EFAULT;
+
+	return 0;
 }
 
 module_init(mach_init);

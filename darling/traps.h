@@ -100,4 +100,6 @@ int started_suspended_entry(task_t task, void* arg);
 
 int task_64bit_entry(task_t, void* pid_in);
 
+unsigned long last_triggered_watchpoint_entry(task_t, struct last_triggered_watchpoint_args* args);
+
 #endif

@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		14
+#define DARLING_MACH_API_VERSION		15
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -95,6 +95,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_task_64bit,
 	NR__kernelrpc_mach_vm_allocate_trap,
 	NR__kernelrpc_mach_vm_deallocate_trap,
+	NR_last_triggered_watchpoint,
 };
 
 struct set_tracer_args
@@ -456,6 +457,12 @@ struct mach_vm_deallocate_args
 	unsigned int target;
 	uint64_t address;
 	uint64_t size;
+};
+
+struct last_triggered_watchpoint_args
+{
+	uint64_t address;
+	unsigned int flags;
 };
 
 #pragma pack (pop)
