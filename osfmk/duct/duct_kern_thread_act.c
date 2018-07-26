@@ -147,7 +147,7 @@ thread_info(
 			else if (task_is_stopped(thread->linux_task))
 			{
 				out->run_state = TH_STATE_STOPPED;
-				out->suspend_count = 1;
+				out->suspend_count = thread->suspend_count;
 			}
 			else
 				out->run_state = TH_STATE_RUNNING;

@@ -586,7 +586,7 @@ task_info(
 
 			struct task_basic_info_32* info = (struct task_basic_info_32*) task_info_out;
 
-			info->suspend_count = 0;
+			info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
 			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;

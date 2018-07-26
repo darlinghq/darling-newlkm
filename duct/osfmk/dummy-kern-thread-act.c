@@ -175,7 +175,9 @@ thread_suspend(
 	kprintf(KERN_DEBUG " - thread_suspend(): thread=%p, linux_task=%p\n", thread, thread->linux_task);
 	
 	smp_store_mb(thread->linux_task->state, TASK_STOPPED);
-	wake_up_process(thread->linux_task);
+	// wake_up_process(thread->linux_task);
+	thread->suspend_count = 1;
+
 	return KERN_SUCCESS;
 }
 
@@ -190,6 +192,8 @@ thread_resume(
 
 	smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
 	wake_up_process(thread->linux_task);
+	thread->suspend_count = 0;
+
 	return KERN_SUCCESS;
 }
 
