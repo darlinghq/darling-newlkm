@@ -62,6 +62,7 @@ struct load_results
 	unsigned long vm_addr_max;
 	bool _32on64;
 	int kernfd;
+	unsigned long base;
 };
 
 extern struct file* xnu_task_setup(void);

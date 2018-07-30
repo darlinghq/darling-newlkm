@@ -58,7 +58,6 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	uintptr_t entryPoint = 0;
 	struct MACH_HEADER_STRUCT* mappedHeader = NULL;
 	uintptr_t slide = 0;
-	uintptr_t mmapSize = 0;
 	bool pie = false;
 	uint32_t fat_offset;
 	int err = 0;
@@ -103,9 +102,10 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 		return -EIO;
 	}
 
-	if ((header.filetype == MH_EXECUTE && header.flags & MH_PIE) || header.filetype == MH_DYLINKER)
+	if ((header.filetype == MH_EXECUTE && (header.flags & MH_PIE)) || header.filetype == MH_DYLINKER)
 	{
 		uintptr_t base = -1;
+		uintptr_t mmapSize = 0;
 
 		// Go through all SEGMENT_COMMAND commands to get the total continuous range required.
 		for (i = 0, p = 0; i < header.ncmds; i++)
@@ -113,13 +113,13 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 			struct SEGMENT_STRUCT* seg = (struct SEGMENT_STRUCT*) &cmds[p];
 
 			// Load commands are always sorted, so this will get us the maximum address.
-			if (seg->cmd == SEGMENT_COMMAND)
+			if (seg->cmd == SEGMENT_COMMAND && strcmp(seg->segname, "__PAGEZERO") != 0)
 			{
 				if (base == -1)
 				{
 					base = seg->vmaddr;
-					if (base != 0 && header.filetype == MH_DYLINKER)
-						goto no_slide;
+					//if (base != 0 && header.filetype == MH_DYLINKER)
+					//	goto no_slide;
 				}
 				mmapSize = seg->vmaddr + seg->vmsize - base;
 			}
@@ -127,14 +127,17 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 			p += seg->cmdsize;
 		}
 
-		slide = vm_mmap(NULL, base, mmapSize, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_EXTRA, 0);
+		// printk(KERN_NOTICE "mmapSize=0x%llx, base=0x%llx\n", mmapSize, lr->base);
+		slide = vm_mmap(NULL, lr->base, mmapSize, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_EXTRA, 0);
+		// printk(KERN_NOTICE "mmap result=0x%lx (suggested 0x%lx)\n", slide, lr->base);
 		if (BAD_ADDR(slide))
 		{
 			err = -ENOMEM;
 			goto out;
 		}
 		if (slide + mmapSize > lr->vm_addr_max)
-			lr->vm_addr_max = slide + mmapSize;
+			lr->vm_addr_max = lr->base = slide + mmapSize;
+		slide -= base;
 
 		pie = true;
 	}
@@ -170,6 +173,7 @@ no_slide:
 						if (addr != 0)
 							addr += slide;
 
+						// printk(KERN_NOTICE "map to addr=0x%lx, size=0x%lx\n", addr, seg->vmsize);
 						map_addr = vm_mmap(NULL, addr, seg->vmsize, native_prot(seg->maxprot),
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
 
@@ -183,6 +187,7 @@ no_slide:
 					{
 						size_t size = seg->vmsize - seg->filesize;
 
+						// printk(KERN_NOTICE "map to addr=0x%lx, size=0x%lx #2\n", PAGE_ALIGN(seg->vmaddr + seg->vmsize - size), PAGE_ROUNDUP(size));
 						map_addr = vm_mmap(NULL, PAGE_ALIGN(seg->vmaddr + seg->vmsize - size), PAGE_ROUNDUP(size), native_prot(seg->maxprot),
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
 						if (BAD_ADDR(map_addr))
@@ -196,6 +201,7 @@ no_slide:
 				if (seg->filesize > 0)
 				{
 					unsigned long map_addr;
+					// printk(KERN_NOTICE "map to addr=0x%lx, size=0x%lx #3\n", seg->vmaddr+slide, seg->filesize);
 					map_addr = vm_mmap(file, (seg->vmaddr + slide), seg->filesize, native_prot(seg->maxprot),
 							MAP_FIXED | MAP_PRIVATE, seg->fileoff + fat_offset);
 					if (BAD_ADDR(map_addr))

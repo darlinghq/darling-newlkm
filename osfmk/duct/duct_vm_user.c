@@ -311,15 +311,18 @@ mach_vm_region(
 					out->protection |= VM_PROT_READ;
 				if (vma->vm_flags & VM_WRITE)
 					out->protection |= VM_PROT_WRITE;
+				// This is a special hack for LLDB. For processes started as suspended, with two RX segments.
+				// However, in order to avoid failures, they are actually mapped as RWX and are to be changed to RX later by dyld.
 				if (vma->vm_flags & VM_EXEC)
-					out->protection = VM_PROT_EXECUTE;
+					//out->protection |= VM_PROT_EXECUTE;
+					out->protection = VM_PROT_EXECUTE | VM_PROT_READ;
 
 				out->offset = vma->vm_pgoff * PAGE_SIZE;
 				out->shared = !!(vma->vm_flags & VM_MAYSHARE);
 				out->behavior = VM_BEHAVIOR_DEFAULT;
 				out->user_wired_count = 0;
 				out->inheritance = 0;
-				out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+				out->max_protection = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
 				out->reserved = FALSE;
 			}
 			else
@@ -339,8 +342,10 @@ mach_vm_region(
 					out->protection |= VM_PROT_READ;
 				if (vma->vm_flags & VM_WRITE)
 					out->protection |= VM_PROT_WRITE;
+				// This is a special hack for LLDB. For processes started as suspended, with two RX segments.
+				// However, in order to avoid failures, they are actually mapped as RWX and are to be changed to RX later by dyld.
 				if (vma->vm_flags & VM_EXEC)
-					out->protection = VM_PROT_EXECUTE;
+					out->protection = VM_PROT_EXECUTE | VM_PROT_READ;
 
 				out->offset = vma->vm_pgoff * PAGE_SIZE;
 				out->shared = !!(vma->vm_flags & VM_MAYSHARE);
@@ -415,7 +420,7 @@ mach_vm_region_recurse(
 		if (vma->vm_flags & VM_WRITE)
 			out->protection |= VM_PROT_WRITE;
 		if (vma->vm_flags & VM_EXEC)
-			out->protection = VM_PROT_EXECUTE;
+			out->protection |= VM_PROT_EXECUTE;
 
 		out->offset = vma->vm_pgoff * PAGE_SIZE;
 		out->share_mode = (vma->vm_flags & VM_MAYSHARE) ? SM_SHARED : SM_PRIVATE;
@@ -433,7 +438,7 @@ mach_vm_region_recurse(
 		if (vma->vm_flags & VM_WRITE)
 			out->protection |= VM_PROT_WRITE;
 		if (vma->vm_flags & VM_EXEC)
-			out->protection = VM_PROT_EXECUTE;
+			out->protection |= VM_PROT_EXECUTE;
 
 		out->offset = vma->vm_pgoff * PAGE_SIZE;
 		out->share_mode = (vma->vm_flags & VM_MAYSHARE) ? SM_SHARED : SM_PRIVATE;
