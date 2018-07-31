@@ -163,6 +163,13 @@ no_slide:
 				struct SEGMENT_STRUCT* seg = (struct SEGMENT_STRUCT*) lc;
 				void* rv;
 
+				// This logic is wrong and made up. But it's the only combination where
+				// some apps stop crashing (TBD why) and LLDB recognized the memory layout
+				// of processes started as suspended.
+				int maxprot = native_prot(seg->maxprot);
+				int initprot = native_prot(seg->initprot);
+				int useprot = (initprot & PROT_EXEC) ? maxprot : initprot;
+
 				if (seg->filesize < seg->vmsize)
 				{
 					unsigned long map_addr;
@@ -174,7 +181,7 @@ no_slide:
 							addr += slide;
 
 						// printk(KERN_NOTICE "map to addr=0x%lx, size=0x%lx\n", addr, seg->vmsize);
-						map_addr = vm_mmap(NULL, addr, seg->vmsize, native_prot(seg->maxprot),
+						map_addr = vm_mmap(NULL, addr, seg->vmsize, useprot,
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
 
 						if (BAD_ADDR(map_addr))
@@ -188,7 +195,7 @@ no_slide:
 						size_t size = seg->vmsize - seg->filesize;
 
 						// printk(KERN_NOTICE "map to addr=0x%lx, size=0x%lx #2\n", PAGE_ALIGN(seg->vmaddr + seg->vmsize - size), PAGE_ROUNDUP(size));
-						map_addr = vm_mmap(NULL, PAGE_ALIGN(seg->vmaddr + seg->vmsize - size), PAGE_ROUNDUP(size), native_prot(seg->maxprot),
+						map_addr = vm_mmap(NULL, PAGE_ALIGN(seg->vmaddr + seg->vmsize - size), PAGE_ROUNDUP(size), useprot,
 								MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, 0);
 						if (BAD_ADDR(map_addr))
 						{
@@ -202,7 +209,7 @@ no_slide:
 				{
 					unsigned long map_addr;
 					// printk(KERN_NOTICE "map to addr=0x%lx, size=0x%lx #3\n", seg->vmaddr+slide, seg->filesize);
-					map_addr = vm_mmap(file, (seg->vmaddr + slide), seg->filesize, native_prot(seg->maxprot),
+					map_addr = vm_mmap(file, (seg->vmaddr + slide), seg->filesize, useprot,
 							MAP_FIXED | MAP_PRIVATE, seg->fileoff + fat_offset);
 					if (BAD_ADDR(map_addr))
 					{
