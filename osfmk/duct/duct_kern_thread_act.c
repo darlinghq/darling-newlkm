@@ -132,7 +132,7 @@ thread_info(
 
 			// FIXME: should contain pthread_t for this thread, see macosx-nat-infthread.c
 			// Also used for PROC_PIDTHREADINFO.
-			id->thread_handle = task_pid_nr(thread->linux_task);
+			id->thread_handle = task_pid_vnr(thread->linux_task);
 			id->thread_handle |= ((uint64_t)task_tgid_vnr(thread->linux_task)) << 32;
 			
 			id->dispatch_qaddr = 0;
