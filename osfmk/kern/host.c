@@ -65,6 +65,7 @@
 #if defined (__DARLING__)
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 #include <mach/mach_types.h>
@@ -95,6 +96,8 @@
 
 #if defined (__DARLING__)
 #include <duct/duct_post_xnu.h>
+// #include <linux/blkdev.h>
+// extern long nr_blockdev_pages(void);
 #endif
 
 host_data_t	realhost;
@@ -494,6 +497,34 @@ host_statistics64(
 	if (host == HOST_NULL)
 		return (KERN_INVALID_HOST);
 	
+#ifdef __DARLING__
+	switch (flavor) {
+		case HOST_VM_INFO64:
+		{
+			vm_statistics64_t stat = (vm_statistics64_t) info;
+
+			if (*count < HOST_VM_INFO64_COUNT)
+				return (KERN_FAILURE);
+
+			memset(stat, 0, sizeof(*stat));
+
+			stat->free_count = global_zone_page_state(NR_FREE_PAGES) /*+ nr_blockdev_pages()*/;
+			stat->active_count = totalram_pages - stat->free_count;
+			stat->zero_fill_count = global_zone_page_state(NR_ZONE_INACTIVE_ANON);
+			stat->wire_count = global_zone_page_state(NR_ZONE_UNEVICTABLE);
+			stat->internal_page_count = global_zone_page_state(NR_ZONE_ACTIVE_ANON);
+			stat->external_page_count = global_zone_page_state(NR_ZONE_ACTIVE_FILE);
+			// stat->speculative_count = nr_blockdev_pages(); // not exported
+
+			*count = HOST_VM_INFO64_COUNT;	
+
+			return KERN_SUCCESS;
+		}
+		default:
+			debug_msg("host_statistics64: Unsupported flavor %d\n", flavor);
+			return KERN_INVALID_ARGUMENT;
+	}
+#else
 	switch(flavor) {
 
 		case HOST_VM_INFO64: /* We were asked to get vm_statistics64 */
@@ -587,6 +618,7 @@ host_statistics64(
 		default: /* If we didn't recognize the flavor, send to host_statistics */
 			return(host_statistics(host, flavor, (host_info_t) info, count)); 
 	}
+#endif
 }
 
 
