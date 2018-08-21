@@ -362,7 +362,8 @@ ipc_mqueue_add(
 			if (th == THREAD_NULL)
 			{
 #ifdef __DARLING__
-				wait_queue_notify(port_waitq, IPC_MQUEUE_RECEIVE);
+#warning Missing wait_queue_notify
+				// wait_queue_notify(port_waitq, IPC_MQUEUE_RECEIVE);
 #endif
 				printf("THREAD_NULL\n");
 				goto leave;
@@ -726,11 +727,13 @@ ipc_mqueue_post(
 		thread_t receiver;
 		mach_msg_size_t msize;
 
-		receiver = wait_queue_wakeup64_identity_locked(
-							waitq,
-							IPC_MQUEUE_RECEIVE,
-							THREAD_AWAKENED,
-							FALSE);
+        receiver = waitq_wakeup64_identify_locked(waitq,
+                                                  IPC_MQUEUE_RECEIVE,
+                                                  THREAD_AWAKENED,
+                                                  &th_spl,
+                                                  &reserved_prepost,
+                                                  WAITQ_ALL_PRIORITIES,
+                                                  WAITQ_KEEP_LOCKED);
 
 		/* waitq still locked, thread locked */
 		if (receiver == THREAD_NULL) {
@@ -755,7 +758,8 @@ ipc_mqueue_post(
 				// Needed for kevpsetfd
 				// It doesn't enqueue itself as an IPC thread waiting for a message,
 				// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
-				wait_queue_notify(waitq, IPC_MQUEUE_RECEIVE);
+#warning Missing wait_queue_notify
+				// wait_queue_notify(waitq, IPC_MQUEUE_RECEIVE);
 #else
 				if (ipc_kmsg_enqueue_qos(&mqueue->imq_messages, kmsg))
 					KNOTE(&mqueue->imq_klist, 0);

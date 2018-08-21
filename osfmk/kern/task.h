@@ -391,7 +391,6 @@ struct task {
 	struct list_head* p_pthhash;
 	int tracer;
 #endif
-};
 
 #if HYPERVISOR
 	void *hv_task_target; /* hypervisor virtual machine object associated with this task */

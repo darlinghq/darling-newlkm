@@ -137,6 +137,13 @@ mach_port_guard_exception(
 	uint64_t		portguard,
 	unsigned		reason);
 
+kern_return_t
+mach_port_destruct(
+	ipc_space_t		space,
+	mach_port_name_t	name,
+	mach_port_delta_t	srdelta,
+	uint64_t		guard);
+
 /* Needs port locked */
 void mach_port_get_status_helper(
 	ipc_port_t		port,

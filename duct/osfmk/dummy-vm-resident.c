@@ -282,10 +282,11 @@ ppnum_t vm_page_guard_addr = (ppnum_t) -2;
  *  pageout daemon often assignes a higher
  *  affinity to zf pages
  */
-queue_head_t    vm_page_queue_active;
-queue_head_t    vm_page_queue_inactive;
-queue_head_t    vm_page_queue_anonymous;    /* inactive memory queue for anonymous pages */
-queue_head_t    vm_page_queue_throttled;
+
+vm_page_queue_head_t    vm_page_queue_active;
+vm_page_queue_head_t    vm_page_queue_inactive;
+vm_page_queue_head_t    vm_page_queue_anonymous;    /* inactive memory queue for anonymous pages */
+vm_page_queue_head_t    vm_page_queue_throttled;
 
 unsigned int    vm_page_active_count;
 unsigned int    vm_page_inactive_count;
@@ -308,7 +309,7 @@ unsigned int    vm_page_speculative_created = 0;
 unsigned int    vm_page_speculative_used = 0;
 #endif
 
-queue_head_t    vm_page_queue_cleaned;
+vm_page_queue_head_t    vm_page_queue_cleaned;
 
 unsigned int    vm_page_cleaned_count = 0;
 unsigned int    vm_pageout_enqueued_cleaned = 0;
@@ -494,14 +495,16 @@ vm_page_insert(
         kprintf("not implemented: vm_page_insert()\n");
 }
 
-void
-vm_page_insert_internal(
-    vm_page_t       mem,
-    vm_object_t     object,
-    vm_object_offset_t  offset,
-    boolean_t       queues_lock_held,
-    boolean_t       insert_in_hash,
-    boolean_t       batch_pmap_op)
+void		vm_page_insert_internal(
+					vm_page_t		page,
+					vm_object_t		object,
+					vm_object_offset_t	offset,
+					vm_tag_t                tag,
+					boolean_t		queues_lock_held,
+					boolean_t		insert_in_hash,
+					boolean_t		batch_pmap_op,
+					boolean_t               delayed_accounting,
+					uint64_t		*delayed_ledger_update)
 {
         kprintf("not implemented: vm_page_insert_internal()\n");
 }
@@ -705,7 +708,7 @@ int     vm_himemory_mode = 0;
 unsigned int    vm_lopages_allocated_q = 0;
 unsigned int    vm_lopages_allocated_cpm_success = 0;
 unsigned int    vm_lopages_allocated_cpm_failed = 0;
-queue_head_t    vm_lopage_queue_free;
+vm_page_queue_head_t    vm_lopage_queue_free;
 
 vm_page_t
 vm_page_grablo(void)
@@ -752,9 +755,9 @@ vm_page_grab( void )
  *  Return a page to the free list.
  */
 
-void
-vm_page_release(
-    register vm_page_t  mem)
+extern void		vm_page_release(
+	vm_page_t	page,
+	boolean_t	page_queues_locked)
 {
         kprintf("not implemented: vm_page_release()\n");
 }
@@ -909,9 +912,10 @@ vm_page_free_list(
  *
  *  The page's object and the page queues must be locked.
  */
-void
-vm_page_wire(
-    register vm_page_t  mem)
+void		vm_page_wire(
+					vm_page_t	page,
+					vm_tag_t        tag,
+					boolean_t	check_memorystatus)
 {
         kprintf("not implemented: vm_page_wire()\n");
 }
@@ -1277,11 +1281,7 @@ unsigned int vm_max_delayed_work_limit = DEFAULT_DELAYED_WORK_LIMIT;
  * original loop
  */
 
-void
-vm_page_do_delayed_work(
-    vm_object_t     object,
-    struct vm_page_delayed_work *dwp,
-    int     dw_count)
+void vm_page_do_delayed_work(vm_object_t object, vm_tag_t tag, struct vm_page_delayed_work *dwp, int dw_count)
 {
         kprintf("not implemented: vm_page_do_delayed_work()\n");
 }

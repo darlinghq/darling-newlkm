@@ -1,3 +1,4 @@
+#warning Missing wait_queue_notify
 /*
  * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
  *
@@ -721,12 +722,11 @@ host_statistics64(host_t host, host_flavor_t flavor, host_info64_t info, mach_ms
 
 		return (KERN_SUCCESS);
 	}
-#endif
-}
 
 	default: /* If we didn't recognize the flavor, send to host_statistics */
 		return (host_statistics(host, flavor, (host_info_t)info, count));
 	}
+#endif
 }
 
 /*

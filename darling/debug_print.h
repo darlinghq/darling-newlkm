@@ -27,9 +27,9 @@
 
 #ifdef DARLING_DEBUG
 #	ifdef linux_current
-#		define debug_msg(fmt, ...) printk(KERN_DEBUG "Darling Mach: <%d> " fmt, linux_current->pid, ##__VA_ARGS__)
+#		define debug_msg(fmt, ...) printk(KERN_NOTICE "Darling Mach: <%d> " fmt, linux_current->pid, ##__VA_ARGS__)
 #	else
-#		define debug_msg(fmt, ...) printk(KERN_DEBUG "Darling Mach: <%d> " fmt, current->pid, ##__VA_ARGS__)
+#		define debug_msg(fmt, ...) printk(KERN_NOTICE "Darling Mach: <%d> " fmt, current->pid, ##__VA_ARGS__)
 #	endif
 #else
 #	define debug_msg(fmt, ...)

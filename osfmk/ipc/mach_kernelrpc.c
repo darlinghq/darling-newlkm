@@ -45,6 +45,40 @@
 
 #if defined (__DARLING__)
 #include <duct/duct_post_xnu.h>
+
+kern_return_t
+mach_port_destruct(
+	ipc_space_t		space,
+	mach_port_name_t	name,
+	mach_port_delta_t	srdelta,
+	uint64_t		guard);
+
+kern_return_t
+mach_port_construct(
+	ipc_space_t		space,
+	mach_port_options_t	*options,
+	uint64_t		context,
+	mach_port_name_t	*name);
+
+kern_return_t
+mach_port_guard(
+	ipc_space_t		space,
+	mach_port_name_t	name,
+	uint64_t		guard,
+	boolean_t		strict);
+
+kern_return_t
+mach_port_unguard(
+	ipc_space_t		space,
+	mach_port_name_t	name,
+	uint64_t		guard);
+
+kern_return_t
+host_create_mach_voucher(
+	host_t host,
+	mach_voucher_attr_raw_recipe_array_t recipes,
+	mach_voucher_attr_raw_recipe_size_t recipe_size,
+	ipc_voucher_t *new_voucher);
 #endif
 
 
