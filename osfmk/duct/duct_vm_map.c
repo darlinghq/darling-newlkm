@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "duct.h"
+#include <darling/debug_print.h>
 #include "duct_pre_xnu.h"
 #include "duct_vm_map.h"
 #include "duct_kern_kalloc.h"
@@ -211,6 +212,12 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 //         vm_map_copyin_common (src_map, src_addr, len, src_destroy, FALSE, copy_result, FALSE);
 // }
 
+extern vm_map_t kernel_map, ipc_kernel_map;
+
+static bool is_kernel_map(vm_map_t map)
+{
+    return map == kernel_map || map == ipc_kernel_map;
+}
 
 kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src_addr, vm_map_size_t len,
                                           boolean_t src_destroy, boolean_t src_volatile,
@@ -264,7 +271,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                 rd = __access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
 #endif
                                 if (rd != len) {
-                                        printk(KERN_ERR "Failed to copy memory\n");
+                                        debug_msg("Failed to copy memory in duct_vm_map_copyin_common()\n");
                                         // vfree (copy->cpy_kdata);
                                         // duct_zfree (vm_map_copy_zone, copy);
                                         return KERN_NO_SPACE;
@@ -275,7 +282,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                             if (src_destroy && src_addr)
                                 vm_munmap(src_addr, len);
                         }
-                        else { // it is a kernel map
+                        else if (is_kernel_map(src_map)) { // it is a kernel map
                             if (src_addr) {
                                 memcpy(copy->cpy_kdata, (void *) src_addr, len);
 
@@ -283,6 +290,8 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                     vm_deallocate(src_map, src_addr, len);
                             }
                         }
+                        else
+                            return KERN_FAILURE;
 
                         printk(KERN_NOTICE "- copying OK\n");
                         *copy_result = copy;
