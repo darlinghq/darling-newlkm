@@ -158,6 +158,7 @@ kernel_memory_allocate(
  *  or a submap.  The memory is not zero-filled.
  */
 
+/*
 kern_return_t
 kmem_alloc(
     vm_map_t    map,
@@ -167,6 +168,7 @@ kmem_alloc(
         kprintf("not implemented: kmem_alloc()\n");
         return 0;
 }
+*/
 
 /*
  *  kmem_realloc:

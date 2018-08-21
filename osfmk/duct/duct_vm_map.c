@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "duct.h"
+#include <darling/debug_print.h>
 #include "duct_pre_xnu.h"
 #include "duct_vm_map.h"
 #include "duct_kern_kalloc.h"
@@ -129,7 +130,11 @@ void duct_vm_map_init (void)
 void duct_vm_map_deallocate(vm_map_t map)
 {
 	if (map != NULL)
+	{
 		duct_zfree(vm_map_zone, map);
+		if (map->linux_task != NULL)
+			put_task_struct(map->linux_task);
+	}
 }
 
 // Calling with a NULL task makes other funcs consider the map a kernel map
@@ -186,8 +191,10 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 #endif
 
 #if defined (__DARLING__)
-		result->linux_task = linux_task;
-        result->ref_count = 1;
+	if (linux_task)
+		get_task_struct(linux_task);
+	result->linux_task = linux_task;
+	result->ref_count = 1;
 #endif
 
         return(result);
@@ -205,6 +212,12 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 //         vm_map_copyin_common (src_map, src_addr, len, src_destroy, FALSE, copy_result, FALSE);
 // }
 
+extern vm_map_t kernel_map, ipc_kernel_map;
+
+static bool is_kernel_map(vm_map_t map)
+{
+    return map == kernel_map || map == ipc_kernel_map;
+}
 
 kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src_addr, vm_map_size_t len,
                                           boolean_t src_destroy, boolean_t src_volatile,
@@ -259,7 +272,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                 rd = __access_process_vm(ltask, src_addr, copy->cpy_kdata, len, 0);
 #endif
                                 if (rd != len) {
-                                        printk(KERN_ERR "Failed to copy memory\n");
+                                        debug_msg("Failed to copy memory in duct_vm_map_copyin_common()\n");
                                         // vfree (copy->cpy_kdata);
                                         // duct_zfree (vm_map_copy_zone, copy);
                                         return KERN_NO_SPACE;
@@ -270,7 +283,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                             if (src_destroy && src_addr)
                                 vm_munmap(src_addr, len);
                         }
-                        else { // it is a kernel map
+                        else if (is_kernel_map(src_map)) { // it is a kernel map
                             if (src_addr) {
                                 memcpy(copy->cpy_kdata, (void *) src_addr, len);
 
@@ -278,6 +291,8 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                     vm_deallocate(src_map, src_addr, len);
                             }
                         }
+                        else
+                            return KERN_FAILURE;
 
                         printk(KERN_NOTICE "- copying OK\n");
                         *copy_result = copy;
@@ -323,12 +338,13 @@ vm_map_copy_overwrite(
 		{
 			int wr;
 
+			// We use FOLL_FORCE because we cannot reasonably implement mach_vm_protect().
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
-			wr = access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE);
+			wr = access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE | FOLL_FORCE);
 #else
 			// Older kernels don't export access_process_vm(),
 			// so we need to fall back to our own copy in access_process_vm.h
-			wr = __access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE);
+			wr = __access_process_vm(ltask, dst_addr, copy->cpy_kdata, copy->size, FOLL_WRITE | FOLL_FORCE);
 #endif
 			if (wr != copy->size) {
 					printk(KERN_ERR "Failed to copy memory\n");

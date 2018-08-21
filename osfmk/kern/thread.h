@@ -97,6 +97,10 @@
 
 #include <sys/cdefs.h>
 
+#ifdef __DARLING__
+#include <darling/pthread_internal.h>
+#endif
+
 #ifdef	MACH_KERNEL_PRIVATE
 
 #include <mach_assert.h>
@@ -521,6 +525,14 @@ struct thread {
 #if defined (__DARLING__)
         struct task_struct        * linux_task;
         // linux_wait_queue_t          lwait;
+	struct ksyn_waitq_element uu_kwe;
+	uint64_t triggered_watchpoint_address;
+	unsigned int triggered_watchpoint_operation;
+#ifdef __x86_64__
+	x86_thread_state_t thread_state;
+	x86_float_state_t float_state;
+	// TODO: debug regs state?
+#endif
 #endif
 	mach_port_name_t		ith_voucher_name;
 	ipc_voucher_t			ith_voucher;

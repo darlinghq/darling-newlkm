@@ -33,9 +33,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "duct.h"
+#include <linux/delay.h>
 #include "duct_pre_xnu.h"
 
 #include "duct_kern_waitqueue.h"
+#include "duct_kern_printf.h"
 
 // #include <mach/mach_types.h>
 #include <kern/mach_param.h>
@@ -46,6 +48,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_post_xnu.h"
 
 
+#define delay udelay
 #define WAIT_QUEUE_MAX              thread_max
 #define WAIT_QUEUE_SET_MAX          task_max * 3
 #define WAIT_QUEUE_LINK_MAX         PORT_MAX / 2 + (WAIT_QUEUE_MAX * WAIT_QUEUE_SET_MAX) / 64
@@ -406,6 +409,17 @@ waitq_wakeup64_all_locked(
         return 0;
 }
 
+// Needed for kevpsetfd
+// It doesn't enqueue itself as an IPC thread waiting for a message,
+// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
+
+void wait_queue_notify(wait_queue_t waitq,
+        event64_t event)
+{
+	xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, event);
+	wake_up(&walked_waitq->linux_waitqh);
+}
+
 thread_t
 waitq_wakeup64_identity_locked(
         waitq_t wq,
@@ -413,8 +427,51 @@ waitq_wakeup64_identity_locked(
         wait_result_t result,
         boolean_t unlock)
 {
-        printk (KERN_NOTICE "BUG: waitq_wakeup64_identity_locked () called\n");
-        return 0;
+	thread_t receiver;
+	assert (wait_queue_held (waitq));
+
+	// _wait_queue_select64_one
+	xnu_wait_queue_t        walked_waitq        = duct__wait_queue_walkup (waitq, event);
+
+	printk ( KERN_NOTICE "- waitq: 0x%p, walked: 0x%p\n",
+			 waitq, walked_waitq);
+
+	// printk (KERN_NOTICE "- walked_waitq->linux_waitqh: 0x%p\n", &(walked_waitq->linux_waitqh));
+
+	// __wake_up (&walked_waitq->linux_waitqh, TASK_NORMAL, 1, (void *) event);
+	unsigned long   flags;
+	spin_lock_irqsave (&walked_waitq->linux_waitqh.lock, flags);
+
+	receiver        = THREAD_NULL;
+	linux_wait_queue_t    * lwait_curr;
+	linux_wait_queue_t    * lwait_next;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
+	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.head, entry)
+#else
+	list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.task_list, task_list)
+#endif
+        {
+			if ( lwait_curr->private) {
+				struct task_struct    * ltask   = lwait_curr->private;
+				receiver    = darling_thread_get(ltask->pid);
+
+				if (receiver != NULL)
+					thread_lock(receiver);
+				else
+					printf("- BUG? Cannot darling_thread_get(%d)\n", ltask->pid);
+
+				if (lwait_curr->func (lwait_curr, TASK_NORMAL, 0, (void *) event) )
+					break;
+				if (receiver != NULL)
+					thread_unlock(receiver);
+			}
+	}
+
+	spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
+
+	printf ("- receiver: 0x%p\n", receiver);
+	return receiver;
 }
 
 kern_return_t
@@ -514,7 +571,7 @@ int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, in
                 return 0;
         }
 
-        thread_lock (thread);
+        // thread_lock (thread);
         thread->wait_event      = DUCT_EVENT64_READY;
         // thread_unlock (thread);
 
@@ -582,3 +639,51 @@ waitq_member(
 
 	return ret;
 }
+
+kern_return_t
+wait_queue_set_unlink_all_nofree(
+        wait_queue_set_t wq_set,
+        queue_t         links)
+{
+        wait_queue_link_t wql;
+        wait_queue_t wq;
+        queue_t q;
+        spl_t s;
+
+        if (!wait_queue_is_set(wq_set)) {
+                return KERN_INVALID_ARGUMENT;
+        }
+
+retry:
+        s = splsched();
+        wqs_lock(wq_set);
+
+        /* remove the wait queues that are members of our set */
+        q = &wq_set->wqs_setlinks;
+
+        wql = (wait_queue_link_t)queue_first(q);
+        while (!queue_end(q, (queue_entry_t)wql)) {
+                WAIT_QUEUE_SET_LINK_CHECK(wq_set, wql);
+                wq = wql->wql_queue;
+                if (wait_queue_lock_try(wq)) {
+                        duct_wait_queue_unlink_locked(wq, wq_set, wql);
+                        wait_queue_unlock(wq);
+                        enqueue(links, &wql->wql_links);
+                        wql = (wait_queue_link_t)queue_first(q);
+                } else {
+                        wqs_unlock(wq_set);
+                        splx(s);
+                        delay(1);
+                        goto retry;
+                }
+        }
+
+        /* remove this set from sets it belongs to */
+        wait_queue_unlink_all_nofree_locked(&wq_set->wqs_wait_queue, links);
+
+        wqs_unlock(wq_set);
+        splx(s);
+
+        return(KERN_SUCCESS);
+}
+

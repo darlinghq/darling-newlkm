@@ -6,3 +6,6 @@ Module.symvers
 *.ko
 *.mod.c
 modules.order
+.cache.mk
+
+*.o.ur-safe

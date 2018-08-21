@@ -56,6 +56,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/ \
 	-I$(BUILD_ROOT)/darling \
 	-I$(MIGDIR)/osfmk \
+	-I$(MIGDIR)/../startup \
 	-DARCH_PRIVATE \
 	-DDRIVER_PRIVATE \
 	-D_KERNEL_BUILD \
@@ -155,6 +156,11 @@ CFLAGS_device_server.o := $(miggen_cflags)
 CFLAGS_clock_reply_user.o := $(miggen_cflags)
 CFLAGS_notify_user.o := $(miggen_cflags)
 
+# KERNELVERSION is a dmks variable to specify the right version of the kernel.
+# If this is not done like this, then when updating your kernel, you will
+# build against the wrong kernel
+KERNELVERSION = $(shell uname -r)
+
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
 ifneq ($(KERNELRELEASE),)
@@ -181,13 +187,13 @@ ifneq ($(KERNELRELEASE),)
 		darling/down_interruptible.o \
 		darling/traps.o \
 		darling/task_registry.o \
-		darling/license.o \
+		darling/module.o \
 		darling/host_info.o \
 		darling/evprocfd.o \
 		darling/evpsetfd.o \
-		darling/psynch/pthread_kill.o \
-		darling/psynch/psynch_mutex.o \
-		darling/psynch/psynch_cv.o \
+		darling/pthread_kill.o \
+		darling/psynch_support.o \
+		darling/foreign_mm.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
@@ -273,11 +279,13 @@ ifneq ($(KERNELRELEASE),)
 		$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o \
 		pexpert/duct/duct_gen_bootargs.o \
 		pexpert/duct/duct_pe_kprintf.o \
+		darling/binfmt.o \
+		darling/commpage.o
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
 else
-	KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+	KERNELDIR ?= /lib/modules/$(KERNELVERSION)/build
 	PWD := $(shell pwd)
 default:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
@@ -285,7 +293,7 @@ default:
 endif
 
 all:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	$(MAKE) -C /lib/modules/$(KERNELVERSION)/build M=$(PWD) modules
 
 clean:
 	find . \( -name '*.o' -or -name '*.ko' \) -delete

@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/timer.h>
 #include <duct/duct_pre_xnu.h>
+#include <duct/duct_kern_kalloc.h>
 
 #include <mach/mach_types.h>
 #include <mach/thread_act.h>
@@ -129,6 +130,30 @@ thread_call_setup(
 	debug_msg("thread_call_setup(call=%p)\n", call);
 	call_entry_setup((call_entry_t) call, func, param0);
 	INIT_DELAYED_WORK(&call->tc_work, thread_call_worker);
+	call->free = FALSE;
+}
+
+thread_call_t
+thread_call_allocate(
+        thread_call_func_t      func,
+        thread_call_param_t     param0)
+{
+	thread_call_t call = kalloc(sizeof(struct thread_call));
+	thread_call_setup(call, func, param0);
+	return call;
+}
+
+boolean_t
+thread_call_free(
+        thread_call_t       call)
+{
+	call->free = TRUE;
+	if (!thread_call_cancel(call))
+	{
+		kfree(call, sizeof(struct thread_call));
+		return TRUE;
+	}
+	return FALSE;
 }
 
 /*
@@ -193,5 +218,8 @@ thread_call_worker(struct work_struct* work)
 	darling_thread_register(my_thread);
 	call->tc_call.func(call->tc_call.param0, call->tc_call.param1);
 	darling_thread_deregister(my_thread);
+
+	if (call->free)
+		kfree(call, sizeof(struct thread_call));
 }
 

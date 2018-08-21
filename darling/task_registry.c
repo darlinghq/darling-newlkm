@@ -44,6 +44,9 @@ static unsigned int task_count = 0;
 
 static struct registry_entry* darling_task_get_entry_unlocked(int pid);
 
+#define THREAD_CANCELDISABLED	0x1
+#define THREAD_CANCELED			0x2
+
 struct registry_entry
 {
 	struct rb_node node;
@@ -51,19 +54,27 @@ struct registry_entry
 
 	union
 	{
-		task_t task;
-		thread_t thread;
+		struct
+		{
+			task_t task;
+			void* keys[TASK_KEY_COUNT];
+			task_key_dtor dtors[TASK_KEY_COUNT];
+			
+			struct semaphore sem_fork;
+			struct list_head proc_notification;
+			struct mutex mut_proc_notification;
+			struct completion proc_dyld_info;
+			unsigned long proc_dyld_info_allimg_loc, proc_dyld_info_allimg_len;
+			bool do_sigstop;
+		};
+
+		struct
+		{
+			thread_t thread;
+			int flags;
+		};
 	};
 
-	void* keys[TASK_KEY_COUNT];
-	task_key_dtor dtors[TASK_KEY_COUNT];
-	
-	struct semaphore sem_fork;
-	struct list_head proc_notification;
-	struct mutex mut_proc_notification;
-	struct completion proc_dyld_info;
-	unsigned long proc_dyld_info_allimg_loc, proc_dyld_info_allimg_len;
-	bool do_sigstop;
 };
 
 struct proc_notification
@@ -159,14 +170,52 @@ task_t darling_task_get(int pid)
 	return (ret) ? ret->task : NULL;
 }
 
+// Requires read_lock(&my_thread_lock)
+struct registry_entry* darling_thread_get_entry(unsigned int pid)
+{
+	struct registry_entry* ret = NULL;
+	struct rb_node* node;
+	
+	node = all_threads.rb_node;
+	
+	while (node)
+	{
+		struct registry_entry* entry = container_of(node, struct registry_entry, node);
+		
+		if (pid < entry->tid)
+			node = node->rb_left;
+		else if (pid > entry->tid)
+			node = node->rb_right;
+		else
+		{
+			ret = entry;
+			break;
+		}
+	}
+	
+	return ret;
+}
+
+struct registry_entry* darling_thread_get_current_entry(void)
+{
+	struct registry_entry* e;
+
+	read_lock(&my_thread_lock);
+	e = darling_thread_get_entry(current->pid);
+	read_unlock(&my_thread_lock);
+
+	return e;
+}
+
 thread_t darling_thread_get_current(void)
 {
-	thread_t t = darling_thread_get(current->pid);
-	
-	if (!t)
+	struct registry_entry* e = darling_thread_get_current_entry();
+	if (!e)
+	{
 		debug_msg("No current thread in registry!\n");
-	
-	return t;
+		return NULL;
+	}
+	return e->thread;
 }
 
 thread_t darling_thread_get(unsigned int pid)
@@ -264,6 +313,7 @@ void darling_thread_register(thread_t thread)
 	entry = (struct registry_entry*) kzalloc(sizeof(struct registry_entry), GFP_KERNEL);
 	entry->thread = thread;
 	entry->tid = current->pid;
+	entry->flags = 0;
 
 	write_lock(&my_thread_lock);
 	new = &all_threads.rb_node;
@@ -355,10 +405,12 @@ void darling_task_deregister(task_t t)
 				break;
 
 			rb_erase(node, &all_tasks);
+			task_count--;
+
+			write_unlock(&my_task_lock);
 			darling_task_free(entry);
 
-			task_count--;
-			break;
+			return;
 		}
 	}
 
@@ -498,13 +550,6 @@ void darling_task_set_dyld_info(unsigned long all_img_location, unsigned long al
 	e->proc_dyld_info_allimg_len = all_img_length;
 
 	complete_all(&e->proc_dyld_info);
-
-	// POSIX_SPAWN_START_SUSPENDED implementation.
-	if (e->do_sigstop)
-	{
-		e->do_sigstop = false;
-		kill_pgrp(task_pid(current), SIGSTOP, 0);
-	}
 }
 
 void darling_task_get_dyld_info(unsigned int pid, unsigned long long* all_img_location, unsigned long long* all_img_length)
@@ -532,5 +577,56 @@ void darling_task_mark_start_suspended(void)
 {
 	struct registry_entry* e = darling_task_get_current_entry();
 	e->do_sigstop = true;
+}
+
+_Bool darling_task_marked_start_suspended(void)
+{
+	struct registry_entry* e = darling_task_get_current_entry();
+	return e->do_sigstop;
+}
+
+_Bool darling_thread_canceled(void)
+{
+	struct registry_entry* e = darling_thread_get_current_entry();
+	if (e != NULL)
+	{
+		debug_msg("flags = %d\n", e->flags);
+		return (e->flags & (THREAD_CANCELDISABLED|THREAD_CANCELED)) == THREAD_CANCELED;
+	}
+	else
+		return false;
+}
+
+void darling_thread_cancelable(_Bool cancelable)
+{
+	struct registry_entry* e = darling_thread_get_current_entry();
+	if (e != NULL)
+	{
+		if (cancelable)
+			e->flags &= ~THREAD_CANCELDISABLED;
+		else
+			e->flags |= THREAD_CANCELDISABLED;
+	}
+}
+
+extern struct task_struct* thread_get_linux_task(thread_t thread);
+void darling_thread_markcanceled(unsigned int pid)
+{
+	struct registry_entry* e;
+
+	debug_msg("Marking thread %d as canceled\n", pid);
+
+	read_lock(&my_thread_lock);
+	e = darling_thread_get_entry(pid);
+
+	if (e != NULL && !(e->flags & THREAD_CANCELDISABLED))
+	{
+		e->flags |= THREAD_CANCELED;
+
+		// FIXME: We should be calling wake_up_state(TASK_INTERRUPTIBLE),
+		// but this function is not exported.
+		wake_up_process(thread_get_linux_task(e->thread));
+	}
+	read_unlock(&my_thread_lock);
 }
 

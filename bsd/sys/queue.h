@@ -411,6 +411,7 @@ do {									\
 __MISMATCH_TAGS_POP
 
 
+#ifndef __DARLING__
 /*
  * List declarations.
  */
@@ -429,8 +430,8 @@ __MISMATCH_TAGS_PUSH							\
 struct {								\
 	struct type *le_next;	/* next element */			\
 	struct type **le_prev;	/* address of previous next element */	\
-}									\
-__MISMATCH_TAGS_POP
+}
+#endif
 
 /*
  * List functions.

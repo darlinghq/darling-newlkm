@@ -35,8 +35,20 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct.h"
 #include "duct_pre_xnu.h"
 #include "duct_vm_user.h"
+#include "duct_kern_printf.h"
+#include <ipc/ipc_port.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
+#include "access_process_vm.h"
+#endif
 
 #include <vm/vm_map.h>
+
+#define current linux_current
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
+#include <linux/sched/mm.h>
+#endif
 
 #define BAD_ADDR(x)     ((unsigned long)(x) >= TASK_SIZE)
 
@@ -166,5 +178,279 @@ mach_vm_deallocate(
 
     vm_munmap(start, size);
     return KERN_SUCCESS;
+}
+
+/*
+ * mach_vm_copy -
+ * Overwrite one range of the specified map with the contents of
+ * another range within that same map (i.e. both address ranges
+ * are "over there").
+ */
+kern_return_t
+mach_vm_copy(
+	vm_map_t		map,
+	mach_vm_address_t	source_address,
+	mach_vm_size_t	size,
+	mach_vm_address_t	dest_address)
+{
+	kern_return_t rv = KERN_SUCCESS;
+	int done;
+	void* mem;
+	struct task_struct* ltask = map->linux_task;
+
+	if (size > 100*1024*1024)
+	{
+		printf("BUG: Refusing to vm_copy %d bytes\n", size);
+		return KERN_FAILURE;
+	}
+
+	mem = vmalloc(size);
+	if (mem == NULL)
+	{
+		printf("out of memory in mach_vm_copy\n");
+		return KERN_NO_SPACE;
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	done = access_process_vm(ltask, source_address, mem, size, 0);
+#else
+	// Older kernels don't export access_process_vm(),
+	// so we need to fall back to our own copy in access_process_vm.h
+	done = __access_process_vm(ltask, source_address, mem, size, 0);
+#endif
+
+	if (done != size)
+	{
+		printf("mach_vm_copy(): only read %d bytes, %d expected\n", done, size);
+
+		rv = KERN_NO_SPACE;
+		goto failure;
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	done = access_process_vm(ltask, dest_address, mem, size, 1);
+#else
+	done = __access_process_vm(ltask, dest_address, mem, size, 1);
+#endif
+
+	if (done != size)
+	{
+		printf("mach_vm_copy(): only wrote %d bytes, %d expected\n", done, size);
+		rv = KERN_NO_SPACE;
+	}
+
+failure:
+	vfree(mem);
+	return rv;
+}
+
+kern_return_t
+vm_copy(
+	vm_map_t	map,
+	vm_address_t	source_address,
+	vm_size_t	size,
+	vm_address_t	dest_address)
+{
+	return mach_vm_copy(map, source_address, size, dest_address);
+}
+
+kern_return_t
+mach_vm_region(
+    vm_map_t         map,
+    mach_vm_offset_t    *address,       /* IN/OUT */
+    mach_vm_size_t  *size,          /* OUT */
+    vm_region_flavor_t   flavor,        /* IN */
+    vm_region_info_t     info,          /* OUT */
+    mach_msg_type_number_t  *count,         /* IN/OUT */
+    mach_port_t     *object_name)       /* OUT */
+{
+	switch (flavor)
+	{
+		case VM_REGION_BASIC_INFO:
+		case VM_REGION_BASIC_INFO_64:
+		{
+			kern_return_t rv = KERN_SUCCESS;
+			struct mm_struct* mm;
+			struct vm_area_struct* vma;
+			struct task_struct* ltask = map->linux_task;
+
+			mm = ltask->mm;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
+			if (!mm || !mmget_not_zero(mm))
+#else
+			if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+#endif
+				return KERN_FAILURE;
+
+			down_read(&mm->mmap_sem);
+
+			vma = find_vma(mm, *address);
+			if (vma == NULL)
+			{
+				rv = KERN_INVALID_ADDRESS;
+				goto out;
+			}
+
+			*address = vma->vm_start;
+			*size = vma->vm_end - vma->vm_start;
+
+			if (flavor == VM_REGION_BASIC_INFO_64)
+			{
+				vm_region_basic_info_64_t out = (vm_region_basic_info_64_t) info;
+
+				if (*count < VM_REGION_BASIC_INFO_COUNT_64)
+				{
+					rv = KERN_INVALID_ARGUMENT;
+					goto out;
+				}
+				*count = VM_REGION_BASIC_INFO_COUNT_64;
+
+				out->protection = 0;
+
+				if (vma->vm_flags & VM_READ)
+					out->protection |= VM_PROT_READ;
+				if (vma->vm_flags & VM_WRITE)
+					out->protection |= VM_PROT_WRITE;
+				// This is a special hack for LLDB. For processes started as suspended, with two RX segments.
+				// However, in order to avoid failures, they are actually mapped as RWX and are to be changed to RX later by dyld.
+				if (vma->vm_flags & VM_EXEC)
+					//out->protection |= VM_PROT_EXECUTE;
+					out->protection = VM_PROT_EXECUTE | VM_PROT_READ;
+
+				out->offset = vma->vm_pgoff * PAGE_SIZE;
+				out->shared = !!(vma->vm_flags & VM_MAYSHARE);
+				out->behavior = VM_BEHAVIOR_DEFAULT;
+				out->user_wired_count = 0;
+				out->inheritance = 0;
+				out->max_protection = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
+				out->reserved = FALSE;
+			}
+			else
+			{
+				vm_region_basic_info_t out = (vm_region_basic_info_t) info;
+
+				if (*count < VM_REGION_BASIC_INFO_COUNT)
+				{
+					rv = KERN_INVALID_ARGUMENT;
+					goto out;
+				}
+				*count = VM_REGION_BASIC_INFO_COUNT;
+
+				out->protection = 0;
+
+				if (vma->vm_flags & VM_READ)
+					out->protection |= VM_PROT_READ;
+				if (vma->vm_flags & VM_WRITE)
+					out->protection |= VM_PROT_WRITE;
+				// This is a special hack for LLDB. For processes started as suspended, with two RX segments.
+				// However, in order to avoid failures, they are actually mapped as RWX and are to be changed to RX later by dyld.
+				if (vma->vm_flags & VM_EXEC)
+					out->protection = VM_PROT_EXECUTE | VM_PROT_READ;
+
+				out->offset = vma->vm_pgoff * PAGE_SIZE;
+				out->shared = !!(vma->vm_flags & VM_MAYSHARE);
+				out->behavior = VM_BEHAVIOR_DEFAULT;
+				out->user_wired_count = 0;
+				out->inheritance = 0;
+				out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+				out->reserved = FALSE;
+			}
+
+out:
+			up_read(&mm->mmap_sem);
+			mmput(mm);
+
+			if (object_name)
+				*object_name = IP_NULL;
+
+			return rv;
+		}
+		default:
+			return KERN_INVALID_ARGUMENT;
+	}
+}
+
+
+kern_return_t
+mach_vm_region_recurse(
+    vm_map_t            map,
+    mach_vm_address_t       *address,
+    mach_vm_size_t      *size,
+    uint32_t            *depth,
+    vm_region_recurse_info_t    info,
+    mach_msg_type_number_t  *infoCnt)
+{
+	if (depth != NULL)
+		*depth = 0;
+
+	kern_return_t rv = KERN_SUCCESS;
+	struct mm_struct* mm;
+	struct vm_area_struct* vma;
+	struct task_struct* ltask = map->linux_task;
+
+	mm = ltask->mm;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
+	if (!mm || !mmget_not_zero(mm))
+#else
+	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+#endif
+		return KERN_FAILURE;
+
+	down_read(&mm->mmap_sem);
+
+	vma = find_vma(mm, *address);
+	if (vma == NULL)
+	{
+		rv = KERN_INVALID_ADDRESS;
+		goto out;
+	}
+
+	*address = vma->vm_start;
+	*size = vma->vm_end - vma->vm_start;
+
+	if (*infoCnt == VM_REGION_SUBMAP_SHORT_INFO_COUNT_64)
+	{
+		vm_region_submap_info_64_t out = (vm_region_submap_info_64_t) info;
+
+		memset(out, 0, sizeof(*out));
+		out->protection = 0;
+
+		if (vma->vm_flags & VM_READ)
+			out->protection |= VM_PROT_READ;
+		if (vma->vm_flags & VM_WRITE)
+			out->protection |= VM_PROT_WRITE;
+		if (vma->vm_flags & VM_EXEC)
+			out->protection |= VM_PROT_EXECUTE;
+
+		out->offset = vma->vm_pgoff * PAGE_SIZE;
+		out->share_mode = (vma->vm_flags & VM_MAYSHARE) ? SM_SHARED : SM_PRIVATE;
+		out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+	}
+	else if (*infoCnt == VM_REGION_SUBMAP_SHORT_INFO_COUNT_64)
+	{
+		vm_region_submap_short_info_64_t out = (vm_region_submap_short_info_64_t) info;
+
+		memset(out, 0, sizeof(*out));
+		out->protection = 0;
+
+		if (vma->vm_flags & VM_READ)
+			out->protection |= VM_PROT_READ;
+		if (vma->vm_flags & VM_WRITE)
+			out->protection |= VM_PROT_WRITE;
+		if (vma->vm_flags & VM_EXEC)
+			out->protection |= VM_PROT_EXECUTE;
+
+		out->offset = vma->vm_pgoff * PAGE_SIZE;
+		out->share_mode = (vma->vm_flags & VM_MAYSHARE) ? SM_SHARED : SM_PRIVATE;
+		out->max_protection = VM_READ | VM_WRITE | VM_EXEC;
+	}
+	else
+		rv = KERN_INVALID_ARGUMENT;
+
+out:
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+
+	return rv;
 }
 

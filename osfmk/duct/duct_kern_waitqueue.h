@@ -63,4 +63,6 @@ extern kern_return_t duct_waitq_unlink_nofree (waitq_t wq, waitq_set_t wq_set, w
 extern waitq_t duct__waitq_walkup (waitq_t waitq, event64_t event);
 extern int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, int sync, void * key);
 
+void wait_queue_notify(wait_queue_t waitq, event64_t event);
+
 #endif // DUCT_KERN_WAITQUEUE_H

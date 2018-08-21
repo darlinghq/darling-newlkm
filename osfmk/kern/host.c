@@ -65,6 +65,7 @@
 #if defined (__DARLING__)
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 #include <mach/mach_types.h>
@@ -102,6 +103,8 @@
 
 #if defined (__DARLING__)
 #include <duct/duct_post_xnu.h>
+// #include <linux/blkdev.h>
+// extern long nr_blockdev_pages(void);
 #endif
 
 host_data_t	realhost;
@@ -537,6 +540,68 @@ host_statistics64(host_t host, host_flavor_t flavor, host_info64_t info, mach_ms
 
 	if (host == HOST_NULL)
 		return (KERN_INVALID_HOST);
+	
+#ifdef __DARLING__
+	switch (flavor) {
+		case HOST_VM_INFO64:
+		{
+			vm_statistics64_t stat = (vm_statistics64_t) info;
+
+			if (*count < HOST_VM_INFO64_COUNT)
+				return (KERN_FAILURE);
+
+			memset(stat, 0, sizeof(*stat));
+
+			stat->free_count = global_zone_page_state(NR_FREE_PAGES) /*+ nr_blockdev_pages()*/;
+			stat->active_count = totalram_pages - stat->free_count;
+			stat->zero_fill_count = global_zone_page_state(NR_ZONE_INACTIVE_ANON);
+			stat->wire_count = global_zone_page_state(NR_ZONE_UNEVICTABLE);
+			stat->internal_page_count = global_zone_page_state(NR_ZONE_ACTIVE_ANON);
+			stat->external_page_count = global_zone_page_state(NR_ZONE_ACTIVE_FILE);
+			// stat->speculative_count = nr_blockdev_pages(); // not exported
+
+			*count = HOST_VM_INFO64_COUNT;	
+
+			return KERN_SUCCESS;
+		}
+		default:
+			debug_msg("host_statistics64: Unsupported flavor %d\n", flavor);
+			return KERN_INVALID_ARGUMENT;
+	}
+#else
+	switch(flavor) {
+
+		case HOST_VM_INFO64: /* We were asked to get vm_statistics64 */
+		{
+			register processor_t		processor;
+			register vm_statistics64_t	stat;
+			vm_statistics64_data_t		host_vm_stat;
+
+			if (*count < HOST_VM_INFO64_COUNT)
+				return (KERN_FAILURE);
+
+			processor = processor_list;
+			stat = &PROCESSOR_DATA(processor, vm_stat);
+			host_vm_stat = *stat;
+
+			if (processor_count > 1) {
+				simple_lock(&processor_list_lock);
+
+				while ((processor = processor->processor_list) != NULL) {
+					stat = &PROCESSOR_DATA(processor, vm_stat);
+
+					host_vm_stat.zero_fill_count +=	stat->zero_fill_count;
+					host_vm_stat.reactivations += stat->reactivations;
+					host_vm_stat.pageins += stat->pageins;
+					host_vm_stat.pageouts += stat->pageouts;
+					host_vm_stat.faults += stat->faults;
+					host_vm_stat.cow_faults += stat->cow_faults;
+					host_vm_stat.lookups += stat->lookups;
+					host_vm_stat.hits += stat->hits;
+				}
+
+				simple_unlock(&processor_list_lock);
+			}
 
 	switch (flavor) {
 	case HOST_VM_INFO64: /* We were asked to get vm_statistics64 */
@@ -656,6 +721,8 @@ host_statistics64(host_t host, host_flavor_t flavor, host_info64_t info, mach_ms
 
 		return (KERN_SUCCESS);
 	}
+#endif
+}
 
 	default: /* If we didn't recognize the flavor, send to host_statistics */
 		return (host_statistics(host, flavor, (host_info_t)info, count));

@@ -30,6 +30,7 @@ extern void kprintf(const char* format, ...);
 int mach_dev_open(struct inode* ino, struct file* file);
 int mach_dev_release(struct inode* ino, struct file* file);
 long mach_dev_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_paramv);
+int mach_dev_mmap(struct file* file, struct vm_area_struct *vma);
 
 int mach_get_api_version(task_t task);
 int mach_reply_port_entry(task_t task);
@@ -51,6 +52,8 @@ int _kernelrpc_mach_port_move_member_entry(task_t task, struct mach_port_move_me
 int _kernelrpc_mach_port_extract_member_entry(task_t task, struct mach_port_extract_member_args* args);
 int _kernelrpc_mach_port_insert_member_entry(task_t task, struct mach_port_insert_member_args* args);
 int _kernelrpc_mach_port_insert_right_entry(task_t task, struct mach_port_insert_right_args* args);
+int _kernelrpc_mach_vm_allocate_entry(task_t task, struct mach_vm_allocate_args* args);
+int _kernelrpc_mach_vm_deallocate_entry(task_t task, struct mach_vm_deallocate_args* args);
 
 int mk_timer_create_entry(task_t task);
 int mk_timer_arm_entry(task_t task, struct mk_timer_arm_args* args);
@@ -63,12 +66,40 @@ int fork_wait_for_child_entry(task_t task);
 
 int evproc_create_entry(task_t task, struct evproc_create* args);
 int task_for_pid_entry(task_t task, struct task_for_pid* args);
+int task_name_for_pid_entry(task_t task, struct task_name_for_pid* args);
 int pid_for_task_entry(task_t task, struct pid_for_task* args);
+int tid_for_thread_entry(task_t task, void* tport_in);
 
 int set_dyld_info_entry(task_t task, struct set_dyld_info_args* args);
 int stop_after_exec_entry(task_t task);
 int kernel_printk_entry(task_t task, struct kernel_printk_args* args);
 
 int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* args);
+int path_at_entry(task_t task, struct path_at_args* args);
+
+int psynch_mutexwait_trap(task_t task, struct psynch_mutexwait_args* args);
+int psynch_mutexdrop_trap(task_t task, struct psynch_mutexdrop_args* args);
+int psynch_cvwait_trap(task_t task, struct psynch_cvwait_args* args);
+int psynch_cvsignal_trap(task_t task, struct psynch_cvsignal_args* args);
+int psynch_cvbroad_trap(task_t task, struct psynch_cvbroad_args* args);
+int psynch_rw_rdlock_trap(task_t task, struct psynch_rw_rdlock_args* args);
+int psynch_rw_wrlock_trap(task_t task, struct psynch_rw_wrlock_args* args);
+int psynch_rw_unlock_trap(task_t task, struct psynch_rw_unlock_args* args);
+int psynch_cvclrprepost_trap(task_t task, struct psynch_cvclrprepost_args* args);
+
+int getuidgid_entry(task_t task, struct uidgid* args);
+int setuidgid_entry(task_t task, struct uidgid* args);
+
+int get_tracer_entry(task_t, void* pid);
+int set_tracer_entry(task_t, struct set_tracer_args* args);
+int pid_get_state_entry(task_t task, void* pid_in);
+
+int pthread_markcancel_entry(task_t task, void* arg);
+int pthread_canceled_entry(task_t task, void* arg);
+int started_suspended_entry(task_t task, void* arg);
+
+int task_64bit_entry(task_t, void* pid_in);
+
+unsigned long last_triggered_watchpoint_entry(task_t, struct last_triggered_watchpoint_args* args);
 
 #endif

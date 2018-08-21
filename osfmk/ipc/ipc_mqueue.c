@@ -74,6 +74,7 @@
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_printf.h>
+#include <duct/duct_kern_waitqueue.h>
 #endif
 
 #include <mach/port.h>
@@ -343,6 +344,7 @@ ipc_mqueue_add(
 	     kmsg != IKM_NULL;
 	     kmsg = next) {
 		next = ipc_kmsg_queue_next(kmsgq, kmsg);
+		printf("There is a pending message on port\n");
 
 		for (;;) {
 			thread_t th;
@@ -358,7 +360,13 @@ ipc_mqueue_add(
 			/* waitq/mqueue still locked, thread locked */
 
 			if (th == THREAD_NULL)
+			{
+#ifdef __DARLING__
+				wait_queue_notify(port_waitq, IPC_MQUEUE_RECEIVE);
+#endif
+				printf("THREAD_NULL\n");
 				goto leave;
+			}
 
 			/*
 			 * If the receiver waited with a facility not directly
@@ -378,6 +386,7 @@ ipc_mqueue_add(
 								  th->ith_option,
 								  th);
 				}
+				  printf("Not receiving\n");
 				thread_unlock(th);
 				splx(th_spl);
 				continue;
@@ -717,52 +726,11 @@ ipc_mqueue_post(
 		thread_t receiver;
 		mach_msg_size_t msize;
 
-#if defined (__DARLING__)
-                assert (waitq_held (waitq));
-
-                // _wait_queue_select64_one
-                struct waitq*        walked_waitq        = duct__wait_queue_walkup (waitq, IPC_MQUEUE_RECEIVE);
-
-                printk ( KERN_NOTICE "- waitq: 0x%p, walked: 0x%p\n",
-                         waitq, walked_waitq);
-
-                // printk (KERN_NOTICE "- walked_waitq->linux_waitqh: 0x%p\n", &(walked_waitq->linux_waitqh));
-
-                // __wake_up (&walked_waitq->linux_waitqh, TASK_NORMAL, 1, (void *) IPC_MQUEUE_RECEIVE);
-                unsigned long   flags;
-                spin_lock_irqsave (&walked_waitq->linux_waitqh.lock, flags);
-
-                receiver        = THREAD_NULL;
-                linux_wait_queue_t    * lwait   = NULL;
-                linux_wait_queue_t    * lwait_curr;
-                linux_wait_queue_t    * lwait_next;
-
-                list_for_each_entry_safe (lwait_curr, lwait_next, &walked_waitq->linux_waitqh.task_list, task_list) {
-                        if ( lwait_curr->private &&
-                             lwait_curr->func (lwait_curr, TASK_NORMAL, 0, (void *) IPC_MQUEUE_RECEIVE) ) {
-                                lwait   = lwait_curr;
-                                break;
-                        }
-                }
-
-                if (lwait) {
-                        struct task_struct    * ltask   = lwait->private;
-                        receiver    = darling_thread_get(ltask->pid);
-                        // thread_lock (receiver);
-                }
-                spin_unlock_irqrestore (&walked_waitq->linux_waitqh.lock, flags);
-
-                printk (KERN_NOTICE "- receiver: 0x%p\n", receiver);
-
-#else
-		receiver = waitq_wakeup64_identify_locked(waitq,
-		                                          IPC_MQUEUE_RECEIVE,
-		                                          THREAD_AWAKENED,
-		                                          &th_spl,
-		                                          &reserved_prepost,
-		                                          WAITQ_ALL_PRIORITIES,
-		                                          WAITQ_KEEP_LOCKED);
-#endif
+		receiver = wait_queue_wakeup64_identity_locked(
+							waitq,
+							IPC_MQUEUE_RECEIVE,
+							THREAD_AWAKENED,
+							FALSE);
 
 		/* waitq still locked, thread locked */
 		if (receiver == THREAD_NULL) {
@@ -787,7 +755,7 @@ ipc_mqueue_post(
 				// Needed for kevpsetfd
 				// It doesn't enqueue itself as an IPC thread waiting for a message,
 				// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
-				wake_up(&walked_waitq->linux_waitqh);
+				wait_queue_notify(waitq, IPC_MQUEUE_RECEIVE);
 #else
 				if (ipc_kmsg_enqueue_qos(&mqueue->imq_messages, kmsg))
 					KNOTE(&mqueue->imq_klist, 0);
@@ -1207,7 +1175,11 @@ ipc_mqueue_receive_on_thread(
         // linux_init_wait_func_proc (&lwait, duct_autoremove_wake_function, linux_current);
         lwait.private       = linux_current;
         lwait.func          = duct_autoremove_wake_function;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
+        INIT_LIST_HEAD (&lwait.entry);
+#else
         INIT_LIST_HEAD (&lwait.task_list);
+#endif
         lwait.flags         = 0;
 
 
@@ -1224,7 +1196,7 @@ ipc_mqueue_receive_on_thread(
                         break;
                 }
 
-                if (signal_pending (linux_current)) {
+                if (signal_pending (linux_current) || darling_thread_canceled()) {
                         wresult     = THREAD_INTERRUPTED;
                         break;
                 }

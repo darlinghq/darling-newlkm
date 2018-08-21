@@ -84,7 +84,6 @@ static void machine_startup ()
 
 #define CLONE_STOPPED   0x02000000
 
-#warning IMPLEMENT CREATING MACH THREAD!
 #if 0
 // WC: ref to fork_create_child ()
 void * darling_copy_mach_thread (unsigned long clone_flags, struct task_struct * p, struct pt_regs * regs)

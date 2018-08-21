@@ -35,6 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct.h"
 #include "duct_pre_xnu.h"
 #include "duct_kern_zalloc.h"
+#include <linux/version.h>
 // #include "duct_machine_routines.h"
 
 // #include <mach/mach_types.h>
@@ -47,8 +48,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 zone_t duct_zinit (vm_size_t size, vm_size_t max, vm_size_t alloc, const char * name)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 16, 0)
         return (zone_t)
         kmem_cache_create (name, size, 0 /* align */, SLAB_HWCACHE_ALIGN /* flags */, NULL /* ctor */);
+#else
+        return (zone_t)
+        kmem_cache_create_usercopy (name, size, 0 /* align */, SLAB_HWCACHE_ALIGN /* flags */, 0, size, NULL /* ctor */);
+#endif
 }
 
 void duct_zone_change (zone_t zone, unsigned int item, boolean_t value)

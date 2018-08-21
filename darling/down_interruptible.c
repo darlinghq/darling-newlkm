@@ -18,6 +18,8 @@ struct semaphore_waiter {
         bool up;
 };
 
+extern _Bool darling_thread_canceled(void);
+
 static inline int __down_common(struct semaphore *sem, long state,
                                                        long timeout) {
         struct task_struct *task = current;
@@ -28,7 +30,7 @@ static inline int __down_common(struct semaphore *sem, long state,
         waiter.up = false;
 
         for (;;) {
-                if (signal_pending_state(state, task))
+                if (signal_pending_state(state, task) || darling_thread_canceled())
                         goto interrupted;
                 if (unlikely(timeout <= 0))
                         goto timed_out;

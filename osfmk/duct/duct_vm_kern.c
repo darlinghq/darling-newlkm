@@ -116,3 +116,15 @@ kmem_free(
 	vfree((void*) addr);
 }
 
+kern_return_t
+kmem_alloc(
+    vm_map_t    map,
+    vm_offset_t *addrp,
+    vm_size_t   size)
+{
+	*addrp = (vm_offset_t) vmalloc(size);
+	if (*addrp)
+		return KERN_SUCCESS;
+	else
+		return KERN_NO_SPACE;
+}

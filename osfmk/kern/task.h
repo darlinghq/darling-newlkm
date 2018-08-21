@@ -387,6 +387,11 @@ struct task {
 	boolean_t	task_unnested;
 	int		task_disconnected_count;
 #endif
+#ifdef __DARLING__
+	struct list_head* p_pthhash;
+	int tracer;
+#endif
+};
 
 #if HYPERVISOR
 	void *hv_task_target; /* hypervisor virtual machine object associated with this task */

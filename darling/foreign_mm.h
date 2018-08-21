@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015 Lubos Dolezel
+ * Copyright (C) 2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -17,18 +17,18 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-#ifndef PSYNCH_CV_H
-#define PSYNCH_CV_H
-#include "../api.h"
+#ifndef _FOREIGNMM_H
+#define _FOREIGNMM_H
+#include <linux/mm.h>
 
-typedef struct task *task_t;
+void foreignmm_init(void);
+void foreignmm_exit(void);
 
-int psynch_cvwait_trap(task_t task,
-		struct psynch_cvwait_args* args);
-int psynch_cvbroad_trap(task_t task,
-		struct psynch_cvbroad_args* args);
-int psynch_cvsignal_trap(task_t task,
-		struct psynch_cvsignal_args* args);
+typedef void (*foreignmm_cb_t)(void*);
 
-#endif /* PSYNCH_CV_H */
+// Synchonously execute a callback function on a kthread where current->mm will point to the given mm.
+// Remember to use mmget() and mmput() around foreignmm_execute() calls!
+void foreignmm_execute(struct mm_struct* mm, foreignmm_cb_t cb, void* param);
+
+#endif
 

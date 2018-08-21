@@ -226,7 +226,7 @@ mach_vm_protect(
 	boolean_t		set_maximum,
 	vm_prot_t		new_protection)
 {
-        kprintf("not implemented: mach_vm_protect()\n");
+        kprintf("no-op: mach_vm_protect()\n");
         return 0;
 }
 /*
@@ -244,7 +244,10 @@ vm_protect(
 	boolean_t		set_maximum,
 	vm_prot_t		new_protection)
 {
-        kprintf("not implemented: vm_protect()\n");
+	// There is currently no feasible way of doing mprotect() on a remote process.
+	// Hence we silently ignore this request and permit overwriting R/O memory pages
+	// in vm_write() with FOLL_FORCE.
+        kprintf("no-op: vm_protect()\n");
         return 0;
 }
 /*
@@ -534,8 +537,26 @@ mach_vm_read_overwrite(
 	mach_vm_address_t	data,
 	mach_vm_size_t	*data_size)
 {
-        kprintf("not implemented: mach_vm_read_overwrite()\n");
-        return 0;
+	kern_return_t	error;
+	vm_map_copy_t	copy;
+
+	if (map == VM_MAP_NULL)
+		return(KERN_INVALID_ARGUMENT);
+
+	error = vm_map_copyin(map, (vm_map_address_t)address,
+				(vm_map_size_t)size, FALSE, &copy);
+
+	if (KERN_SUCCESS == error) {
+		error = vm_map_copy_overwrite(current_thread()->map,
+ 					(vm_map_address_t)data, 
+					copy, FALSE);
+		if (KERN_SUCCESS == error) {
+			*data_size = size;
+			return error;
+		}
+		vm_map_copy_discard(copy);
+	}
+	return(error);
 }
 /*
  * vm_read_overwrite -
@@ -602,6 +623,7 @@ vm_write(
 	return vm_map_copy_overwrite(map, (vm_map_address_t)address,
 		(vm_map_copy_t) data, FALSE /* interruptible XXX */);
 }
+#if 0
 /*
  * mach_vm_copy -
  * Overwrite one range of the specified map with the contents of
@@ -628,6 +650,7 @@ vm_copy(
         kprintf("not implemented: vm_copy()\n");
         return 0;
 }
+#endif
 /*
  * mach_vm_map -
  * Map some range of an object into an address space.
@@ -940,6 +963,7 @@ vm_behavior_set(
  *	XXX Dependency: syscall_vm_region() also supports only one flavor.
  */
 
+#if 0
 kern_return_t
 mach_vm_region(
 	vm_map_t		 map,
@@ -953,6 +977,8 @@ mach_vm_region(
         kprintf("not implemented: mach_vm_region()\n");
         return 0;
 }
+#endif
+
 /*
  *	vm_region_64 and vm_region:
  *
@@ -999,6 +1025,7 @@ vm_region(
  *	submaps in a target map
  *
  */
+#if 0
 kern_return_t
 mach_vm_region_recurse(
 	vm_map_t			map,
@@ -1011,6 +1038,7 @@ mach_vm_region_recurse(
         kprintf("not implemented: mach_vm_region_recurse()\n");
         return 0;
 }
+#endif
 /*
  *	vm_region_recurse: A form of vm_region which follows the
  *	submaps in a target map

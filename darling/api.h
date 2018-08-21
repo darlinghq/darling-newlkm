@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		7
+#define DARLING_MACH_API_VERSION		15
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -77,6 +77,52 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_set_dyld_info,
 	NR_stop_after_exec,
 	NR_kernel_printk, // 0x28
+	NR_path_at,
+	NR_psynch_rw_rdlock,
+	NR_psynch_rw_wrlock,
+	NR_psynch_rw_unlock,
+	NR_psynch_cvclrprepost,
+	NR_get_tracer,
+	NR_tid_for_thread,
+	NR_getuidgid,
+	NR_setuidgid,
+	NR_task_name_for_pid_trap,
+	NR_set_tracer,
+	NR_pthread_markcancel,
+	NR_pthread_canceled,
+	NR_pid_get_state,
+	NR_started_suspended,
+	NR_task_64bit,
+	NR__kernelrpc_mach_vm_allocate_trap,
+	NR__kernelrpc_mach_vm_deallocate_trap,
+	NR_last_triggered_watchpoint,
+};
+
+struct set_tracer_args
+{
+	int target;
+	int tracer;
+};
+
+struct task_name_for_pid
+{
+	int task_port;
+	int pid;
+	int name_out;
+};
+
+struct uidgid
+{
+	int uid;
+	int gid;
+};
+
+struct path_at_args
+{
+	int fd;
+	const char* path;
+	char* path_out;
+	unsigned int max_path_out;
 };
 
 struct evproc_create
@@ -283,38 +329,47 @@ struct pthread_kill_args
 
 struct psynch_cvwait_args
 {
-	uint64_t cv;
-	uint32_t cvgen;
+	unsigned long cv;
+	uint64_t cvlsgen;
 	uint32_t cvugen;
-	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
-	uint64_t sec;
-	/* Called usec, but seems to contain nsec */
-	uint64_t usec;
+	unsigned long mutex;
+	uint64_t mugen;
+	uint32_t flags;
+	int64_t sec;
+	uint32_t nsec;
 };
 
 struct psynch_cvsignal_args
 {
-	uint64_t cv;
-	uint32_t cvgen;
+	unsigned long cv;
+	uint64_t cvlsgen;
 	uint32_t cvugen;
-	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
 	int thread_port;
+	unsigned long mutex;
+	uint64_t mugen;
+	uint64_t tid;
 	uint32_t flags;
 };
 
 struct psynch_cvbroad_args
 {
 	uint64_t cv;
-	uint32_t cvgen;
-	uint32_t diffgen;
+	uint64_t cvlsgen;
+	uint64_t cvudgen;
+	uint32_t flags;
 	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
+	uint64_t mugen;
 	uint64_t tid;
+};
+
+struct psynch_cvclrprepost_args
+{
+	uint64_t cv;
+	uint32_t cvgen;
+	uint32_t cvugen;
+	uint32_t cvsgen;
+	uint32_t prepocnt;
+	uint32_t preposeq;
 	uint32_t flags;
 };
 
@@ -360,6 +415,54 @@ struct set_dyld_info_args
 struct kernel_printk_args
 {
 	char buf[512];
+};
+
+struct psynch_rw_rdlock_args
+{
+	uint64_t rwlock;
+	uint32_t lgenval;
+	uint32_t ugenval;
+	uint32_t rw_wc;
+	int flags;
+};
+
+struct psynch_rw_wrlock_args
+{
+	uint64_t rwlock;
+	uint32_t lgenval;
+	uint32_t ugenval;
+	uint32_t rw_wc;
+	int flags;
+};
+
+struct psynch_rw_unlock_args
+{
+	uint64_t rwlock;
+	uint32_t lgenval;
+	uint32_t ugenval;
+	uint32_t rw_wc;
+	int flags;
+};
+
+struct mach_vm_allocate_args
+{
+	unsigned int target;
+	uint64_t address;
+	uint64_t size;
+	unsigned int flags;
+};
+
+struct mach_vm_deallocate_args
+{
+	unsigned int target;
+	uint64_t address;
+	uint64_t size;
+};
+
+struct last_triggered_watchpoint_args
+{
+	uint64_t address;
+	unsigned int flags;
 };
 
 #pragma pack (pop)
