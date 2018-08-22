@@ -575,6 +575,9 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 
 	task_t task = (task_t) file->private_data;
 
+	if (!task->map->linux_task)
+		return -LINUX_ENXIO;
+
 	rcu_read_lock();
 	owner = task_tgid_nr(task->map->linux_task);
 	rcu_read_unlock();
