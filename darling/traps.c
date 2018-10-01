@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2017 Lubos Dolezel
+ * Copyright (C) 2015-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -803,7 +803,7 @@ int _kernelrpc_mach_vm_allocate_entry(task_t task_self, struct mach_vm_allocate_
 	int rv = KERN_SUCCESS;
 	task_t task = port_name_to_task(args.target);
 
-	if (!task)
+	if (!task || !task->map || !task->map->linux_task)
 		return KERN_INVALID_TASK;
 
 	struct vm_allocate_params params;
@@ -851,7 +851,7 @@ int _kernelrpc_mach_vm_deallocate_entry(task_t task_self, struct mach_vm_dealloc
 	int rv = KERN_SUCCESS;
 	task_t task = port_name_to_task(args.target);
 
-	if (!task)
+	if (!task || !task->map || !task->map->linux_task)
 		return KERN_INVALID_TASK;
 
 	struct vm_allocate_params params;
