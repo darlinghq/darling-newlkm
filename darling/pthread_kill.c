@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2017 Lubos Dolezel
+ * Copyright (C) 2015-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -20,6 +20,7 @@
 #include "pthread_kill.h"
 #include <asm/siginfo.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 #include <asm/siginfo.h>
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
@@ -60,12 +61,15 @@ int pthread_kill_trap(task_t task,
 
 	if (args.sig > 0)
 	{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,16,0)
 		clear_siginfo(&info);
+#else
+		info.si_errno = 0;
+#endif
 		info.si_signo = args.sig;
 		info.si_code = SI_TKILL;
 		info.linux_si_pid = task_tgid_vnr(current);
 		info.linux_si_uid = from_kuid_munged(current_user_ns(), current_uid());
-		info.si_errno = 0;
 
 		ret = send_sig_info(args.sig, &info, t);
 	}
