@@ -58,13 +58,22 @@ int pthread_kill_trap(task_t task,
 		goto err;
 	}
 
-	info.si_signo = args.sig;
-	info.si_code = SI_TKILL;
-	info.linux_si_pid = t->tgid;
-	info.linux_si_uid = from_kuid_munged(current_user_ns(), current_uid());
-	info.si_errno = 0;
+	if (args.sig > 0)
+	{
+		clear_siginfo(&info);
+		info.si_signo = args.sig;
+		info.si_code = SI_TKILL;
+		info.linux_si_pid = task_tgid_vnr(current);
+		info.linux_si_uid = from_kuid_munged(current_user_ns(), current_uid());
+		info.si_errno = 0;
+
+		ret = send_sig_info(args.sig, &info, t);
+	}
+	else if (args.sig < 0)
+		ret = -LINUX_EINVAL;
+	else
+		ret = 0;
 	
-	ret = send_sig_info(args.sig, &info, t);
 	rcu_read_unlock();
 
 err:
