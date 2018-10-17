@@ -96,6 +96,12 @@
 
 #if defined (__DARLING__)
 #include <duct/duct_post_xnu.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+#define global_zone_page_state global_page_state
+#endif
+
 // #include <linux/blkdev.h>
 // extern long nr_blockdev_pages(void);
 #endif
