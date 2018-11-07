@@ -154,6 +154,7 @@ int macho_load(struct linux_binprm* bprm)
 
 	current->mm->start_brk = lr.vm_addr_max;
 	current->mm->brk = lr.vm_addr_max;
+	current->mm->start_stack = bprm->p;
 
 	// TODO: fill in start_code, end_code, start_data, end_data
 
@@ -204,7 +205,6 @@ out:
 int setup_space(struct linux_binprm* bprm)
 {
 	unsigned long stackAddr = test_thread_flag(TIF_IA32) ? commpage_address(false) : STACK_TOP;
-	current->mm->start_stack = stackAddr;
 
 	setup_new_exec(bprm);
 	install_exec_creds(bprm);
