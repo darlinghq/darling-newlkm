@@ -187,7 +187,7 @@ int macho_load(struct linux_binprm* bprm)
 	// Set DYLD_INFO
 	darling_task_set_dyld_info(lr.dyld_all_image_location, lr.dyld_all_image_size);
 
-	debug_msg("Entry point: %p, stack: %p, mh: %p\n", (void*) lr.entry_point, (void*) bprm->p, (void*) lr.mh);
+	// debug_msg("Entry point: %lx, stack: %lx, mh: %lx\n", (void*) lr.entry_point, (void*) bprm->p, (void*) lr.mh);
 
 	//unsigned int* pp = (unsigned int*)bprm->p;
 	//int i;
@@ -204,16 +204,16 @@ out:
 
 int setup_space(struct linux_binprm* bprm)
 {
-	unsigned long stackAddr = test_thread_flag(TIF_IA32) ? commpage_address(false) : STACK_TOP;
+	// Explanation:
+	// Using STACK_TOP would cause the stack to be placed just above the commpage
+	// and would collide with it eventually.
+	unsigned long stackAddr = commpage_address(!test_thread_flag(TIF_IA32));
 
 	setup_new_exec(bprm);
 	install_exec_creds(bprm);
 
 	// TODO: Mach-O supports executable stacks
 
-	// Explanation:
-	// By default, STACK_TOP would cause the stack to be placed just above the commpage on i386
-	// and would collide with it eventually.
 	return setup_arg_pages(bprm, stackAddr, EXSTACK_DISABLE_X);
 }
 
