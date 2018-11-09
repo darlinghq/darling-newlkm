@@ -31,6 +31,7 @@
 #include <linux/eventfd.h>
 #include <linux/fdtable.h>
 #include <linux/syscalls.h>
+#include <linux/fs_struct.h>
 #include "traps.h"
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_task.h>
@@ -81,7 +82,7 @@ struct file_operations mach_chardev_ops = {
 
 #define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = { (trap_handler) impl, #impl }
 
-static const struct trap_entry mach_traps[60] = {
+static const struct trap_entry mach_traps[80] = {
 	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
 
@@ -157,6 +158,10 @@ static const struct trap_entry mach_traps[60] = {
 	// BSD
 	TRAP(NR_getuidgid, getuidgid_entry),
 	TRAP(NR_setuidgid, setuidgid_entry),
+
+	// VIRTUAL CHROOT
+	TRAP(NR_vchroot, vchroot_entry),
+	TRAP(NR_vchroot_expand, vchroot_expand_entry),
 };
 #undef TRAP
 
@@ -316,6 +321,8 @@ int mach_dev_open(struct inode* ino, struct file* file)
 			// UID and GID are left as 0
 		}
 	}
+
+	new_task->vchroot = mntget(old_task->vchroot);
 	
 	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
@@ -507,6 +514,9 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		put_task_struct(my_task->map->linux_task);
 		my_task->map->linux_task = NULL;
 	}
+
+	if (my_task->vchroot != NULL)
+		mntput(my_task->vchroot);
 
 	task_unlock(my_task);
 	duct_task_destroy(my_task);
@@ -1431,6 +1441,138 @@ unsigned long last_triggered_watchpoint_entry(task_t task, struct last_triggered
 		return -LINUX_EFAULT;
 
 	return 0;
+}
+
+int vchroot_entry(task_t task, int fd_vchroot)
+{
+	struct file* f;
+
+	f = fget(fd_vchroot);
+	if (!f)
+		return -LINUX_EBADF;
+
+	if (task->vchroot)
+	{
+		mntput(task->vchroot);
+		task->vchroot = NULL;
+	}
+
+	task->vchroot = clone_private_mount(&f->f_path);
+	put_filp(f);
+
+	if (IS_ERR(task->vchroot))
+	{
+		int err = PTR_ERR(task->vchroot);
+		task->vchroot = NULL;
+		return err;
+	}
+
+	return 0;
+}
+
+// API exported by Linux, but not declared in the right headers
+extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
+               const char *, unsigned int, struct path *);
+
+int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args)
+{
+	struct path path;
+	struct file* frel = NULL;
+	int err;
+	struct dentry* relative_to;
+	const char* append = NULL;
+
+	struct vfsmount* vchroot = mntget(task->vchroot);
+
+	if (vchroot == NULL)
+		return 0; // no op
+
+	copyargs(args, in_args);
+
+	if (args.dfd == AT_FDCWD)
+		relative_to = linux_current->fs->pwd.dentry;
+	else
+	{
+		frel = fget(args.dfd);
+
+		if (!frel)
+			return -LINUX_ENOENT;
+
+		relative_to = frel->f_path.dentry;
+	}
+
+	err = vfs_path_lookup(relative_to, vchroot, args.path, (args.flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
+	if (err == -LINUX_ENOENT)
+	{
+		// Retry lookup w/o last path component
+		char* slash = strrchr(args.path, '/');
+
+		const char* lookup;
+		if (slash != NULL)
+		{
+			*slash = '\0';
+			append = slash + 1;
+			lookup = args.path;
+		}
+		else if (args.path[0] && strcmp(args.path, ".") != 0 && strcmp(args.path, "..") != 0)
+		{
+			append = args.path;
+			lookup = "";
+		}
+		else
+			goto fail;
+
+		err = vfs_path_lookup(relative_to, vchroot, lookup, (args.flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
+	}
+
+	if (!err)
+	{
+		path.mnt = linux_current->fs->root.mnt;
+
+		char* str = (char*) __get_free_page(GFP_KERNEL);
+		char* strpath = d_path(&path, str, PAGE_SIZE);
+
+		if (IS_ERR(strpath))
+		{
+			free_page((unsigned long) str);
+			err = PTR_ERR(strpath);
+			goto fail;
+		}
+
+		int pathlen = strlen(strpath);
+		if (copy_to_user(in_args->path, strpath, pathlen + 1))
+		{
+			free_page((unsigned long) str);
+			err = -LINUX_EFAULT;
+			goto fail;
+		}
+		free_page((unsigned long) str);
+
+		// If the lookup only succeeded after removing the last path component, append it back now
+		if (append != NULL)
+		{
+			if (strlen(strpath) + strlen(append) + 2 > PAGE_SIZE)
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+
+			if (copy_to_user(in_args->path + pathlen, "/", 1)
+					|| copy_to_user(in_args->path + pathlen + 1, append, strlen(append) + 1))
+			{
+				err = -LINUX_EFAULT;
+				goto fail;
+			}
+		}
+
+	}
+
+fail:
+	if (frel)
+		put_filp(frel);
+	mntput(vchroot);
+
+	return err;
 }
 
 module_init(mach_init);

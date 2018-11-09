@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2017 Lubos Dolezel
+ * Copyright (C) 2015-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -101,5 +101,8 @@ int started_suspended_entry(task_t task, void* arg);
 int task_64bit_entry(task_t, void* pid_in);
 
 unsigned long last_triggered_watchpoint_entry(task_t, struct last_triggered_watchpoint_args* args);
+
+int vchroot_entry(task_t task, int fd_vchroot);
+int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* path);
 
 #endif
