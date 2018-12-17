@@ -110,3 +110,7 @@ add_custom_target(lkm_install
 	COMMENT "Installing the Linux kernel module"
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
+add_custom_target(lkm_clean
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} clean
+	COMMENT "Cleaning the Linux kernel module build folder"
+	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -158,10 +158,11 @@ CFLAGS_notify_user.o := $(miggen_cflags)
 # If this is not done like this, then when updating your kernel, you will
 # build against the wrong kernel
 KERNELVERSION = $(shell uname -r)
-
+$(info Running kernel version is $(KERNELVERSION))
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
 ifneq ($(KERNELRELEASE),)
+$(info Invoked by kernel build system, building for $(KERNELRELEASE))
 	obj-m := darling-mach.o
 	darling-mach-objs := osfmk/ipc/ipc_entry.o \
 		osfmk/ipc/ipc_hash.o \
@@ -287,14 +288,17 @@ else
 	KERNELDIR ?= /lib/modules/$(KERNELVERSION)/build
 	PWD := $(shell pwd)
 default:
+	rm -f darling-mach.mod.o
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 
 endif
 
 all:
+	rm -f darling-mach.mod.o
 	$(MAKE) -C /lib/modules/$(KERNELVERSION)/build M=$(PWD) modules
 
 clean:
+	$(MAKE) -C /lib/modules/$(KERNELVERSION)/build M=$(PWD) clean
 	find . \( -name '*.o' -or -name '*.ko' \) -delete
 	rm -f *.mod.c
 	rm -rf modules.order Module.symvers
