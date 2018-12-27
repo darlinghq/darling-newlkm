@@ -98,6 +98,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_last_triggered_watchpoint,
 	NR_vchroot, // fd as paramv
 	NR_vchroot_expand,
+	NR_vchroot_fdpath,
 };
 
 struct set_tracer_args
@@ -473,6 +474,13 @@ struct vchroot_expand_args
 	char path[4096]; // contains evaluated path on return
 	unsigned int flags;
 	int dfd; // base directory when path is relative
+};
+
+struct vchroot_fdpath_args
+{
+	int fd;
+	char* path;
+	unsigned int maxlen;
 };
 
 #pragma pack (pop)

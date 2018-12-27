@@ -62,6 +62,8 @@
 #include <linux/sched/mm.h>
 #endif
 
+#undef kfree
+
 typedef long (*trap_handler)(task_t, ...);
 
 static void *commpage32, *commpage64;
@@ -162,6 +164,7 @@ static const struct trap_entry mach_traps[80] = {
 	// VIRTUAL CHROOT
 	TRAP(NR_vchroot, vchroot_entry),
 	TRAP(NR_vchroot_expand, vchroot_expand_entry),
+	TRAP(NR_vchroot_fdpath, vchroot_fdpath_entry),
 };
 #undef TRAP
 
@@ -253,6 +256,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		struct files_struct* files;
 		
 		new_task->tracer = old_task->tracer;
+		new_task->vchroot = mntget(old_task->vchroot);
 		darling_ipc_inherit(old_task, new_task);
 
 		if (old_task->map->linux_task != NULL)
@@ -303,6 +307,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		if (parent_task != NULL)
 		{
 			new_task->tracer = parent_task->tracer;
+			new_task->vchroot = mntget(parent_task->vchroot);
 			darling_ipc_inherit(parent_task, new_task);
 			task_deallocate(parent_task);
 
@@ -322,7 +327,6 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		}
 	}
 
-	new_task->vchroot = mntget(old_task->vchroot);
 	
 	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
@@ -1458,7 +1462,7 @@ int vchroot_entry(task_t task, int fd_vchroot)
 	}
 
 	task->vchroot = clone_private_mount(&f->f_path);
-	put_filp(f);
+	fput(f);
 
 	if (IS_ERR(task->vchroot))
 	{
@@ -1468,6 +1472,12 @@ int vchroot_entry(task_t task, int fd_vchroot)
 	}
 
 	return 0;
+}
+
+// Helper function for binfmt.c
+struct vfsmount* task_get_vchroot(task_t t)
+{
+	return mntget(t->vchroot);
 }
 
 // API exported by Linux, but not declared in the right headers
@@ -1481,48 +1491,60 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 	int err;
 	struct dentry* relative_to;
 	const char* append = NULL;
+	struct vchroot_expand_args* args;
 
 	struct vfsmount* vchroot = mntget(task->vchroot);
 
 	if (vchroot == NULL)
 		return 0; // no op
 
-	copyargs(args, in_args);
+	args = kmalloc(sizeof(*args), GFP_KERNEL);
+	if (IS_ERR(args))
+		return PTR_ERR(args);
 
-	if (args.dfd == AT_FDCWD)
+	if (copy_from_user(args, in_args, sizeof(*args)))
+	{
+		err = -LINUX_EFAULT;
+		goto fail;
+	}
+
+	if (args->dfd == AT_FDCWD)
 		relative_to = linux_current->fs->pwd.dentry;
 	else
 	{
-		frel = fget(args.dfd);
+		frel = fget(args->dfd);
 
 		if (!frel)
-			return -LINUX_ENOENT;
+		{
+			err = -LINUX_ENOENT;
+			goto fail;
+		}
 
 		relative_to = frel->f_path.dentry;
 	}
 
-	err = vfs_path_lookup(relative_to, vchroot, args.path, (args.flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
+	err = vfs_path_lookup(relative_to, vchroot, args->path, (args->flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
 	if (err == -LINUX_ENOENT)
 	{
 		// Retry lookup w/o last path component
-		char* slash = strrchr(args.path, '/');
+		char* slash = strrchr(args->path, '/');
 
 		const char* lookup;
 		if (slash != NULL)
 		{
 			*slash = '\0';
 			append = slash + 1;
-			lookup = args.path;
+			lookup = args->path;
 		}
-		else if (args.path[0] && strcmp(args.path, ".") != 0 && strcmp(args.path, "..") != 0)
+		else if (args->path[0] && strcmp(args->path, ".") != 0 && strcmp(args->path, "..") != 0)
 		{
-			append = args.path;
+			append = args->path;
 			lookup = "";
 		}
 		else
 			goto fail;
 
-		err = vfs_path_lookup(relative_to, vchroot, lookup, (args.flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
+		err = vfs_path_lookup(relative_to, vchroot, lookup, (args->flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
 	}
 
 	if (!err)
@@ -1569,9 +1591,62 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 
 fail:
 	if (frel)
-		put_filp(frel);
+		fput(frel);
 	mntput(vchroot);
+	kfree(args);
 
+	return err;
+}
+
+int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args)
+{
+	int err = 0;
+	struct file* f;
+	struct dentry* relative_to;
+	char* str = NULL;
+
+	copyargs(args, in_args);
+
+	f = fget(args.fd);
+	if (!f)
+		return -LINUX_EBADF;
+
+	struct path p;
+	struct vfsmount* vchroot = mntget(task->vchroot);
+
+	p.dentry = f->f_path.dentry;
+	p.mnt = vchroot ? vchroot : linux_current->fs->root.mnt;
+
+	str = (char*) __get_free_page(GFP_KERNEL);
+	char* strpath = d_path(&p, str, PAGE_SIZE);
+
+	if (IS_ERR(strpath))
+	{
+		err = PTR_ERR(strpath);
+		goto fail;
+	}
+
+	const int len = strlen(strpath) + 1;
+	if (len > args.maxlen)
+	{
+		err = -LINUX_ENAMETOOLONG;
+		goto fail;
+	}
+
+	if (copy_to_user(args.path, strpath, len))
+	{
+		err = -LINUX_EFAULT;
+		goto fail;
+	}
+
+fail:
+	if (str)
+		free_page((unsigned long) str);
+
+	fput(f);
+
+	if (vchroot)
+		mntput(vchroot);
 	return err;
 }
 

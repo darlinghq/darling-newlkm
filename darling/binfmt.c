@@ -42,6 +42,7 @@
 #include <linux/version.h>
 #include <linux/coredump.h>
 #include <linux/highmem.h>
+#include <linux/mount.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,9)
 #include <linux/sched/task_stack.h>
 #endif
@@ -65,6 +66,8 @@ struct load_results
 	bool _32on64;
 	int kernfd;
 	unsigned long base;
+	uint32_t bprefs[4];
+	char* root_path;
 };
 
 extern struct file* xnu_task_setup(void);
@@ -74,14 +77,16 @@ static int macho_load(struct linux_binprm* bprm);
 static int macho_coredump(struct coredump_params* cprm);
 static int test_load(struct linux_binprm* bprm);
 static int test_load_fat(struct linux_binprm* bprm);
-static int load_fat(struct linux_binprm* bprm, struct file* file, uint32_t bprefs[4], uint32_t arch, struct load_results* lr);
+static int load_fat(struct linux_binprm* bprm, struct file* file, uint32_t arch, struct load_results* lr);
 static int load32(struct linux_binprm* bprm, struct file* file, struct fat_arch* farch, bool expect_dylinker, struct load_results* lr);
 static int load64(struct linux_binprm* bprm, struct file* file, struct fat_arch* farch, bool expect_dylinker, struct load_results* lr);
-static int load(struct linux_binprm* bprm, struct file* file, uint32_t *bprefs, uint32_t arch, struct load_results* lr);
+static int load(struct linux_binprm* bprm, struct file* file, uint32_t arch, struct load_results* lr);
 static int native_prot(int prot);
 static int setup_stack64(struct linux_binprm* bprm, struct load_results* lr);
 static int setup_stack32(struct linux_binprm* bprm, struct load_results* lr);
-static int setup_space(struct linux_binprm* bprm);
+static int setup_space(struct linux_binprm* bprm, struct load_results* lr);
+static void process_special_env(struct linux_binprm* bprm, struct load_results* lr);
+static void vchroot_detect(struct load_results* lr);
 
 // #define PAGE_ALIGN(x) ((x) & ~(PAGE_SIZE-1))
 #define PAGE_ROUNDUP(x) (((((x)-1) / PAGE_SIZE)+1) * PAGE_SIZE)
@@ -108,14 +113,11 @@ void macho_binfmt_exit(void)
 
 int macho_load(struct linux_binprm* bprm)
 {
-	uint32_t bprefs[4] = { 0, 0, 0, 0 };
 	int err;
 	struct load_results lr;
 	struct pt_regs* regs = current_pt_regs();
 	struct file* xnu_task;
 
-	// TODO: parse binprefs out of env
-	
 	// Do quick checks on the executable
 	err = test_load(bprm);
 	if (err)
@@ -141,7 +143,7 @@ int macho_load(struct linux_binprm* bprm)
 		goto out;
 
 	memset(&lr, 0, sizeof(lr));
-	err = load(bprm, bprm->file, bprefs, 0, &lr);
+	err = load(bprm, bprm->file, 0, &lr);
 
 	if (err)
 	{
@@ -196,14 +198,19 @@ int macho_load(struct linux_binprm* bprm)
 	//	debug_msg("sp @%p: 0x%x\n", pp, *pp);
 	//	pp++;
 	//}
-
+	
 	start_thread(regs, lr.entry_point, bprm->p);
 out:
+	if (lr.root_path)
+		kfree(lr.root_path);
+
 	return err;
 }
 
-int setup_space(struct linux_binprm* bprm)
+int setup_space(struct linux_binprm* bprm, struct load_results* lr)
 {
+	int err;
+
 	// Explanation:
 	// Using STACK_TOP would cause the stack to be placed just above the commpage
 	// and would collide with it eventually.
@@ -214,14 +221,22 @@ int setup_space(struct linux_binprm* bprm)
 
 	// TODO: Mach-O supports executable stacks
 
-	return setup_arg_pages(bprm, stackAddr, EXSTACK_DISABLE_X);
+	err = setup_arg_pages(bprm, stackAddr, EXSTACK_DISABLE_X);
+	if (err != 0)
+		return err;
+
+	// If vchroot is active in the current process, respect it
+	vchroot_detect(lr);
+	// Parse binprefs out of env, evaluate DYLD_ROOT_PATH
+	process_special_env(bprm, lr);
+
+	return 0;
 }
 
 static const char EXECUTABLE_PATH[] = "executable_path=";
 
 int load(struct linux_binprm* bprm,
 		struct file* file,
-		uint32_t *bprefs,
 		uint32_t arch,
 		struct load_results* lr)
 {
@@ -246,7 +261,7 @@ int load(struct linux_binprm* bprm,
 	}
 	else if (magic == FAT_MAGIC || magic == FAT_CIGAM)
 	{
-		return load_fat(bprm, file, bprefs, arch, lr);
+		return load_fat(bprm, file, arch, lr);
 	}
 	else
 		return -ENOEXEC;
@@ -343,7 +358,6 @@ int test_load_fat(struct linux_binprm* bprm)
 
 int load_fat(struct linux_binprm* bprm,
 		struct file* file,
-		uint32_t bprefs[4],
 		uint32_t forced_arch,
 		struct load_results* lr)
 {
@@ -383,7 +397,7 @@ int load_fat(struct linux_binprm* bprm,
 			int j;
 			for (j = 0; j < 4; j++)
 			{
-				if (bprefs[j] && arch->cputype == bprefs[j])
+				if (lr->bprefs[j] && arch->cputype == lr->bprefs[j])
 				{
 					if (bpref_index == -1 || bpref_index > j)
 					{
@@ -446,6 +460,90 @@ int native_prot(int prot)
 		protOut |= PROT_EXEC;
 
 	return protOut;
+}
+
+extern struct vfsmount* task_get_vchroot(task_t t);
+void vchroot_detect(struct load_results* lr)
+{
+	struct vfsmount* vchroot;
+	struct path path;
+
+	// Find out if the current process has an associated XNU task_t
+	task_t task = darling_task_get_current();
+
+	if (!task)
+		return;
+
+	vchroot = task_get_vchroot(task);
+	if (!vchroot)
+		return;
+
+	// Get the path as a string into load_results
+	char* buf = (char*) __get_free_page(GFP_KERNEL);
+	char* p = dentry_path_raw(vchroot->mnt_root, buf, 1023);
+
+	if (IS_ERR(p))
+		goto out;
+
+	lr->root_path = kmalloc(strlen(p) + 1, GFP_KERNEL);
+	strcpy(lr->root_path, p);
+out:
+	free_page((unsigned long) buf);
+	mntput(vchroot);
+}
+
+// Given that there's no proper way of passing special parameters to the binary loader
+// via execve(), we must do this via env variables
+void process_special_env(struct linux_binprm* bprm, struct load_results* lr)
+{
+	unsigned long p = current->mm->arg_start;
+
+	// Get past argv strings
+	int argc = bprm->argc;
+	while (argc--)
+	{
+		size_t len = strnlen_user((void __user*) p, MAX_ARG_STRLEN);
+		if (!len || len > MAX_ARG_STRLEN)
+			return;
+
+		p += len;
+	}
+
+	int envc = bprm->envc;
+	char* env_value = (char*) kmalloc(MAX_ARG_STRLEN, GFP_KERNEL);
+
+	while (envc--)
+	{
+		size_t len = strnlen_user((void __user*) p, MAX_ARG_STRLEN);
+		if (!len || len > MAX_ARG_STRLEN)
+			break;
+
+		if (copy_from_user(env_value, (void __user*) p, len) == 0)
+		{
+			printk(KERN_NOTICE "env var: %s\n", env_value);
+
+			if (strncmp(env_value, "__mldr_bprefs=", 14) == 0)
+			{
+				// NOTE: This env var will not be passed to userland, see setup_stack32/64
+				sscanf(env_value+14, "%x,%x,%x,%x", &lr->bprefs[0], &lr->bprefs[1], &lr->bprefs[2], &lr->bprefs[3]);
+			}
+			else if (strncmp(env_value, "DYLD_ROOT_PATH=", 15) == 0)
+			{
+				if (lr->root_path == NULL)
+				{
+					// len already includes NUL
+					lr->root_path = (char*) kmalloc(len - 15, GFP_KERNEL);
+					if (lr->root_path)
+						strcpy(lr->root_path, env_value + 15);
+				}
+			}
+		}
+		else
+			printk(KERN_NOTICE "Cannot get env var value\n");
+		p += len;
+	}
+
+	kfree(env_value);
 }
 
 // Copied from arch/x86/kernel/process_64.c

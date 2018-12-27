@@ -149,6 +149,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
 
         /* one ref for just being alive; one for our caller */
         new_task->ref_count = 2;
+        new_task->vchroot = NULL;
 
         // /* allocate with active entries */
         // assert(task_ledger_template != NULL);
