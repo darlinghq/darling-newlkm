@@ -682,6 +682,11 @@ semaphore_wait_internal(
                 kr = KERN_OPERATION_TIMED_OUT;
         }
 
+	if (downret == -LINUX_EINTR) {
+		printk (KERN_NOTICE "- LINUX_EINTR: Interrupted\n");
+		kr = KERN_ABORTED;
+	}
+
         /* WC - todo: signal here */
 
         if (kr != KERN_ALREADY_WAITING)     return kr;
