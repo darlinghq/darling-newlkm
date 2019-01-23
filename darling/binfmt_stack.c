@@ -110,7 +110,6 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 
 	argv = sp;
 	envp = argv + argc + 1;
-	applep = envp + bprm->envc + 1;
 
 	// Fill in argv pointers
 	while (argc--)
@@ -174,6 +173,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 		goto out;
 	}
 	current->mm->env_end = p;
+	applep = envp; // envp is now at the end of env pointers
 
 	int i;
 	for (i = 0; i < sizeof(applep_contents)/sizeof(applep_contents[0]); i++)
