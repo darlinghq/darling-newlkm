@@ -154,8 +154,7 @@ int macho_load(struct linux_binprm* bprm)
 
 	set_binfmt(&macho_format);
 
-	current->mm->start_brk = lr.vm_addr_max;
-	current->mm->brk = lr.vm_addr_max;
+	current->mm->start_brk = current->mm->brk = PAGE_ALIGN(lr.vm_addr_max);
 	current->mm->start_stack = bprm->p;
 
 	// TODO: fill in start_code, end_code, start_data, end_data
