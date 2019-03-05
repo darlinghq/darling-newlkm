@@ -1221,7 +1221,7 @@ int path_at_entry(task_t task, struct path_at_args* in_args)
 		return error;
 
 	char* buf = (char*) __get_free_page(GFP_USER);
-	char* name = dentry_path_raw(path.dentry, buf, PAGE_SIZE);
+	char* name = d_path(&path, buf, PAGE_SIZE);
 	unsigned long len;
 
 	if (IS_ERR(name))
