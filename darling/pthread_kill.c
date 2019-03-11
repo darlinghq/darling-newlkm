@@ -21,6 +21,7 @@
 #include <asm/siginfo.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/signal_types.h>
 #include <asm/siginfo.h>
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
@@ -37,7 +38,11 @@ int pthread_kill_trap(task_t task,
 	struct pthread_kill_args args;
 	int ret;
 	pid_t tid;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+	struct kernel_siginfo info;
+#else
 	struct siginfo info;
+#endif
 	struct task_struct *t;
 	thread_t thread;
 	
