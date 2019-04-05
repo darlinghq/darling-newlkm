@@ -21,7 +21,13 @@
 #include <asm/siginfo.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #include <linux/signal_types.h>
+#else
+#include <linux/signal.h>
+#endif
+
 #include <asm/siginfo.h>
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
