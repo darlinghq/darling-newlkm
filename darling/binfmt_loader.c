@@ -32,6 +32,7 @@
 #   define MACH_HEADER_STRUCT mach_header_64
 #   define SECTION_STRUCT section_64
 #	define MAP_EXTRA 0
+#	define MAP_PRIVATE 0
 #elif defined(GEN_32BIT)
 #   define FUNCTION_NAME load32
 #   define SEGMENT_STRUCT segment_command
