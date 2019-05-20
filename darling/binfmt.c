@@ -31,6 +31,7 @@
 #endif
 
 #include <linux/mm.h>
+#include <linux/mman.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/file.h>
