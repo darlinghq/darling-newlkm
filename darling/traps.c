@@ -384,7 +384,9 @@ static void darling_ipc_inherit(task_t old_task, task_t new_task)
 }
 
 // No vma from 4.11
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+static vm_fault_t mach_mmap_fault(struct vm_fault *vmf)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 static int mach_mmap_fault(struct vm_fault *vmf)
 #else
 static int mach_mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
