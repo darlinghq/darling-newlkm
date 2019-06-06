@@ -332,10 +332,10 @@ struct pthread_kill_args
 
 struct psynch_cvwait_args
 {
-	unsigned long cv;
+	uint64_t cv;
 	uint64_t cvlsgen;
 	uint32_t cvugen;
-	unsigned long mutex;
+	uint64_t mutex;
 	uint64_t mugen;
 	uint32_t flags;
 	int64_t sec;
@@ -344,11 +344,11 @@ struct psynch_cvwait_args
 
 struct psynch_cvsignal_args
 {
-	unsigned long cv;
+	uint64_t cv;
 	uint64_t cvlsgen;
 	uint32_t cvugen;
 	int thread_port;
-	unsigned long mutex;
+	uint64_t mutex;
 	uint64_t mugen;
 	uint64_t tid;
 	uint32_t flags;
