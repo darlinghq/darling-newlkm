@@ -150,9 +150,10 @@ kern_return_t	rtclock_getattr(
 	mach_msg_type_number_t	*count);
 
 struct clock_ops sysclk_ops = {
-	rtclock_config,			rtclock_init,
-	rtclock_gettime,
-	rtclock_getattr,
+	.c_config  =	rtclock_config,
+	.c_init    =	rtclock_init,
+	.c_gettime =	rtclock_gettime,
+	.c_getattr =	rtclock_getattr
 };
 
 kern_return_t	calend_gettime(
@@ -164,9 +165,10 @@ kern_return_t	calend_getattr(
 	mach_msg_type_number_t	*count);
 
 struct clock_ops calend_ops = {
-	NULL, NULL,
-	calend_gettime,
-	calend_getattr,
+        .c_config  =    NULL,
+        .c_init    =    NULL,
+        .c_gettime =    calend_gettime,
+        .c_getattr =    calend_getattr
 };
 
 /*
