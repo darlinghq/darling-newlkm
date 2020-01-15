@@ -51,6 +51,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef msghdr
 #undef cmsghdr
 #undef sockaddr_storage
+#undef alarm
 
 #define ucred                   xnu_ucred
 #define linger                  xnu_linger
@@ -58,6 +59,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define msghdr                  xnu_msghdr
 #define cmsghdr                 xnu_cmsghdr
 #define sockaddr_storage        xnu_sockaddr_storage
+#define alarm                   xnu_alarm
 
 #undef sa_family_t
 #define sa_family_t             xnu_sa_family_t

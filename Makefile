@@ -134,6 +134,8 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-DDEBUG
 
 miggen_cflags := -include $(BUILD_ROOT)/osfmk/duct/duct.h -include $(BUILD_ROOT)/osfmk/duct/duct_pre_xnu.h
+
+# This takes effect on Linux <5.4
 CFLAGS_task_server.o := $(miggen_cflags)
 CFLAGS_clock_server.o := $(miggen_cflags)
 CFLAGS_lock_set_server.o := $(miggen_cflags)
@@ -153,6 +155,27 @@ CFLAGS_vm32_map_server.o := $(miggen_cflags)
 CFLAGS_device_server.o := $(miggen_cflags)
 CFLAGS_clock_reply_user.o := $(miggen_cflags)
 CFLAGS_notify_user.o := $(miggen_cflags)
+
+# This takes effect on Linux 5.4+
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/task_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/clock_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/lock_set_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/clock_priv_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/processor_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/host_priv_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/host_security_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_port_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_host_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/thread_act_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/processor_set_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/vm32_map_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/device/device_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/notify_user.o := $(miggen_cflags)
 
 # KERNELVERSION is a dmks variable to specify the right version of the kernel.
 # If this is not done like this, then when updating your kernel, you will
