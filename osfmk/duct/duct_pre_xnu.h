@@ -35,6 +35,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef DUCT_PRE_XNU_H
 #define DUCT_PRE_XNU_H
 
+#undef noinline
+
 /*
  * naming conventions in duct zone:
  * darling_*: duct zone's darling private implementation
@@ -44,7 +46,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // for xnu/bsd/sys/event.h
 #define klist               xnu_klist
-#define klist_init          xmu_klist_init
+#define klist_init          xnu_klist_init
 
 
 #if 0
@@ -209,7 +211,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // for xnu/osfmk/kern/printf.c
 #define printf                  duct_printf
-
+#include "duct_kern_printf.h"
 
 
 // locks

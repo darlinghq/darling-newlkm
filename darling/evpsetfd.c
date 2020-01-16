@@ -113,6 +113,8 @@ unsigned int evpsetfd_poll(struct file* file, poll_table* wait)
 	struct evpsetfd_ctx* ctx = (struct evpsetfd_ctx*) file->private_data;
 	ipc_mqueue_t set_mq = &ctx->pset->ips_messages;
 
+#warning evpset_poll not implemented yet!
+#if 0
 	waitq_t waitq = &set_mq->imq_wait_queue;
 	waitq_t walked_waitq = duct__waitq_walkup(waitq, IPC_MQUEUE_RECEIVE);
 
@@ -123,6 +125,7 @@ unsigned int evpsetfd_poll(struct file* file, poll_table* wait)
 		debug_msg("evpsetfd_poll(): there is a pending msg\n");
 		return POLLIN | POLLRDNORM;
 	}
+#endif
 	debug_msg("evpsetfd_poll(): no pending msg\n");
 
 	return 0;
@@ -278,4 +281,20 @@ ssize_t evpsetfd_write(struct file* file, const char __user *buf, size_t count, 
 
 	return count;
 }
+
+// TODO - needs to be done for new XNU!
+void knote(struct klist* list, long hint)
+{
+    debug_msg("NOT IMPLEMENTED!!! knote()\n");
+}
+
+void klist_init(struct klist* list)
+{
+    debug_msg("NOT IMPLEMENTED!!! klist_init()\n");
+}
+
+void waitq_set__CALLING_PREPOST_HOOK__(void* kq_hook, void* knote_hook, int qos)
+{
+}
+
 

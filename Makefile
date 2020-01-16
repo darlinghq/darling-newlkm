@@ -8,7 +8,8 @@ endif
 
 asflags-y := -D__DARLING__ -D__NO_UNDERSCORES__ \
 	-I$(MIGDIR)/osfmk \
-	-I$(BUILD_ROOT)/osfmk
+	-I$(BUILD_ROOT)/osfmk \
+	-I$(BUILD_ROOT)/duct/defines
 
 ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/EXTERNAL_HEADERS \
@@ -132,7 +133,6 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-DCONFIG_KERNEL_0DAY_SYSCALL_HANDLER \
 	-DEVENTMETER \
 	-DCONFIG_APP_PROFILE=0 \
-	-DDEBUG \
 	-std=gnu11
 
 miggen_cflags := -include $(BUILD_ROOT)/osfmk/duct/duct.h -include $(BUILD_ROOT)/osfmk/duct/duct_pre_xnu.h
@@ -158,6 +158,8 @@ CFLAGS_vm32_map_server.o := $(miggen_cflags)
 CFLAGS_device_server.o := $(miggen_cflags)
 CFLAGS_clock_reply_user.o := $(miggen_cflags)
 CFLAGS_notify_user.o := $(miggen_cflags)
+CFLAGS_mach_voucher_server.o := $(miggen_cflags)
+CFLAGS_mach_voucher_attr_control_server.o := $(miggen_cflags)
 CFLAGS_OSAtomicOperations.o := $(atomic_cflags)
 
 # This takes effect on Linux 5.4+
@@ -174,6 +176,8 @@ CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_port_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_host_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_voucher_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_voucher_attr_control_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/thread_act_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/processor_set_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/vm32_map_server.o := $(miggen_cflags)
@@ -222,6 +226,7 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		darling/psynch_support.o \
 		darling/foreign_mm.o \
 		osfmk/duct/darling_xnu_init.o \
+		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
 		osfmk/duct/duct_kern_clock.o \
 		osfmk/duct/duct_kern_debug.o \
@@ -234,6 +239,7 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		osfmk/duct/duct_kern_thread.o \
 		osfmk/duct/duct_kern_thread_call.o \
 		osfmk/duct/duct_kern_zalloc.o \
+		osfmk/duct/duct_ipc_importance.o \
 		osfmk/duct/duct_libsa.o \
 		osfmk/duct/duct_machine_routines.o \
 		osfmk/duct/duct_machine_rtclock.o \
@@ -255,6 +261,10 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		osfmk/kern/mk_timer.o \
 		osfmk/kern/ipc_mig.o \
 		osfmk/kern/locks.o \
+		osfmk/kern/ltable.o \
+		osfmk/kern/waitq.o \
+		duct/osfmk/dummy-locks.o \
+		duct/osfmk/dummy-misc.o \
 		duct/osfmk/dummy-kern.o \
 		duct/osfmk/dummy-vm-resident.o \
 		duct/osfmk/dummy-kern-thread-call.o \
@@ -292,6 +302,8 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		$(MIGDIR_REL)/osfmk/mach/mach_port_server.o \
 		$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o \
 		$(MIGDIR_REL)/osfmk/mach/mach_host_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_voucher_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_voucher_attr_control_server.o \
 		$(MIGDIR_REL)/osfmk/mach/processor_set_server.o \
 		$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o \
 		$(MIGDIR_REL)/osfmk/mach/thread_act_server.o \

@@ -52,7 +52,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern void compat_init (void);
 
 static void duct_kernel_bootstrap_thread (void);
-void duct_waitq_bootstrap (void);
+//void duct_waitq_bootstrap (void);
 
 // WC: should be in duct_startup.c
 void duct_kernel_early_bootstrap (void)
@@ -93,7 +93,7 @@ void duct_kernel_bootstrap (void)
         // sched_init();
 
         kernel_bootstrap_kprintf ("calling duct_wait_queue_bootstrap\n");
-        duct_waitq_bootstrap ();
+        //duct_waitq_bootstrap ();
 
         kernel_bootstrap_kprintf ("calling ipc_bootstrap\n");
         ipc_bootstrap ();

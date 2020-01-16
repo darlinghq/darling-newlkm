@@ -1176,6 +1176,11 @@ int tid_for_thread_entry(task_t task, void* tport_in)
 	return tid;
 }
 
+int task_pid(task_t task)
+{
+	return task_pid_vnr(task->map->linux_task);
+}
+
 // This call exists only because we do Mach-O loading in user space.
 // On XNU, this information is readily available in the kernel.
 int set_dyld_info_entry(task_t task, struct set_dyld_info_args* in_args)

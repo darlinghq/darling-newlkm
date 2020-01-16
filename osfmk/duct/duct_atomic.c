@@ -38,11 +38,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // arm/atomic.s
 
+#if 0
 uint32_t hw_compare_and_store (uint32_t oldval, uint32_t newval, volatile uint32_t * dest)
 {
         return (atomic_cmpxchg ((atomic_t *) dest, oldval, newval) == oldval) ? 1 : 0;
 }
-
+#endif
 
 uint32_t hw_atomic_add (volatile uint32_t * dest, uint32_t mask)
 {
@@ -54,7 +55,7 @@ uint32_t hw_atomic_sub (volatile uint32_t * dest, uint32_t mask)
         return atomic_sub_return (mask, (atomic_t *) dest);
 }
 
-
+#if 0
 // ref: include/linux/atomic.h
 void hw_atomic_and_noret (volatile uint32_t * dest, uint32_t mask)
 {
@@ -90,3 +91,4 @@ uint32_t hw_atomic_or (volatile uint32_t * dest, uint32_t mask)
         } while (atomic_cmpxchg ((atomic_t *) dest, old, new) != old);
         return new;
 }
+#endif

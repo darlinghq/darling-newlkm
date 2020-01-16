@@ -7,8 +7,9 @@
 #include <device/device_types.h>
 #include <kern/clock.h>
 #include <kern/ipc_kobject.h>
-#include <default_pager/default_pager_object_server.h>
 #include <UserNotification/UNDTypes.h>
+
+
 
 // osfmk/i386/rtclock.c
 
@@ -75,6 +76,7 @@ UNDNotificationCreated_rpc (
         return 0;
 }
 
+
 /*
  * UND Mig Callbacks
  */
@@ -93,6 +95,13 @@ UNDAlertCompletedWithResult_rpc (
         kprintf("not implemented: UNDAlertCompletedWithResult_rpc()");
         return 0;
 }
+
+void set_sched_pri(thread_t thread, int priority)
+{
+    kprintf("not implemented: set_sched_pri\n");
+}
+
+#if 0
 
 lck_mtx_t iokit_obj_to_port_binding_lock;
 
@@ -190,6 +199,8 @@ invalidate_icache(__unused vm_offset_t  addr,
 
 pmap_t      kernel_pmap;
 
+#endif
+
 // osfmk/i386/rtclock.c
 
 void
@@ -201,7 +212,7 @@ nanotime_to_absolutetime(
         kprintf("not implemented: nanotime_to_absolutetime()");
 }
 
-
+#if 0
 
 /*
 * Create an external object.
@@ -410,3 +421,5 @@ flush_dcache64(addr64_t addr, unsigned count, int phys)
 {
         kprintf("not implemented: flush_dcache64()");
 }
+
+#endif

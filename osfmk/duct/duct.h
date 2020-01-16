@@ -409,4 +409,29 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef static_assert
 #undef uuid_t
 
+static inline void linux_spin_lock_init(spinlock_t* l)
+{
+    spin_lock_init(l);
+}
+
+static inline void linux_spin_lock(spinlock_t* l)
+{
+    spin_lock(l);
+}
+
+static inline void linux_spin_unlock(spinlock_t* l)
+{
+    spin_unlock(l);
+}
+
+
+#undef spin_lock_init
+#define spin_lock_init linux_spin_lock_init
+
+#undef spin_lock
+#define spin_lock linux_spin_lock
+
+#undef spin_unlock
+#define spin_unlock linux_spin_unlock
+
 #endif // DUCT_H

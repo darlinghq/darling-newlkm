@@ -186,12 +186,6 @@ void lck_spin_unlock(lck_spin_t* lck)
 //         // kprintf("not implemented: lck_spin_init()\n");
 // }
 
-void lock_init(lock_t * l, boolean_t can_sleep, __unused unsigned short tag,
-               __unused unsigned short tag1)
-{
-        // kprintf("not implemented: lock_init()\n");
-}
-
 void lck_rw_assert(lck_rw_t * lck, unsigned int type)
 {
         // kprintf("not implemented: lck_rw_assert()\n");

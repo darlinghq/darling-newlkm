@@ -707,3 +707,38 @@ task_info(
 
 	return error;
 }
+
+void task_suspension_token_deallocate(task_suspension_token_t token)
+{
+    task_deallocate((task_t) token);
+}
+
+boolean_t task_is_app(task_t t)
+{
+    kprintf("not implemented: task_is_app\n");
+    return FALSE;
+}
+
+boolean_t task_is_daemon(task_t t)
+{
+    kprintf("not implemented: task_is_daemon\n");
+    return FALSE;
+}
+
+
+void task_port_notify(mach_msg_header_t* m)
+{
+    kprintf("not implemented: task_port_notify\n");
+}
+
+boolean_t task_suspension_notify(mach_msg_header_t* m)
+{
+    kprintf("not implemented: task_suspension_notify\n");
+    return FALSE;
+}
+
+kern_return_t task_exception_notify(exception_type_t exc, mach_exception_data_type_t code, mach_exception_data_type_t subcode)
+{
+    kprintf("not implemented: task_exception_notify\n");
+    return KERN_FAILURE;
+}

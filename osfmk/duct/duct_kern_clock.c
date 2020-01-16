@@ -42,6 +42,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "duct_post_xnu.h"
 
+#include <linux/delay.h>
 
 /* WC - todo wrapper */
 void duct_clock_init (void)
@@ -102,3 +103,9 @@ kern_return_t xnusys_mach_wait_until_trap (struct mach_wait_until_trap_args * ar
         return 0;
 }
 #endif
+
+void delay(int usec)
+{
+    udelay(usec);
+}
+

@@ -361,10 +361,6 @@ ipc_mqueue_add(
 
 			if (th == THREAD_NULL)
 			{
-#ifdef __DARLING__
-#warning Missing wait_queue_notify
-				// wait_queue_notify(port_waitq, IPC_MQUEUE_RECEIVE);
-#endif
 				printf("THREAD_NULL\n");
 				goto leave;
 			}
@@ -460,18 +456,12 @@ ipc_mqueue_changed(
 	ipc_mqueue_t		mqueue)
 {
     printk (KERN_NOTICE "- ipc_mqueue_changed (0x%p) called\n", mqueue);
-#if defined (__DARLING__)
-        struct waitq*        waitq               = &mqueue->imq_wait_queue;
-        struct waitq*        walked_waitq        = duct__wait_queue_walkup (waitq, IPC_MQUEUE_RECEIVE);
-
-        wake_up (&walked_waitq->linux_waitqh);
-#else
-	wait_queue_wakeup64_all_locked(
-				&mqueue->imq_wait_queue,
-				IPC_MQUEUE_RECEIVE,
-				THREAD_RESTART,
-				FALSE);		/* unlock waitq? */
-#endif
+    waitq_wakeup64_all_locked(&mqueue->imq_wait_queue,
+                  IPC_MQUEUE_RECEIVE,
+                  THREAD_RESTART,
+                  NULL,
+                  WAITQ_ALL_PRIORITIES,
+                  WAITQ_KEEP_LOCKED);
 }
 
 
@@ -754,7 +744,7 @@ ipc_mqueue_post(
 			 * logic below).
 			 */
 			if (mqueue->imq_msgcount > 0) {
-#ifdef __DARLING__
+#if 0 //def __DARLING__
 				// Needed for kevpsetfd
 				// It doesn't enqueue itself as an IPC thread waiting for a message,
 				// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
@@ -1150,7 +1140,7 @@ ipc_mqueue_receive_on_thread(
 	else
 		thread->ith_state = MACH_RCV_IN_PROGRESS;
 
-#if defined (__DARLING__)
+#if 0 // defined (__DARLING__)
         unsigned long   jiffies     = LINUX_MAX_SCHEDULE_TIMEOUT;
 
         if (option & MACH_RCV_TIMEOUT) {
@@ -1636,7 +1626,7 @@ ipc_mqueue_destroy_locked(ipc_mqueue_t mqueue)
 	 */
 	mqueue->imq_fullwaiters = FALSE;
 
-#if defined (__DARLING__)
+#if 0 // defined (__DARLING__)
         // CPH: need check here, close temporarily - todo error
 #else
 	waitq_wakeup64_all_locked(&mqueue->imq_wait_queue,

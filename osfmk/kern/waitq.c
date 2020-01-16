@@ -53,6 +53,12 @@
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
+
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <kern/ast.h>
 #include <kern/backtrace.h>
 #include <kern/kern_types.h>
@@ -71,6 +77,10 @@
 #include <vm/vm_kern.h>
 
 #include <sys/kdebug.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #if defined(CONFIG_WAITQ_LINK_STATS) || defined(CONFIG_WAITQ_PREPOST_STATS)
 #  if !defined(CONFIG_LTABLE_STATS)
@@ -1794,6 +1804,7 @@ void waitq_bootstrap(void)
 #define	hwLockTimeOut LockTimeOut
 #endif
 
+#ifndef __DARLING__
 void waitq_lock(struct waitq *wq)
 {
 	if (__improbable(waitq_lock_to(wq,
@@ -1825,7 +1836,7 @@ void waitq_unlock(struct waitq *wq)
 #endif
 	waitq_lock_unlock(wq);
 }
-
+#endif
 
 /**
  * clear the thread-related waitq state
