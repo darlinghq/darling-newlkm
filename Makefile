@@ -136,6 +136,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-std=gnu11
 
 miggen_cflags := -include $(BUILD_ROOT)/osfmk/duct/duct.h -include $(BUILD_ROOT)/osfmk/duct/duct_pre_xnu.h
+atomic_cflags := -include $(BUILD_ROOT)/clang_to_gcc_atomic.h
 
 # This takes effect on Linux <5.4
 CFLAGS_task_server.o := $(miggen_cflags)
@@ -157,6 +158,7 @@ CFLAGS_vm32_map_server.o := $(miggen_cflags)
 CFLAGS_device_server.o := $(miggen_cflags)
 CFLAGS_clock_reply_user.o := $(miggen_cflags)
 CFLAGS_notify_user.o := $(miggen_cflags)
+CFLAGS_OSAtomicOperations.o := $(atomic_cflags)
 
 # This takes effect on Linux 5.4+
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/task_server.o := $(miggen_cflags)
@@ -178,6 +180,7 @@ CFLAGS_$(MIGDIR_REL)/osfmk/mach/vm32_map_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/device/device_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/notify_user.o := $(miggen_cflags)
+CFLAGS_libkern/gen/OSAtomicOperations.o := $(atomic_cflags)
 
 # KERNELVERSION is a dmks variable to specify the right version of the kernel.
 # If this is not done like this, then when updating your kernel, you will
