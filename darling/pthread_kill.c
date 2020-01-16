@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2017 Lubos Dolezel
+ * Copyright (C) 2015-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -20,6 +20,14 @@
 #include "pthread_kill.h"
 #include <asm/siginfo.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
+#include <linux/signal_types.h>
+#else
+#include <linux/signal.h>
+#endif
+
 #include <asm/siginfo.h>
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
@@ -36,7 +44,11 @@ int pthread_kill_trap(task_t task,
 	struct pthread_kill_args args;
 	int ret;
 	pid_t tid;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+	struct kernel_siginfo info;
+#else
 	struct siginfo info;
+#endif
 	struct task_struct *t;
 	thread_t thread;
 	
@@ -58,13 +70,25 @@ int pthread_kill_trap(task_t task,
 		goto err;
 	}
 
-	info.si_signo = args.sig;
-	info.si_code = SI_TKILL;
-	info.linux_si_pid = t->tgid;
-	info.linux_si_uid = from_kuid_munged(current_user_ns(), current_uid());
-	info.si_errno = 0;
+	if (args.sig > 0)
+	{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,16,0)
+		clear_siginfo(&info);
+#else
+		info.si_errno = 0;
+#endif
+		info.si_signo = args.sig;
+		info.si_code = SI_TKILL;
+		info.linux_si_pid = task_tgid_vnr(current);
+		info.linux_si_uid = from_kuid_munged(current_user_ns(), current_uid());
+
+		ret = send_sig_info(args.sig, &info, t);
+	}
+	else if (args.sig < 0)
+		ret = -LINUX_EINVAL;
+	else
+		ret = 0;
 	
-	ret = send_sig_info(args.sig, &info, t);
 	rcu_read_unlock();
 
 err:

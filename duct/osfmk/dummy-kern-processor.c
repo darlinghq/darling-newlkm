@@ -149,14 +149,14 @@ processor_pset(
     processor_t processor)
 {
         kprintf("not implemented: processor_pset()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 pset_node_t
 pset_node_root(void)
 {
         kprintf("not implemented: pset_node_root()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 processor_set_t
@@ -164,7 +164,7 @@ pset_create(
     pset_node_t         node)
 {
         kprintf("not implemented: pset_create()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 /*
@@ -184,7 +184,7 @@ processor_info_count(
     mach_msg_type_number_t  *count)
 {
         kprintf("not implemented: processor_info_count()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 
@@ -197,7 +197,7 @@ processor_info(
     mach_msg_type_number_t  *count)
 {
         kprintf("not implemented: processor_info()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -205,7 +205,7 @@ processor_start(
     processor_t         processor)
 {
         kprintf("not implemented: processor_start()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -213,7 +213,7 @@ processor_exit(
     processor_t processor)
 {
         kprintf("not implemented: processor_exit()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -223,7 +223,7 @@ processor_control(
     mach_msg_type_number_t  count)
 {
         kprintf("not implemented: processor_control()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -233,7 +233,7 @@ processor_set_create(
     __unused processor_set_t    *new_name)
 {
         kprintf("not implemented: processor_set_create()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -241,7 +241,7 @@ processor_set_destroy(
     __unused processor_set_t    pset)
 {
         kprintf("not implemented: processor_set_destroy()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -250,7 +250,7 @@ processor_get_assignment(
     processor_set_t *pset)
 {
         kprintf("not implemented: processor_get_assignment()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 kern_return_t
@@ -262,7 +262,7 @@ processor_set_info(
     mach_msg_type_number_t  *count)
 {
         kprintf("not implemented: processor_set_info()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 /*
@@ -278,7 +278,7 @@ processor_set_statistics(
     mach_msg_type_number_t  *count)
 {
         kprintf("not implemented: processor_set_statistics()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 /*
@@ -295,7 +295,7 @@ processor_set_max_priority(
     __unused boolean_t      change_threads)
 {
         kprintf("not implemented: processor_set_max_priority()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 /*
@@ -310,7 +310,7 @@ processor_set_policy_enable(
     __unused int            policy)
 {
         kprintf("not implemented: processor_set_policy_enable()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 /*
@@ -326,7 +326,7 @@ processor_set_policy_disable(
     __unused boolean_t      change_threads)
 {
         kprintf("not implemented: processor_set_policy_disable()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 #define THING_TASK  0
@@ -345,7 +345,7 @@ processor_set_things(
     int                     type)
 {
         kprintf("not implemented: processor_set_things()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 
@@ -361,7 +361,7 @@ processor_set_tasks(
     mach_msg_type_number_t  *count)
 {
         kprintf("not implemented: processor_set_tasks()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 /*
@@ -377,7 +377,7 @@ processor_set_threads(
     __unused mach_msg_type_number_t *count)
 {
         kprintf("not implemented: processor_set_threads()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 #elif defined(CONFIG_EMBEDDED)
 kern_return_t
@@ -387,7 +387,7 @@ processor_set_threads(
     __unused mach_msg_type_number_t *count)
 {
         kprintf("not implemented: processor_set_threads()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 #else
 kern_return_t
@@ -397,7 +397,7 @@ processor_set_threads(
     mach_msg_type_number_t  *count)
 {
         kprintf("not implemented: processor_set_threads()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 #endif
 
@@ -417,7 +417,7 @@ processor_set_policy_control(
     __unused boolean_t          change)
 {
         kprintf("not implemented: processor_set_policy_control()\n");
-        return 0;
+        return KERN_FAILURE;
 }
 
 #undef pset_deallocate

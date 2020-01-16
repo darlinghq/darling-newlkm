@@ -42,6 +42,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define cmsghdr                     linux_cmsghdr
 #define __kernel_sockaddr_storage   linux___kernel_sockaddr_storage
 
+// include/linux/kernel.h
+#define panic                       linux_panic
+
 #define sa_family_t                 linux_sa_family_t
 
 // asm/include/statfs.h
@@ -80,5 +83,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define __wait_queue_head           wait_queue_head
 
 //#define cpumask_t                   linux_cpumask_t
+
+// include/linux/alarmtimer.h
+#define alarm                       linux_alarm
+
+// include/linux/mm.h
+#define page_size                   linux_page_size
+#define page_shift                  linux_page_shift
+
 
 #endif // DUCT__PRE_LINUX_TYPES_H

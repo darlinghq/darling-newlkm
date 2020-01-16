@@ -71,6 +71,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef RLIM_NLIMITS
 #undef RLIM_INFINITY
 
+#undef panic
 
 // linux/include/kernel.h
 #define LINUX_USHRT_MAX         ((u16)(~0U))

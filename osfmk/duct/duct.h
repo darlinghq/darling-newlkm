@@ -87,6 +87,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/resource.h>
 #include <linux/wait.h>
 #include <linux/cpumask.h>
+#include <linux/version.h>
+#include <linux/kernel.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
+#include <linux/alarmtimer.h>
+#endif
 #include <darling/down_interruptible.h>
 
 #include <linux/mutex.h>
@@ -247,6 +252,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // for linux/include/linux/mm.h
 #undef VM_FAULT_RETRY
+#undef page_size
+#undef page_shift
 
 // for xnu/bsd/libkern/libkern.h
 #undef max
@@ -389,5 +396,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // from linux/arm/include/asm/proc-fns.h
 // #undef processor
+#ifdef SZ_32
+#    undef SZ_32
+#    undef SZ_64
+#endif
+
 
 #endif // DUCT_H

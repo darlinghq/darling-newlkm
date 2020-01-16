@@ -75,7 +75,11 @@ void clock_get_system_nanotime (clock_sec_t * secs, clock_nsec_t * nanosecs)
 
         // ktime_t     kt      = ktime_get_boottime ();
         struct linux_timespec       ltimespec;        
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+        ltimespec = ktime_to_timespec(ktime_get_boottime());
+#else
         get_monotonic_boottime (&ltimespec);
+#endif
 
         *secs       = (clock_sec_t) ltimespec.tv_sec;
         *nanosecs   = (clock_nsec_t) ltimespec.tv_nsec;
@@ -88,7 +92,11 @@ void clock_get_system_microtime (clock_sec_t * secs, clock_usec_t * microsecs)
         
         // ktime_t     kt      = ktime_get_boottime ();
         struct linux_timespec       ltimespec;        
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+        ltimespec = ktime_to_timespec(ktime_get_boottime());
+#else
         get_monotonic_boottime (&ltimespec);
+#endif
 
         *secs       = (clock_sec_t) ltimespec.tv_sec;
         *microsecs  = (clock_nsec_t) ltimespec.tv_nsec / NSEC_PER_USEC;

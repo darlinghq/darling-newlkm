@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2017 Lubos Dolezel
+ * Copyright (C) 2015-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -96,6 +96,9 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR__kernelrpc_mach_vm_allocate_trap,
 	NR__kernelrpc_mach_vm_deallocate_trap,
 	NR_last_triggered_watchpoint,
+	NR_vchroot, // fd as paramv
+	NR_vchroot_expand,
+	NR_vchroot_fdpath,
 };
 
 struct set_tracer_args
@@ -329,10 +332,10 @@ struct pthread_kill_args
 
 struct psynch_cvwait_args
 {
-	unsigned long cv;
+	uint64_t cv;
 	uint64_t cvlsgen;
 	uint32_t cvugen;
-	unsigned long mutex;
+	uint64_t mutex;
 	uint64_t mugen;
 	uint32_t flags;
 	int64_t sec;
@@ -341,11 +344,11 @@ struct psynch_cvwait_args
 
 struct psynch_cvsignal_args
 {
-	unsigned long cv;
+	uint64_t cv;
 	uint64_t cvlsgen;
 	uint32_t cvugen;
 	int thread_port;
-	unsigned long mutex;
+	uint64_t mutex;
 	uint64_t mugen;
 	uint64_t tid;
 	uint32_t flags;
@@ -463,6 +466,21 @@ struct last_triggered_watchpoint_args
 {
 	uint64_t address;
 	unsigned int flags;
+};
+
+#define VCHROOT_FOLLOW	1
+struct vchroot_expand_args
+{
+	char path[4096]; // contains evaluated path on return
+	unsigned int flags;
+	int dfd; // base directory when path is relative
+};
+
+struct vchroot_fdpath_args
+{
+	int fd;
+	char* path;
+	unsigned int maxlen;
 };
 
 #pragma pack (pop)

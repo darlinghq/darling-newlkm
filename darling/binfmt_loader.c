@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2017 Lubos Dolezel
+ * Copyright (C) 2017-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -73,7 +73,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 		lr->_32on64 = true;
 		set_personality_ia32(false);
 #endif
-		setup_space(bprm);
+		setup_space(bprm, lr);
 	}
 
 	fat_offset = pos = farch ? farch->offset : 0;
@@ -98,6 +98,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm,
 	if (kernel_read(file, fat_offset + sizeof(header), cmds, header.sizeofcmds) != header.sizeofcmds)
 #endif
 	{
+		debug_msg("Binary failed to load %d bytes\n", header.sizeofcmds);
 		kfree(cmds);
 		return -EIO;
 	}
@@ -150,11 +151,17 @@ no_slide:
 	cap_raise(override_cred->cap_effective, CAP_SYS_RAWIO);
 	old_cred = override_creds(override_cred);
 
-	for (i = 0, p = 0; i < header.ncmds; i++)
+	for (i = 0, p = 0; i < header.ncmds && p < header.sizeofcmds; i++)
 	{
 		struct load_command* lc;
 
 		lc = (struct load_command*) &cmds[p];
+		if (lc->cmdsize > PAGE_SIZE)
+		{
+			debug_msg("Broken Mach-O file, cmdsize = %d\n", lc->cmdsize);
+			err = -ENOEXEC;
+			goto out;
+		}
 
 		switch (lc->cmd)
 		{
@@ -266,28 +273,55 @@ no_slide:
 
 				struct dylinker_command* dy = (struct dylinker_command*) lc;
 				char* path;
-				size_t length = dy->cmdsize - dy->name.offset;
+				size_t length;
+				struct file* dylinker = NULL;
 
-				if (length > PAGE_SIZE-1)
+				if (lr->root_path != NULL)
 				{
-					err = -EIO;
-					goto out;
+					const size_t root_len = strlen(lr->root_path);
+					const size_t linker_len = dy->cmdsize - dy->name.offset;
+
+					length = linker_len + root_len;
+					path = kmalloc(length+1, GFP_KERNEL);
+
+					// Concat root path and linker path
+					memcpy(path, lr->root_path, root_len);
+					memcpy(path + root_len, ((char*) dy) + dy->name.offset, linker_len);
+					path[length] = '\0';
+
+					dylinker = open_exec(path);
+
+					if (IS_ERR(dylinker))
+					{
+						err = PTR_ERR(dylinker);
+						debug_msg("Failed to load dynamic linker (%s) for executable, error %d\n", path, err);
+						dylinker = NULL;
+					}
+					else
+						debug_msg("Loaded chrooted dyld at %s\n", path);
+					kfree(path);
 				}
 
-				path = kmalloc(length+1, GFP_KERNEL);
-
-				memcpy(path, ((char*) dy) + dy->name.offset, length);
-				path[length] = '\0';
-
-				struct file* dylinker = open_exec(path);
-				kfree(path);
-
-				if (IS_ERR(dylinker))
+				if (dylinker == NULL)
 				{
-					err = PTR_ERR(dylinker);
-					debug_msg("Failed to load dynamic linker for executable, error %d\n", err);
-					goto out;
+					length = dy->cmdsize - dy->name.offset;
+					path = kmalloc(length+1, GFP_KERNEL);
+
+					memcpy(path, ((char*) dy) + dy->name.offset, length);
+					path[length] = '\0';
+
+					dylinker = open_exec(path);
+
+					if (IS_ERR(dylinker))
+					{
+						err = PTR_ERR(dylinker);
+						debug_msg("Failed to load dynamic linker (%s) for executable, error %d\n", path, err);
+						kfree(path);
+						goto out;
+					}
+					kfree(path);
 				}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 				pos = 0;
 				if (kernel_read(dylinker, bprm->buf, sizeof(bprm->buf), &pos) != sizeof(bprm->buf))
@@ -299,7 +333,7 @@ no_slide:
 					fput(dylinker);
 					goto out;
 				}
-				err = load(bprm, dylinker, NULL, header.cputype, lr);
+				err = load(bprm, dylinker, header.cputype, lr);
 
 				fput(dylinker);
 

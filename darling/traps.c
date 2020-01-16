@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2017 Lubos Dolezel
+ * Copyright (C) 2015-2018 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,6 +31,7 @@
 #include <linux/eventfd.h>
 #include <linux/fdtable.h>
 #include <linux/syscalls.h>
+#include <linux/fs_struct.h>
 #include "traps.h"
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_task.h>
@@ -61,6 +62,8 @@
 #include <linux/sched/mm.h>
 #endif
 
+#undef kfree
+
 typedef long (*trap_handler)(task_t, ...);
 
 static void *commpage32, *commpage64;
@@ -81,7 +84,7 @@ struct file_operations mach_chardev_ops = {
 
 #define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = { (trap_handler) impl, #impl }
 
-static const struct trap_entry mach_traps[60] = {
+static const struct trap_entry mach_traps[80] = {
 	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
 
@@ -157,6 +160,11 @@ static const struct trap_entry mach_traps[60] = {
 	// BSD
 	TRAP(NR_getuidgid, getuidgid_entry),
 	TRAP(NR_setuidgid, setuidgid_entry),
+
+	// VIRTUAL CHROOT
+	TRAP(NR_vchroot, vchroot_entry),
+	TRAP(NR_vchroot_expand, vchroot_expand_entry),
+	TRAP(NR_vchroot_fdpath, vchroot_fdpath_entry),
 };
 #undef TRAP
 
@@ -248,6 +256,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		struct files_struct* files;
 		
 		new_task->tracer = old_task->tracer;
+		new_task->vchroot = mntget(old_task->vchroot);
 		darling_ipc_inherit(old_task, new_task);
 
 		if (old_task->map->linux_task != NULL)
@@ -298,6 +307,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		if (parent_task != NULL)
 		{
 			new_task->tracer = parent_task->tracer;
+			new_task->vchroot = mntget(parent_task->vchroot);
 			darling_ipc_inherit(parent_task, new_task);
 			task_deallocate(parent_task);
 
@@ -316,6 +326,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 			// UID and GID are left as 0
 		}
 	}
+
 	
 	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
@@ -373,7 +384,9 @@ static void darling_ipc_inherit(task_t old_task, task_t new_task)
 }
 
 // No vma from 4.11
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+static vm_fault_t mach_mmap_fault(struct vm_fault *vmf)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 static int mach_mmap_fault(struct vm_fault *vmf)
 #else
 static int mach_mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
@@ -508,6 +521,9 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		my_task->map->linux_task = NULL;
 	}
 
+	if (my_task->vchroot != NULL)
+		mntput(my_task->vchroot);
+
 	task_unlock(my_task);
 	duct_task_destroy(my_task);
 
@@ -574,6 +590,9 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 	bool need_fput = false;
 
 	task_t task = (task_t) file->private_data;
+
+	if (!task->map->linux_task)
+		return -LINUX_ENXIO;
 
 	rcu_read_lock();
 	owner = task_tgid_nr(task->map->linux_task);
@@ -800,7 +819,7 @@ int _kernelrpc_mach_vm_allocate_entry(task_t task_self, struct mach_vm_allocate_
 	int rv = KERN_SUCCESS;
 	task_t task = port_name_to_task(args.target);
 
-	if (!task)
+	if (!task || !task->map || !task->map->linux_task)
 		return KERN_INVALID_TASK;
 
 	struct vm_allocate_params params;
@@ -848,7 +867,7 @@ int _kernelrpc_mach_vm_deallocate_entry(task_t task_self, struct mach_vm_dealloc
 	int rv = KERN_SUCCESS;
 	task_t task = port_name_to_task(args.target);
 
-	if (!task)
+	if (!task || !task->map || !task->map->linux_task)
 		return KERN_INVALID_TASK;
 
 	struct vm_allocate_params params;
@@ -1204,7 +1223,7 @@ int path_at_entry(task_t task, struct path_at_args* in_args)
 		return error;
 
 	char* buf = (char*) __get_free_page(GFP_USER);
-	char* name = dentry_path_raw(path.dentry, buf, PAGE_SIZE);
+	char* name = d_path(&path, buf, PAGE_SIZE);
 	unsigned long len;
 
 	if (IS_ERR(name))
@@ -1428,6 +1447,209 @@ unsigned long last_triggered_watchpoint_entry(task_t task, struct last_triggered
 		return -LINUX_EFAULT;
 
 	return 0;
+}
+
+int vchroot_entry(task_t task, int fd_vchroot)
+{
+	struct file* f;
+
+	f = fget(fd_vchroot);
+	if (!f)
+		return -LINUX_EBADF;
+
+	if (task->vchroot)
+	{
+		mntput(task->vchroot);
+		task->vchroot = NULL;
+	}
+
+	task->vchroot = clone_private_mount(&f->f_path);
+	fput(f);
+
+	if (IS_ERR(task->vchroot))
+	{
+		int err = PTR_ERR(task->vchroot);
+		task->vchroot = NULL;
+		return err;
+	}
+
+	return 0;
+}
+
+// Helper function for binfmt.c
+struct vfsmount* task_get_vchroot(task_t t)
+{
+	return mntget(t->vchroot);
+}
+
+// API exported by Linux, but not declared in the right headers
+extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
+               const char *, unsigned int, struct path *);
+
+int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args)
+{
+	struct path path;
+	struct file* frel = NULL;
+	int err;
+	struct dentry* relative_to;
+	const char* append = NULL;
+	struct vchroot_expand_args* args;
+
+	struct vfsmount* vchroot = mntget(task->vchroot);
+
+	if (vchroot == NULL)
+		return 0; // no op
+
+	args = kmalloc(sizeof(*args), GFP_KERNEL);
+	if (IS_ERR(args))
+		return PTR_ERR(args);
+
+	if (copy_from_user(args, in_args, sizeof(*args)))
+	{
+		err = -LINUX_EFAULT;
+		goto fail;
+	}
+
+	if (args->dfd == AT_FDCWD)
+		relative_to = linux_current->fs->pwd.dentry;
+	else
+	{
+		frel = fget(args->dfd);
+
+		if (!frel)
+		{
+			err = -LINUX_ENOENT;
+			goto fail;
+		}
+
+		relative_to = frel->f_path.dentry;
+	}
+
+	err = vfs_path_lookup(relative_to, vchroot, args->path, (args->flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
+	if (err == -LINUX_ENOENT)
+	{
+		// Retry lookup w/o last path component
+		char* slash = strrchr(args->path, '/');
+
+		const char* lookup;
+		if (slash != NULL)
+		{
+			*slash = '\0';
+			append = slash + 1;
+			lookup = args->path;
+		}
+		else if (args->path[0] && strcmp(args->path, ".") != 0 && strcmp(args->path, "..") != 0)
+		{
+			append = args->path;
+			lookup = "";
+		}
+		else
+			goto fail;
+
+		err = vfs_path_lookup(relative_to, vchroot, lookup, (args->flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
+	}
+
+	if (!err)
+	{
+		path.mnt = linux_current->fs->root.mnt;
+
+		char* str = (char*) __get_free_page(GFP_KERNEL);
+		char* strpath = d_path(&path, str, PAGE_SIZE);
+
+		if (IS_ERR(strpath))
+		{
+			free_page((unsigned long) str);
+			err = PTR_ERR(strpath);
+			goto fail;
+		}
+
+		int pathlen = strlen(strpath);
+		if (copy_to_user(in_args->path, strpath, pathlen + 1))
+		{
+			free_page((unsigned long) str);
+			err = -LINUX_EFAULT;
+			goto fail;
+		}
+		free_page((unsigned long) str);
+
+		// If the lookup only succeeded after removing the last path component, append it back now
+		if (append != NULL)
+		{
+			if (strlen(strpath) + strlen(append) + 2 > PAGE_SIZE)
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+
+			if (copy_to_user(in_args->path + pathlen, "/", 1)
+					|| copy_to_user(in_args->path + pathlen + 1, append, strlen(append) + 1))
+			{
+				err = -LINUX_EFAULT;
+				goto fail;
+			}
+		}
+
+	}
+
+fail:
+	if (frel)
+		fput(frel);
+	mntput(vchroot);
+	kfree(args);
+
+	return err;
+}
+
+int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args)
+{
+	int err = 0;
+	struct file* f;
+	struct dentry* relative_to;
+	char* str = NULL;
+
+	copyargs(args, in_args);
+
+	f = fget(args.fd);
+	if (!f)
+		return -LINUX_EBADF;
+
+	struct path p;
+	struct vfsmount* vchroot = mntget(task->vchroot);
+
+	p.dentry = f->f_path.dentry;
+	p.mnt = vchroot ? vchroot : linux_current->fs->root.mnt;
+
+	str = (char*) __get_free_page(GFP_KERNEL);
+	char* strpath = d_path(&p, str, PAGE_SIZE);
+
+	if (IS_ERR(strpath))
+	{
+		err = PTR_ERR(strpath);
+		goto fail;
+	}
+
+	const int len = strlen(strpath) + 1;
+	if (len > args.maxlen)
+	{
+		err = -LINUX_ENAMETOOLONG;
+		goto fail;
+	}
+
+	if (copy_to_user(args.path, strpath, len))
+	{
+		err = -LINUX_EFAULT;
+		goto fail;
+	}
+
+fail:
+	if (str)
+		free_page((unsigned long) str);
+
+	fput(f);
+
+	if (vchroot)
+		mntput(vchroot);
+	return err;
 }
 
 module_init(mach_init);

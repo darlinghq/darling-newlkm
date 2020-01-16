@@ -390,6 +390,7 @@ struct task {
 #ifdef __DARLING__
 	struct list_head* p_pthhash;
 	int tracer;
+	struct vfsmount* vchroot;
 #endif
 
 #if HYPERVISOR

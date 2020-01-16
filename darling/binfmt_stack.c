@@ -41,6 +41,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	char __user* kernfd_user;
 	char kernfd[12];
 	char __user* applep_contents[3];
+	char* env_value = NULL;
 
 	// Produce executable_path=... for applep
 	executable_buf = kmalloc(4096, GFP_KERNEL);
@@ -109,7 +110,6 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 
 	argv = sp;
 	envp = argv + argc + 1;
-	applep = envp + bprm->envc + 1;
 
 	// Fill in argv pointers
 	while (argc--)
@@ -138,18 +138,30 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 
 	// Fill in envp pointers
 	int envc = bprm->envc;
+	env_value = (char*) kmalloc(MAX_ARG_STRLEN, GFP_KERNEL);
+
 	while (envc--)
 	{
-		if (__put_user((user_long_t) p, envp++))
-		{
-			err = -EFAULT;
-			goto out;
-		}
-
 		size_t len = strnlen_user((void __user*) p, MAX_ARG_STRLEN);
 		if (!len || len > MAX_ARG_STRLEN)
 		{
 			err = -EINVAL;
+			goto out;
+		}
+
+		if (copy_from_user(env_value, (void __user*) p, len) == 0)
+		{
+			// Don't pass this special env var down the the userland
+			if (strncmp(env_value, "__mldr_bprefs=", 14) == 0)
+			{
+				p += len;
+				continue;
+			}
+		}
+
+		if (__put_user((user_long_t) p, envp++))
+		{
+			err = -EFAULT;
 			goto out;
 		}
 
@@ -161,6 +173,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 		goto out;
 	}
 	current->mm->env_end = p;
+	applep = envp; // envp is now at the end of env pointers
 
 	int i;
 	for (i = 0; i < sizeof(applep_contents)/sizeof(applep_contents[0]); i++)
@@ -181,6 +194,8 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 out:
 	if (executable_buf)
 		kfree(executable_buf);
+	if (env_value)
+		kfree(env_value);
 	return err;
 }
 
