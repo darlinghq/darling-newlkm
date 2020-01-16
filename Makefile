@@ -148,7 +148,7 @@ CFLAGS_host_priv_server.o := $(miggen_cflags)
 CFLAGS_host_security_server.o := $(miggen_cflags)
 CFLAGS_UNDReply_server.o := $(miggen_cflags)
 CFLAGS_mach_port_server.o := $(miggen_cflags)
-CFLAGS_default_pager_object_server.o := $(miggen_cflags)
+#CFLAGS_default_pager_object_server.o := $(miggen_cflags)
 CFLAGS_mach_vm_server.o := $(miggen_cflags)
 CFLAGS_memory_object_name_server.o := $(miggen_cflags)
 CFLAGS_mach_host_server.o := $(miggen_cflags)
@@ -170,7 +170,7 @@ CFLAGS_$(MIGDIR_REL)/osfmk/mach/host_priv_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/host_security_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_port_server.o := $(miggen_cflags)
-CFLAGS_$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o := $(miggen_cflags)
+#CFLAGS_$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_host_server.o := $(miggen_cflags)
@@ -222,7 +222,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		darling/psynch_support.o \
 		darling/foreign_mm.o \
 		osfmk/duct/darling_xnu_init.o \
-		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \
 		osfmk/duct/duct_kern_clock.o \
 		osfmk/duct/duct_kern_debug.o \
@@ -283,7 +282,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		duct/bsd/dummy-init.o \
 		duct/bsd/dummy-sched.o \
 		libkern/gen/OSAtomicOperations.o \
-		libkern/x86_64/OSAtomic.o \
 		$(MIGDIR_REL)/osfmk/mach/task_server.o \
 		$(MIGDIR_REL)/osfmk/mach/clock_server.o \
 		$(MIGDIR_REL)/osfmk/mach/clock_priv_server.o \
@@ -300,7 +298,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o \
 		$(MIGDIR_REL)/osfmk/mach/notify_user.o \
 		$(MIGDIR_REL)/osfmk/device/device_server.o \
-		$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o \
 		$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o \
 		pexpert/duct/duct_gen_bootargs.o \
 		pexpert/duct/duct_pe_kprintf.o \
