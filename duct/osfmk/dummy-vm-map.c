@@ -1071,6 +1071,7 @@ kern_return_t
 vm_map_exec(
 	vm_map_t	new_map,
 	task_t		task,
+	boolean_t       is64bit,
 	void		*fsroot,
 	cpu_type_t	cpu)
 {
@@ -1292,25 +1293,26 @@ vm_map_behavior_set(
  *
  *	Descritpion:	This routine inserts a new vm_entry in a locked map.
  */
-vm_map_entry_t
-vm_map_entry_insert(
-	vm_map_t		map,
-	vm_map_entry_t		insp_entry,
-	vm_map_offset_t		start,
-	vm_map_offset_t		end,
-	vm_object_t		object,
-	vm_object_offset_t	offset,
-	boolean_t		needs_copy,
-	boolean_t		is_shared,
-	boolean_t		in_transition,
-	vm_prot_t		cur_protection,
-	vm_prot_t		max_protection,
-	vm_behavior_t		behavior,
-	vm_inherit_t		inheritance,
-	unsigned		wired_count,
-	boolean_t		no_cache,
-	boolean_t		permanent,
-	unsigned int		superpage_size)
+vm_map_entry_t   vm_map_entry_insert(
+                vm_map_t        map,
+                vm_map_entry_t      insp_entry,
+                vm_map_offset_t     start,
+                vm_map_offset_t     end,
+                vm_object_t     object,
+                vm_object_offset_t  offset,
+                boolean_t       needs_copy,
+                boolean_t       is_shared,
+                boolean_t       in_transition,
+                vm_prot_t       cur_protection,
+                vm_prot_t       max_protection,
+                vm_behavior_t       behavior,
+                vm_inherit_t        inheritance,
+                unsigned        wired_count,
+                boolean_t       no_cache,
+                boolean_t       permanent,
+                unsigned int        superpage_size,
+                boolean_t       clear_map_aligned,
+                boolean_t       is_submap)
 {
         kprintf("not implemented: vm_map_entry_insert()\n");
         return 0;
@@ -1614,7 +1616,7 @@ vm_map_set_64bit(vm_map_t map)
 		kprintf("not implemented: vm_map_set_64bit()\n");
 }
 vm_map_offset_t
-vm_compute_max_offset(unsigned is64)
+vm_compute_max_offset(boolean_t is64)
 {
         kprintf("not implemented: vm_compute_max_offset()\n");
         return 0;

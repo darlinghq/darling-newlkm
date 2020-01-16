@@ -261,8 +261,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		duct/osfmk/dummy-kern-task.o \
 		duct/osfmk/dummy-kern-thread.o \
 		duct/osfmk/dummy-kern-audit-sessionport.o \
-		duct/osfmk/dummy-locks.o \
-		duct/osfmk/dummy-misc.o \
 		duct/osfmk/dummy-kern-processor.o \
 		duct/osfmk/dummy-kern-syscall-emulation.o \
 		duct/osfmk/dummy-kern-zalloc.o \

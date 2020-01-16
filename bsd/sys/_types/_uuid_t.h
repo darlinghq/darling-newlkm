@@ -27,7 +27,5 @@
  */
 #ifndef _UUID_T
 #define _UUID_T
-#ifndef __DARLING__
 typedef __darwin_uuid_t	uuid_t;
-#endif
 #endif /* _UUID_T */

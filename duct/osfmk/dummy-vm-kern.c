@@ -108,15 +108,15 @@ extern void kmem_remap_pages(
     register vm_offset_t        end,
     vm_prot_t           protection);
 
-kern_return_t
-kmem_alloc_contig(
-    vm_map_t        map,
-    vm_offset_t     *addrp,
-    vm_size_t       size,
-    vm_offset_t         mask,
-    ppnum_t         max_pnum,
-    ppnum_t         pnum_mask,
-    int             flags)
+kern_return_t kmem_alloc_contig(
+                vm_map_t    map,
+                vm_offset_t *addrp,
+                vm_size_t   size,
+                vm_offset_t     mask,
+                ppnum_t     max_pnum,
+                ppnum_t     pnum_mask,
+                int         flags,
+                vm_tag_t        tag)
 {
         kprintf("not implemented: kmem_alloc_contig()\n");
         return 0;
@@ -139,13 +139,13 @@ kmem_alloc_contig(
  *                  KMA_NOPAGEWAIT
  */
 
-kern_return_t
-kernel_memory_allocate(
-    register vm_map_t   map,
-    register vm_offset_t    *addrp,
-    register vm_size_t  size,
-    register vm_offset_t    mask,
-    int         flags)
+kern_return_t    kernel_memory_allocate(
+                vm_map_t    map,
+                vm_offset_t *addrp,
+                vm_size_t   size,
+                vm_offset_t mask,
+                int     flags,
+                vm_tag_t        tag)
 {
         kprintf("not implemented: kernel_memory_allocate()\n");
         return 0;
@@ -180,13 +180,13 @@ kmem_alloc(
  *  If successful, the pages in the old region are mapped twice.
  *  The old region is unchanged.  Use kmem_free to get rid of it.
  */
-kern_return_t
-kmem_realloc(
-    vm_map_t        map,
-    vm_offset_t     oldaddr,
-    vm_size_t       oldsize,
-    vm_offset_t     *newaddrp,
-    vm_size_t       newsize)
+kern_return_t    kmem_realloc(
+                vm_map_t    map,
+                vm_offset_t oldaddr,
+                vm_size_t   oldsize,
+                vm_offset_t *newaddrp,
+                vm_size_t   newsize,
+                vm_tag_t        tag)
 {
         kprintf("not implemented: kmem_realloc()\n");
         return 0;
@@ -203,11 +203,11 @@ kmem_realloc(
  *  it may not be reallocated with kmem_realloc.
  */
 
-kern_return_t
-kmem_alloc_kobject(
-    vm_map_t    map,
-    vm_offset_t *addrp,
-    vm_size_t   size)
+kern_return_t    kmem_alloc_kobject(
+                vm_map_t    map,
+                vm_offset_t *addrp,
+                vm_size_t   size,
+                vm_tag_t        tag)
 {
         kprintf("not implemented: kmem_alloc_kobject()\n");
         return 0;
@@ -220,11 +220,11 @@ kmem_alloc_kobject(
  *  The size should be a power-of-2.
  */
 
-kern_return_t
-kmem_alloc_aligned(
-    vm_map_t    map,
-    vm_offset_t *addrp,
-    vm_size_t   size)
+kern_return_t    kmem_alloc_aligned(
+                vm_map_t    map,
+                vm_offset_t *addrp,
+                vm_size_t   size,
+                vm_tag_t        tag)
 {
         kprintf("not implemented: kmem_alloc_aligned()\n");
         return 0;
@@ -236,11 +236,11 @@ kmem_alloc_aligned(
  *  Allocate pageable memory in the kernel's address map.
  */
 
-kern_return_t
-kmem_alloc_pageable(
-    vm_map_t    map,
-    vm_offset_t *addrp,
-    vm_size_t   size)
+kern_return_t    kmem_alloc_pageable(
+                vm_map_t    map,
+                vm_offset_t *addrp,
+                vm_size_t   size,
+                vm_tag_t        tag)
 {
         kprintf("not implemented: kmem_alloc_pageable()\n");
         return 0;

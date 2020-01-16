@@ -56,7 +56,6 @@
 
 #include <mach/mach_types.h>
 #include <mach/kern_return.h>
-#include <mach/alert.h>
 #include <mach/rpc.h>
 #include <mach/thread_act_server.h>
 
@@ -378,17 +377,6 @@ special_handler_continue(void)
         kprintf("not implemented: special_handler_continue()\n");
 }
 
-/*
- * special_handler  - handles suspension, termination.  Called
- * with nothing locked.  Returns (if it returns) the same way.
- */
-void
-special_handler(
-    __unused ReturnHandler  *rh,
-    thread_t                thread)
-{
-        kprintf("not implemented: special_handler()\n");
-}
 
 /* Prototype, see justification above */
 kern_return_t

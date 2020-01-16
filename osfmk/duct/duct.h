@@ -100,6 +100,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/timerfd.h>
 #include <linux/signalfd.h>
 #include <linux/eventfd.h>
+#include <linux/bitmap.h>
+#include <linux/uuid.h>
 
 #include <linux/cpumask.h>
 #include <linux/version.h>
@@ -401,5 +403,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #    undef SZ_64
 #endif
 
+// for linux/include/linux/bitmap.h
+#undef bitmap_free
+#undef bitmap_alloc
+#undef static_assert
+#undef uuid_t
 
 #endif // DUCT_H

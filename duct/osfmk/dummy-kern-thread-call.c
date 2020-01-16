@@ -54,31 +54,6 @@
 #endif
 
 static zone_t           thread_call_zone;
-static struct wait_queue    daemon_wqueue;
-
-struct thread_call_group {
-    queue_head_t        pending_queue;
-    uint32_t        pending_count;
-
-    queue_head_t        delayed_queue;
-    uint32_t        delayed_count;
-
-    timer_call_data_t   delayed_timer;
-    timer_call_data_t   dealloc_timer;
-
-    struct wait_queue   idle_wqueue;
-    uint32_t        idle_count, active_count;
-
-    integer_t       pri;
-    uint32_t        target_thread_count;
-    uint64_t        idle_timestamp;
-
-    uint32_t        flags;
-    sched_call_t        sched_call;
-};
-
-typedef struct thread_call_group    *thread_call_group_t;
-
 #define TCG_PARALLEL        0x01
 #define TCG_DEALLOC_ACTIVE  0x02
 

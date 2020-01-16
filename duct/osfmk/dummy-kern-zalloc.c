@@ -995,7 +995,7 @@ struct {
  *  begins to run out of memory.
  */
 void
-zone_gc(boolean_t all_zones)
+zone_gc(void)
 {
         kprintf("not implemented: zone_gc()\n");
 }

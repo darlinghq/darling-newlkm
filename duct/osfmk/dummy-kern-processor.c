@@ -110,11 +110,11 @@ int             master_cpu = 0;
 boolean_t       sched_stats_active = FALSE;
 
 /* Forwards */
-kern_return_t   processor_set_things(
-        processor_set_t     pset,
-        mach_port_t     **thing_list,
-        mach_msg_type_number_t  *count,
-        int         type);
+kern_return_t    processor_set_things(
+                        processor_set_t pset,
+            void **thing_list,
+            mach_msg_type_number_t *count,
+            int type);
 
 void
 processor_bootstrap(void)
@@ -337,12 +337,11 @@ processor_set_policy_disable(
  *
  *  Common internals for processor_set_{threads,tasks}
  */
-kern_return_t
-processor_set_things(
-    processor_set_t         pset,
-    mach_port_t             **thing_list,
-    mach_msg_type_number_t  *count,
-    int                     type)
+kern_return_t    processor_set_things(
+                        processor_set_t pset,
+            void **thing_list,
+            mach_msg_type_number_t *count,
+            int type)
 {
         kprintf("not implemented: processor_set_things()\n");
         return KERN_FAILURE;

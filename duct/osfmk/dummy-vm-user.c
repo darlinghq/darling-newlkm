@@ -1170,16 +1170,15 @@ vm_upl_unmap(
 }
 /* Retrieve a upl for an object underlying an address range in a map */
 
-kern_return_t
-vm_map_get_upl(
-	vm_map_t		map,
-	vm_map_offset_t		map_offset,
-	upl_size_t		*upl_size,
-	upl_t			*upl,
-	upl_page_info_array_t	page_list,
-	unsigned int		*count,
-	int			*flags,
-	int             	force_data_sync)
+kern_return_t vm_map_get_upl(
+                vm_map_t        target_map,
+                vm_map_offset_t     map_offset,
+                upl_size_t      *size,
+                upl_t           *upl,
+                upl_page_info_array_t   page_info,
+                unsigned int        *page_infoCnt,
+                upl_control_flags_t *flags,
+                int         force_data_sync)
 {
         kprintf("not implemented: vm_map_get_upl()\n");
         return 0;

@@ -85,41 +85,6 @@ typedef struct thread_watchlist {
 #endif /* CONFIG_EMBEDDED */
 
 
-process_policy_t default_task_proc_policy = {0,
-                         0,
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        0,
-                        TASK_POLICY_HWACCESS_CPU_ATTRIBUTE_FULLACCESS,
-                        TASK_POLICY_HWACCESS_NET_ATTRIBUTE_FULLACCESS,
-                        TASK_POLICY_HWACCESS_GPU_ATTRIBUTE_FULLACCESS,
-                        TASK_POLICY_HWACCESS_DISK_ATTRIBUTE_NORMAL,
-                        TASK_POLICY_BACKGROUND_ATTRIBUTE_ALL
-                        };
-
-process_policy_t default_task_null_policy = {0,
-                         0,
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        TASK_POLICY_RESOURCE_ATTRIBUTE_NONE, 
-                        0,
-                        TASK_POLICY_HWACCESS_GPU_ATTRIBUTE_NONE,
-                        TASK_POLICY_HWACCESS_NET_ATTRIBUTE_NONE,
-                        TASK_POLICY_HWACCESS_GPU_ATTRIBUTE_NONE,
-                        TASK_POLICY_HWACCESS_DISK_ATTRIBUTE_NORMAL,
-                        TASK_POLICY_BACKGROUND_ATTRIBUTE_NONE
-                        };
-            
-
 
 /*
  * This routine should always be called with the task lock held.

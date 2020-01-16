@@ -441,16 +441,14 @@ memory_object_get_attributes(
         return 0;
 }
 
-
-kern_return_t
-memory_object_iopl_request(
+kern_return_t    memory_object_iopl_request(
     ipc_port_t      port,
     memory_object_offset_t  offset,
     upl_size_t      *upl_size,
     upl_t           *upl_ptr,
     upl_page_info_array_t   user_page_list,
     unsigned int        *page_list_count,
-    int         *flags)
+    upl_control_flags_t *flags)
 {
         kprintf("not implemented: memory_object_iopl_request()\n");
         return 0;

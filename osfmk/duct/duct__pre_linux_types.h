@@ -91,5 +91,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define page_size                   linux_page_size
 #define page_shift                  linux_page_shift
 
+// include/linux/bitmap.h
+#define bitmap_free                 linux_bitmap_free
+#define bitmap_alloc                linux_bitmap_alloc
+
+#define uuid_t                      linux_uuid_t
 
 #endif // DUCT__PRE_LINUX_TYPES_H

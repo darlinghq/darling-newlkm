@@ -7,7 +7,6 @@
 #include <device/device_types.h>
 #include <kern/clock.h>
 #include <kern/ipc_kobject.h>
-#include <default_pager/default_pager_internal.h>
 #include <default_pager/default_pager_object_server.h>
 #include <UserNotification/UNDTypes.h>
 

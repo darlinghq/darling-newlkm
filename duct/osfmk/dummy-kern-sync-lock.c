@@ -189,35 +189,6 @@ lock_make_stable (lock_set_t lock_set, int lock_id)
         return 0;
 }
 
-/*
- *  ROUTINE:    lock_make_unstable  [internal]
- *
- *  Marks the lock as unstable.
- *
- *  NOTES:
- *  - All future acquisitions of the lock will return with a
- *    KERN_LOCK_UNSTABLE status, until the lock is made stable again.
- */
-kern_return_t
-lock_make_unstable (ulock_t ulock, thread_t thread)
-{
-        kprintf("not implemented: lock_make_unstable()\n");
-        return 0;
-}
-
-/*
- *  ROUTINE:    ulock_release_internal  [internal]
- *
- *  Releases the ulock.
- *  If any threads are blocked waiting for the ulock, one is woken-up.
- *
- */
-kern_return_t
-ulock_release_internal (ulock_t ulock, thread_t thread)
-{
-        kprintf("not implemented: ulock_release_internal()\n");
-        return 0;
-}
 
 kern_return_t
 lock_handoff (lock_set_t lock_set, int lock_id)

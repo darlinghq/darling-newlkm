@@ -488,52 +488,6 @@ lck_grp_t   *funnel_lck_grp = LCK_GRP_NULL;
 lck_grp_attr_t  *funnel_lck_grp_attr;
 lck_attr_t  *funnel_lck_attr;
 
-funnel_t *
-funnel_alloc(
-    int type)
-{
-        kprintf("not implemented: funnel_alloc()\n");
-        return 0;
-}
-
-void
-funnel_free(
-    funnel_t * fnl)
-{
-        kprintf("not implemented: funnel_free()\n");
-}
-
-void
-funnel_lock(
-    funnel_t * fnl)
-{
-        kprintf("not implemented: funnel_lock()\n");
-}
-
-void
-funnel_unlock(
-    funnel_t * fnl)
-{
-        kprintf("not implemented: funnel_unlock()\n");
-}
-
-funnel_t *
-thread_funnel_get(
-    void)
-{
-        kprintf("not implemented: thread_funnel_get()\n");
-        return 0;
-}
-
-boolean_t
-thread_funnel_set(
-        funnel_t *  fnl,
-    boolean_t   funneled)
-{
-        kprintf("not implemented: thread_funnel_set()\n");
-        return 0;
-}
-
 // static void
 // sched_call_null(
 // __unused    int         type,
