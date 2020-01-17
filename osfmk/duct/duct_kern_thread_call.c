@@ -173,6 +173,19 @@ thread_call_cancel(
 	return cancel_delayed_work(&call->tc_work);
 }
 
+boolean_t
+thread_call_enter_delayed_with_leeway(
+        thread_call_t       call,
+        thread_call_param_t param1,
+        uint64_t            deadline,
+        uint64_t leeway,
+        uint32_t flags)
+{
+    // We don't do leeways
+    ((call_entry_t)call)->param1 = param1;
+    return thread_call_enter_delayed(call, deadline);
+}
+
 /*
  *  thread_call_enter_delayed:
  *

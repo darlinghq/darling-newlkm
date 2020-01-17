@@ -26,12 +26,14 @@
 #undef assert_wait_deadline
 // osfmk/kern/sync_lock.c
 
+#if 0
 // osfmk/kern/sched_prim.c
 wait_result_t thread_block (thread_continue_t continuation)
 {
         kprintf("not implemented: thread_block()\n");
         return 0;
 }
+#endif
 
 wait_result_t
 thread_block_parameter(
@@ -302,6 +304,7 @@ clock_get_calendar_nanotime(
 
 // osfmk/kern/timer_call.c
 
+#if 0
 void
 timer_call_setup(
         timer_call_t                    call,
@@ -310,6 +313,7 @@ timer_call_setup(
 {
         kprintf("not implemented: timer_call_setup()\n");
 }
+#endif
 
 // osfmk/kern/sched_prim.c
 #undef assert_wait

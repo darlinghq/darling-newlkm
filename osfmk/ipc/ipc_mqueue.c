@@ -977,7 +977,7 @@ ipc_mqueue_receive(
 		return;
 
 	if (wresult == THREAD_WAITING) {
-#if defined (__DARLING__)
+#if 0 // defined (__DARLING__)
         wresult = THREAD_AWAKENED;
 #else
 		counter((interruptible == THREAD_ABORTSAFE) ? 

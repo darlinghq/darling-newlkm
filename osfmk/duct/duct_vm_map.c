@@ -214,7 +214,7 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 
 extern vm_map_t kernel_map, ipc_kernel_map;
 
-static bool is_kernel_map(vm_map_t map)
+boolean_t vm_kernel_map_is_kernel(vm_map_t map)
 {
     return map == kernel_map || map == ipc_kernel_map;
 }
@@ -283,7 +283,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                             if (src_destroy && src_addr)
                                 vm_munmap(src_addr, len);
                         }
-                        else if (is_kernel_map(src_map)) { // it is a kernel map
+                        else if (vm_kernel_map_is_kernel(src_map)) { // it is a kernel map
                             if (src_addr) {
                                 memcpy(copy->cpy_kdata, (void *) src_addr, len);
 

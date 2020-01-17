@@ -67,6 +67,8 @@ static void     sched_call_null(
 {
     ;
 }
+
+
 //
 // #ifdef MACH_BSD
 // extern void proc_exit(void *);
@@ -384,7 +386,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 //
 // #if defined (__DARLING__)
 // #else
-//         timer_call_setup(&new_thread->wait_timer, thread_timer_expire, new_thread);
+         timer_call_setup(&new_thread->wait_timer, thread_timer_expire, new_thread);
 //         timer_call_setup(&new_thread->depress_timer, thread_depress_expire, new_thread);
 // #endif
 
@@ -525,6 +527,8 @@ void duct_thread_deallocate (thread_t thread)
                 return;
         }
 
+        timer_call_cancel(&thread->wait_timer);
+
         task    = thread->task;
 
         if (hw_atomic_sub(&(thread)->ref_count, 1) > 0) {
@@ -582,6 +586,77 @@ struct task_struct* thread_get_linux_task(thread_t thread)
 {
 	return thread->linux_task;
 }
+
+void thread_timer_expire(void* p0, void* p1)
+{
+    thread_t thread = (thread_t) p0;
+    thread_lock(thread);
+    
+    if (--thread->wait_timer_active == 0)
+    {
+        if (thread->wait_timer_is_set)
+        {
+            thread->wait_timer_is_set = FALSE;
+            thread_go(thread, THREAD_TIMED_OUT);
+        }
+    }
+    
+    thread_unlock(thread);
+}
+
+kern_return_t thread_go(thread_t thread, wait_result_t wresult)
+{
+    return thread_unblock(thread, wresult);
+}
+
+kern_return_t thread_unblock(thread_t thread, wait_result_t wresult)
+{
+    thread->wait_result = wresult;
+    
+    if (thread->wait_timer_is_set)
+    {
+        if (timer_call_cancel(&thread->wait_timer))
+            thread->wait_timer_active--;
+        thread->wait_timer_is_set = FALSE;
+    }
+ 
+    struct task_struct* t = thread_get_linux_task(thread);
+    if (t != NULL)
+    {
+        wake_up_process(t);
+        return KERN_SUCCESS;
+    }
+
+    return KERN_FAILURE;
+}
+
+#define current linux_current
+
+wait_result_t thread_block(thread_continue_t cont)
+{
+    if (cont != THREAD_CONTINUE_NULL)
+    {
+        panic("thread_block: continuations are not supported!");
+        return 0;
+    }
+    
+    thread_t thread = current_thread();
+    thread->wait_result = THREAD_AWAKENED;
+    
+    set_current_state(TASK_INTERRUPTIBLE);
+    
+    schedule();
+    
+    if (signal_pending(linux_current))
+        thread->wait_result = THREAD_INTERRUPTED;
+    
+    set_current_state(TASK_RUNNING);
+    
+    return thread->wait_result;
+}
+
+#undef current
+
 
 #if 0
 kern_return_t thread_set_cthread_self (uint32_t cthread)
