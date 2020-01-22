@@ -194,6 +194,15 @@ thread_terminate_enqueue(
         kprintf("not implemented: thread_terminate_enqueue()\n");
 }
 
+void thread_recompute_sched_pri(thread_t thread, boolean_t override_depress)
+{
+        kprintf("not implemented: thread_recompute_sched_pri()\n");
+}
+
+void thread_guard_violation(thread_t thread, unsigned type)
+{
+        kprintf("not implemented: thread_guard_violation()\n");
+}
 
 
 

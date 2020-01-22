@@ -503,6 +503,9 @@ disable_preemption_internal(void) {
 
 static inline void
 enable_preemption_internal(void) {
+#ifdef __DARLING__
+	printf("STUB: enable_preemption_internal\n");
+#else
 	assert(get_preemption_level() > 0);
 	pltrace(TRUE);
 #if defined(__clang__)
@@ -517,6 +520,7 @@ enable_preemption_internal(void) {
 			: /* no outputs */
 			: "i" (offsetof(cpu_data_t, cpu_preemption_level))
 			: "eax", "ecx", "edx", "cc", "memory");
+#endif
 #endif
 }
 

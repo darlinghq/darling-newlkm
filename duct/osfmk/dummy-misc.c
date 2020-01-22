@@ -101,6 +101,13 @@ void set_sched_pri(thread_t thread, int priority)
     kprintf("not implemented: set_sched_pri\n");
 }
 
+unsigned long pthread_priority_canonicalize(unsigned long priority, boolean_t for_propagation)
+{
+    kprintf("not implemented: pthread_priority_canonicalize()\n");
+    return priority;
+}
+
+
 #if 0
 
 lck_mtx_t iokit_obj_to_port_binding_lock;

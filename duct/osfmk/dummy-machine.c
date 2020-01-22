@@ -26,6 +26,10 @@ boolean_t machine_timeout_suspended(void)
 
 unsigned int LockTimeOut;
 
+int ml_get_max_cpus(void)
+{
+    return 32;
+}
 
 
 

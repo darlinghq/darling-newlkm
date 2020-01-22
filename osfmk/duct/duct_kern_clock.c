@@ -109,3 +109,8 @@ void delay(int usec)
     udelay(usec);
 }
 
+uint64_t ml_get_timebase(void)
+{
+    return get_cycles();
+}
+

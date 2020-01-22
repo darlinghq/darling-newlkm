@@ -362,6 +362,11 @@ vm_map_copy_overwrite(
 
 kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr, vm_map_copy_t copy)
 {
+    return vm_map_copyout_size(dst_map, dst_addr, copy, copy->size);
+}
+
+kern_return_t vm_map_copyout_size(vm_map_t dst_map, vm_map_address_t* dst_addr, vm_map_copy_t copy, vm_map_size_t copy_size)
+{
         printk ( KERN_NOTICE "- vm_map_copyout (current_map: 0x%p) to dst_map: 0x%p, addr: 0x%p, copy: 0x%p\n",
                  current_map (), dst_map, (void*) dst_addr, copy );
         switch (copy->type)
@@ -369,7 +374,10 @@ kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr
             case VM_MAP_COPY_KERNEL_BUFFER:
             {
                 int rv;
-                unsigned long addr = vm_mmap(NULL, *dst_addr, copy->size, PROT_READ | PROT_WRITE,
+                if (copy_size > copy->size)
+                    copy_size = copy->size;
+
+                unsigned long addr = vm_mmap(NULL, *dst_addr, copy_size, PROT_READ | PROT_WRITE,
                                              MAP_ANONYMOUS | MAP_PRIVATE, 0);
 
                 if (IS_ERR((void*) addr))
@@ -394,7 +402,7 @@ kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr
                 }
                 */
 
-                if (copy_to_user((void *) addr, copy->cpy_kdata, copy->size))
+                if (copy_to_user((void *) addr, copy->cpy_kdata, copy_size))
                 {
                     printk(KERN_ERR "Cannot copy_to_user() to a newly allocated anon range!\n");
                     vm_munmap(addr, copy->size);
@@ -409,6 +417,19 @@ kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr
                 return KERN_FAILURE;
         }
 }
+
+boolean_t vm_map_copy_validate_size(vm_map_t dst_map, vm_map_copy_t copy, vm_map_size_t* size)
+{
+    if (copy == VM_MAP_COPY_NULL)
+        return FALSE;
+    switch (copy->type)
+    {
+        case VM_MAP_COPY_KERNEL_BUFFER:
+            return *size == copy->size;
+    }
+    return FALSE;
+}
+
 
 int darling_is_task_64bit(void)
 {

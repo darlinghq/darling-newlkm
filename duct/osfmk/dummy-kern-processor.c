@@ -178,6 +178,12 @@ pset_init(
         kprintf("not implemented: pset_init()\n");
 }
 
+processor_t current_processor(void)
+{
+        kprintf("not implemented: current_processor()\n");
+        return NULL;
+}
+
 kern_return_t
 processor_info_count(
     processor_flavor_t      flavor,

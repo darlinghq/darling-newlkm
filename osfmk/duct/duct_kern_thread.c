@@ -632,6 +632,16 @@ kern_return_t thread_unblock(thread_t thread, wait_result_t wresult)
 
 #define current linux_current
 
+wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interruptible)
+{
+    if (interruptible == THREAD_UNINT || !signal_pending(linux_current))
+    {
+        set_current_state(interruptible == THREAD_UNINT ? TASK_KILLABLE : TASK_INTERRUPTIBLE);
+        return thread->wait_result = THREAD_WAITING;
+    }
+    return thread->wait_result = THREAD_INTERRUPTED;
+}
+
 wait_result_t thread_block(thread_continue_t cont)
 {
     if (cont != THREAD_CONTINUE_NULL)
@@ -643,7 +653,8 @@ wait_result_t thread_block(thread_continue_t cont)
     thread_t thread = current_thread();
     thread->wait_result = THREAD_AWAKENED;
     
-    set_current_state(TASK_INTERRUPTIBLE);
+    // NOTE: This is now done above in thread_mark_wait_locked()
+    // set_current_state(TASK_INTERRUPTIBLE);
     
     schedule();
     

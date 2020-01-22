@@ -267,6 +267,7 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		duct/osfmk/dummy-locks.o \
 		duct/osfmk/dummy-misc.o \
 		duct/osfmk/dummy-kern.o \
+		duct/osfmk/dummy-machine.o \
 		duct/osfmk/dummy-vm-resident.o \
 		duct/osfmk/dummy-kern-thread-call.o \
 		duct/osfmk/dummy-vm-map.o \

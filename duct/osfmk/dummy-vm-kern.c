@@ -91,6 +91,9 @@
 vm_map_t    kernel_map;
 vm_map_t    kernel_pageable_map;
 
+vm_offset_t vm_kernel_slid_base = 0;
+vm_offset_t vm_kernel_slid_top = 0;
+
 extern boolean_t vm_kernel_ready;
 
 /*

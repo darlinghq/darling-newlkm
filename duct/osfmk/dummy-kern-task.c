@@ -845,6 +845,11 @@ task_policy(
         return 0;
 }
 
+void task_bsdtask_kill(task_t task)
+{
+        kprintf("not implemented: task_bsdtask_kill()\n");
+}
+
 /*
  *  task_set_policy
  *
