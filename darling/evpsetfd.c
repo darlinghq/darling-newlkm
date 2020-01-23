@@ -26,6 +26,7 @@
 #include <linux/poll.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
+#include <linux/wait.h>
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_waitqueue.h>
 #include <osfmk/ipc/ipc_types.h>
@@ -44,6 +45,9 @@ struct evpsetfd_ctx
 	struct evpset_options opts;
 
 	ipc_pset_t pset;
+	SLIST_ENTRY(evpsetfd_ctx) kn_selnext;
+
+	wait_queue_head_t wait_queue;
 };
 
 static int evpsetfd_release(struct inode* inode, struct file* file);
@@ -80,6 +84,7 @@ int evpsetfd_create(unsigned int port_name, const struct evpset_options* opts)
 
 	ctx->port_name = port_name;
 	ctx->pset = pset;
+	init_waitqueue_head(&ctx->wait_queue);
 	memcpy(&ctx->opts, opts, sizeof(*opts));
 
 	sprintf(name, "[evpsetfd:%d]", port_name);
@@ -113,22 +118,16 @@ unsigned int evpsetfd_poll(struct file* file, poll_table* wait)
 	struct evpsetfd_ctx* ctx = (struct evpsetfd_ctx*) file->private_data;
 	ipc_mqueue_t set_mq = &ctx->pset->ips_messages;
 
-#warning evpset_poll not implemented yet!
-#if 0
-	waitq_t waitq = &set_mq->imq_wait_queue;
-	waitq_t walked_waitq = duct__waitq_walkup(waitq, IPC_MQUEUE_RECEIVE);
-
-	poll_wait(file, &walked_waitq->linux_waitqh, wait);
-
-	if (ipc_mqueue_peek(set_mq, NULL, NULL, NULL, NULL, NULL))
+	int res = wait_event_interruptible(ctx->wait_queue, ipc_mqueue_peek(set_mq, NULL, NULL, NULL, NULL, NULL));
+	
+	if (res == -LINUX_ERESTARTSYS)
 	{
-		debug_msg("evpsetfd_poll(): there is a pending msg\n");
-		return POLLIN | POLLRDNORM;
+		debug_msg("evpsetfd_poll(): interrupted\n");
+		return 0;
 	}
-#endif
-	debug_msg("evpsetfd_poll(): no pending msg\n");
-
-	return 0;
+	
+	debug_msg("evpsetfd_poll(): there is a pending msg\n");
+	return POLLIN | POLLRDNORM;
 }
 
 ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t* ppos)
@@ -282,15 +281,34 @@ ssize_t evpsetfd_write(struct file* file, const char __user *buf, size_t count, 
 	return count;
 }
 
-// TODO - needs to be done for new XNU!
 void knote(struct klist* list, long hint)
 {
-    debug_msg("NOT IMPLEMENTED!!! knote()\n");
+    debug_msg("knote() called with hint=0x%x\n", hint);
+	struct evpsetfd_ctx* kn;
+
+	SLIST_FOREACH(kn, list, kn_selnext)
+	{
+		// TODO: hint?
+		wake_up_interruptible(&kn->wait_queue);
+	}
 }
 
 void klist_init(struct klist* list)
 {
-    debug_msg("NOT IMPLEMENTED!!! klist_init()\n");
+	SLIST_INIT(list);
+}
+
+int knote_attach_evpset(struct klist* list, struct evpsetfd_ctx* kn)
+{
+	int ret = SLIST_EMPTY(list);
+	SLIST_INSERT_HEAD(list, kn, kn_selnext);
+	return ret;
+}
+
+int knote_detach_evpset(struct klist* list, struct evpsetfd_ctx* kn)
+{
+	SLIST_REMOVE(list, kn, evpsetfd_ctx, kn_selnext);
+	return SLIST_EMPTY(list);
 }
 
 void waitq_set__CALLING_PREPOST_HOOK__(void* kq_hook, void* knote_hook, int qos)

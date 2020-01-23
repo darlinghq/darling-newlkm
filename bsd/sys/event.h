@@ -734,7 +734,12 @@ struct filterops {
 struct proc;
 struct waitq;
 
+#ifdef __DARLING__
+struct evpsetfd_ctx;
+SLIST_HEAD(klist, evpsetfd_ctx);
+#else
 SLIST_HEAD(klist, knote);
+#endif
 extern void	knote_init(void);
 extern void	klist_init(struct klist *list);
 

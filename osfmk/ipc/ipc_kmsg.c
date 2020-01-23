@@ -1593,7 +1593,7 @@ ipc_kmsg_get(
 	kmsg->ikm_header->msgh_id			= legacy_base.header.msgh_id;
 
 #if defined (__DARLING__)
-    printk ( KERN_NOTICE "- ikm_header->msgh_size: %d, bits: 0x%x rport: 0x%p, lport: 0x%p, reserved: 0x%x, id: %d\n",
+    printk ( KERN_NOTICE "- ikm_header->msgh_size: %d, bits: 0x%x rport: 0x%x, lport: 0x%x, reserved: 0x%x, id: %d\n",
              kmsg->ikm_header->msgh_size,
              kmsg->ikm_header->msgh_bits,
              kmsg->ikm_header->msgh_remote_port,

@@ -225,6 +225,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         mac_task_label_init (&new_task->maclabel);
     #endif
 
+        new_task->t_flags = 0;
         ipc_task_init(new_task, parent_task);
 
         new_task->total_user_time = 0;
