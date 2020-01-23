@@ -46,6 +46,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/locks.h>
 #include <kern/thread.h>
 #include <kern/clock.h>
+#include <kern/ltable.h>
 #include <kern/thread_call.h>
 #include <libkern/version.h>
 
@@ -92,8 +93,11 @@ void duct_kernel_bootstrap (void)
         // kernel_bootstrap_kprintf("calling sched_init\n");
         // sched_init();
 
-        kernel_bootstrap_kprintf ("calling duct_wait_queue_bootstrap\n");
-        //duct_waitq_bootstrap ();
+        kernel_bootstrap_kprintf ("calling ltable_bootstrap\n");
+        ltable_bootstrap();
+
+        kernel_bootstrap_kprintf ("calling waitq_bootstrap\n");
+        waitq_bootstrap ();
 
         kernel_bootstrap_kprintf ("calling ipc_bootstrap\n");
         ipc_bootstrap ();

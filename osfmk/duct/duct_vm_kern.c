@@ -128,3 +128,18 @@ kmem_alloc(
 	else
 		return KERN_NO_SPACE;
 }
+
+kern_return_t    kernel_memory_allocate(
+                vm_map_t    map,
+                vm_offset_t *addrp,
+                vm_size_t   size,
+                vm_offset_t mask,
+                int     flags,
+                vm_tag_t        tag)
+{
+        *addrp = (vm_offset_t) vmalloc(size);
+        if (*addrp)
+		return KERN_SUCCESS;
+	else
+		return KERN_NO_SPACE;
+}

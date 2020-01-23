@@ -142,6 +142,7 @@ kern_return_t kmem_alloc_contig(
  *                  KMA_NOPAGEWAIT
  */
 
+/*
 kern_return_t    kernel_memory_allocate(
                 vm_map_t    map,
                 vm_offset_t *addrp,
@@ -153,6 +154,7 @@ kern_return_t    kernel_memory_allocate(
         kprintf("not implemented: kernel_memory_allocate()\n");
         return 0;
 }
+*/
 
 /*
  *  kmem_alloc:

@@ -691,6 +691,7 @@ static void wqp_init(void)
  */
 static void wq_prepost_refill_cpu_cache(uint32_t nalloc)
 {
+#ifndef __DARLING__
 	struct lt_elem *new_head, *old_head;
 	struct wqp_cache *cache;
 
@@ -726,6 +727,7 @@ static void wq_prepost_refill_cpu_cache(uint32_t nalloc)
 out:
 	enable_preemption();
 	return;
+#endif
 }
 
 static void wq_prepost_ensure_free_space(void)
@@ -737,6 +739,7 @@ static void wq_prepost_ensure_free_space(void)
 	if (g_min_free_cache == 0)
 		g_min_free_cache = (WQP_CACHE_MAX * ml_get_max_cpus());
 
+#ifndef __DARLING__
 	/*
 	 * Ensure that we always have a pool of per-CPU prepost elements
 	 */
@@ -747,6 +750,7 @@ static void wq_prepost_ensure_free_space(void)
 
 	if (free_elem < (WQP_CACHE_MAX / 3))
 		wq_prepost_refill_cpu_cache(WQP_CACHE_MAX - free_elem);
+#endif
 
 	/*
 	 * Now ensure that we have a sufficient amount of free table space
@@ -777,6 +781,7 @@ static struct wq_prepost *wq_prepost_alloc(int type, int nelem)
 	if (nelem == 0)
 		return NULL;
 
+#ifndef __DARLING__
 	/*
 	 * First try to grab the elements from the per-CPU cache if we are
 	 * allocating RESERVED elements
@@ -813,6 +818,7 @@ static struct wq_prepost *wq_prepost_alloc(int type, int nelem)
 		goto out;
 	}
 	enable_preemption();
+#endif
 
 do_alloc:
 	/* fall-back to standard table allocation */
@@ -981,6 +987,7 @@ static void wq_prepost_release_rlist(struct wq_prepost *wqp)
 
 	elem = &wqp->wqte;
 
+#ifndef __DARLING__
 	/*
 	 * These are reserved elements: release them back to the per-cpu pool
 	 * if our cache is running low.
@@ -998,6 +1005,7 @@ static void wq_prepost_release_rlist(struct wq_prepost *wqp)
 		return;
 	}
 	enable_preemption();
+#endif
 
 	/* release these elements back to the main table */
 	nelem = lt_elem_list_release(&g_prepost_table, elem, LT_RESERVED);
@@ -4402,11 +4410,13 @@ static int waitq_alloc_prepost_reservation(int nalloc, struct waitq *waitq,
 	 * linkage!
 	 */
 	if (waitq) {
+#ifndef __DARLING__
 		disable_preemption();
 		cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
 		if (nalloc <= (int)cache->avail)
 			goto do_alloc;
 		enable_preemption();
+#endif
 
 		/* unlock the waitq to perform the allocation */
 		*did_unlock = 1;
