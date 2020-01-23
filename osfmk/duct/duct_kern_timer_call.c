@@ -30,19 +30,17 @@
 
 boolean_t timer_call_enter_with_leeway(timer_call_t call, timer_call_param_t param1, uint64_t deadline, uint64_t leeway, uint32_t flags, boolean_t ratelimited)
 {
-	printf("NOT IMPLEMENTED: timer_call_enter_with_leeway\n");
-	return FALSE;
+	return thread_call_enter_delayed_with_leeway((thread_call_t) call, param1, deadline, leeway, flags);
 }
 
 void timer_call_setup(timer_call_t call, timer_call_func_t func, timer_call_param_t param0)
 {
-	printf("NOT IMPLEMENTED: timer_call_setup\n");
+	thread_call_setup((thread_call_t) call, func, param0);
 }
 
 boolean_t timer_call_cancel(timer_call_t call)
 {
-	printf("NOT IMPLEMENTED: timer_call_cancel\n");
-	return FALSE;
+	return thread_call_cancel((thread_call_t) call);
 }
 
 

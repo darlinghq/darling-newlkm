@@ -1,4 +1,3 @@
-#warning Missing wait_queue_notify
 /*
  * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
  *

@@ -47,6 +47,10 @@ extern boolean_t mach_timer_coalescing_enabled;
 extern void timer_call_queue_init(mpqueue_head_t *);
 #endif
 
+#ifdef __DARLING__
+#include <kern/thread_call.h>
+typedef struct thread_call timer_call_data_t, *timer_call_t;
+#else
 /*
  * NOTE: for now, bsd/dev/dtrace/dtrace_glue.c has its own definition
  * of this data structure, and the two had better match.
@@ -60,6 +64,7 @@ typedef struct timer_call {
 						   call_entry queue's lock */
 	uint64_t		ttd; /* Time to deadline at creation */
 } timer_call_data_t, *timer_call_t;
+#endif
 
 #define EndOfAllTime		0xFFFFFFFFFFFFFFFFULL
 
