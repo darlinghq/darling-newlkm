@@ -298,6 +298,8 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
         new_thread->task = parent_task;
         new_thread->ref_count = 2;
+        new_thread->waitq = NULL;
+        new_thread->thread_magic = THREAD_MAGIC;
 
         thread_lock_init(new_thread);
         // wake_lock_init(new_thread);
@@ -644,12 +646,6 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
 
 wait_result_t thread_block(thread_continue_t cont)
 {
-    if (cont != THREAD_CONTINUE_NULL)
-    {
-        panic("thread_block: continuations are not supported!");
-        return 0;
-    }
-    
     thread_t thread = current_thread();
     thread->wait_result = THREAD_AWAKENED;
     
@@ -662,6 +658,12 @@ wait_result_t thread_block(thread_continue_t cont)
         thread->wait_result = THREAD_INTERRUPTED;
     
     set_current_state(TASK_RUNNING);
+
+    if (cont != THREAD_CONTINUE_NULL)
+    {
+        cont(NULL, thread->wait_result);
+        panic("thread_block: continuation isn't supposed to return!");
+    }
     
     return thread->wait_result;
 }

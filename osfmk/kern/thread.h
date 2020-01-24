@@ -525,6 +525,9 @@ struct thread {
 #if defined (__DARLING__)
         struct task_struct        * linux_task;
         // linux_wait_queue_t          lwait;
+#ifdef __x86_64__
+	unsigned long cont_jmpbuf[8];
+#endif
 	struct ksyn_waitq_element uu_kwe;
 	uint64_t triggered_watchpoint_address;
 	unsigned int triggered_watchpoint_operation;
@@ -572,7 +575,7 @@ struct thread {
 #define sth_result          saved.sema.result
 #define sth_continuation    saved.sema.continuation
 
-#if MACH_ASSERT
+#if MACH_ASSERT && !defined(__DARLING__)
 #define assert_thread_magic(thread) assertf((thread)->thread_magic == THREAD_MAGIC, \
                                             "bad thread magic 0x%llx for thread %p, expected 0x%llx", \
                                             (thread)->thread_magic, (thread), THREAD_MAGIC)

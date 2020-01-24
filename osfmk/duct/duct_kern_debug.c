@@ -57,6 +57,7 @@ void duct_panic (const char * str, ...)
     
         // well, we should never use linux_panic
         printk (KERN_NOTICE "PANIC: %s", str);
+	__WARN();
 }
 
 void Assert (const char * file, int line, const char * expression)
@@ -70,6 +71,7 @@ void Assert (const char * file, int line, const char * expression)
         // saved_return_on_panic = return_on_panic;
         // return_on_panic = 1;
         printk (KERN_NOTICE "FAILED ASSERTION[%s:%d]: %s", file, line, expression);
+	__WARN();
 
         // return_on_panic = saved_return_on_panic;
 }

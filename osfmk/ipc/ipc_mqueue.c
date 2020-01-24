@@ -835,15 +835,6 @@ ipc_mqueue_post(
 			break;
 		}
 
-#if defined (__DARLING__)
-        // queue message and break anyways as we don't know how to handle this case yet
-        printk (KERN_NOTICE "- BUG: don't know how to handle\n");
-#endif
-#if 0
-        ipc_kmsg_enqueue_macro (&mqueue->imq_messages, kmsg);
-        thread_unlock (receiver);
-        break;
-#endif
 		/*
 		 * Otherwise, this thread needs to be released to run
 		 * and handle its error without getting the message.  We

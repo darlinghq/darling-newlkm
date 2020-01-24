@@ -225,6 +225,8 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		darling/pthread_kill.o \
 		darling/psynch_support.o \
 		darling/foreign_mm.o \
+		darling/continuation.o \
+		darling/continuation-asm.o \
 		osfmk/duct/darling_xnu_init.o \
 		osfmk/duct/duct_atomic.o \
 		osfmk/duct/duct_ipc_pset.o \

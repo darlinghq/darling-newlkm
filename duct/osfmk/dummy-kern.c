@@ -152,11 +152,13 @@ thread_poll_yield(thread_t self)
 
 // osfmk/i386/trap.c
 
+#if 0
 void
 thread_syscall_return(kern_return_t ret)
 {
         kprintf("not implemented: thread_syscall_return()\n");
 }
+#endif
 
 // osfmk/kern/startup.c
 

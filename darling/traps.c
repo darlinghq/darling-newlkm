@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2018 Lubos Dolezel
+ * Copyright (C) 2015-2020 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -56,6 +56,7 @@
 #include "binfmt.h"
 #include "commpage.h"
 #include "foreign_mm.h"
+#include "continuation.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #define current linux_current
@@ -725,7 +726,7 @@ int mach_msg_overwrite_entry(task_t task, struct mach_msg_overwrite_args* in_arg
 	// out.notify = args.notify;
 	out.rcv_msg = (user_addr_t) args.rcv_msg;
 
-	return mach_msg_overwrite_trap(&out);
+	return XNU_CONTINUATION_ENABLED(mach_msg_overwrite_trap(&out));
 }
 
 int _kernelrpc_mach_port_deallocate_entry(task_t task, struct mach_port_deallocate_args* in_args)
@@ -736,7 +737,7 @@ int _kernelrpc_mach_port_deallocate_entry(task_t task, struct mach_port_dealloca
 	out.target = args.task_right_name;
 	out.name = args.port_right_name;
 
-	return _kernelrpc_mach_port_deallocate_trap(&out);
+	return XNU_CONTINUATION_ENABLED(_kernelrpc_mach_port_deallocate_trap(&out));
 }
 
 int _kernelrpc_mach_port_destroy(task_t task, struct mach_port_destroy_args* in_args)
@@ -747,7 +748,7 @@ int _kernelrpc_mach_port_destroy(task_t task, struct mach_port_destroy_args* in_
 	out.target = args.task_right_name;
 	out.name = args.port_right_name;
 
-	return _kernelrpc_mach_port_destroy_trap(&out);
+	return XNU_CONTINUATION_ENABLED(_kernelrpc_mach_port_destroy_trap(&out));
 }
 
 int _kernelrpc_mach_port_insert_right_entry(task_t task, struct mach_port_insert_right_args* in_args)
