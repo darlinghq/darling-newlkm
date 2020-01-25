@@ -169,7 +169,7 @@ struct waitq {
 	uint64_t waitq_prepost_id;
 	queue_head_t	waitq_queue;		/* queue of elements */
 #ifdef __DARLING__
-	wait_queue_head_t       linux_waitqh;
+	wait_queue_head_t       linux_wq;
 #endif
 };
 

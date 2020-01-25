@@ -29,7 +29,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		15
+#define DARLING_MACH_API_VERSION		16
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -171,6 +171,7 @@ struct evpset_event
 	unsigned int pad1;
 #endif
 	unsigned int receive_status; // kn_fflags
+	unsigned char process_data[32];
 };
 
 struct mach_port_insert_right_args

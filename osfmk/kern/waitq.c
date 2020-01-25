@@ -1991,6 +1991,28 @@ static void do_waitq_select_n_locked(struct waitq_select_args *args)
 
 	assert(max_threads != 0);
 
+#ifdef __DARLING__
+	// Special hack follows
+	//
+	// Explanation:
+	// In darling/evpsetfd.c, we implement a pollable driver that provides notifications on port set events.
+	// Linux polling mechanisms require the use of Linux wait_queue. There is no other way of providing
+	// an event to wait on besides passing a wait_queue to poll_wait(). The kernel then manages (de)registering
+	// with the wait_queue behind the scenes.
+	//
+	// XNU has its own wait queue (waitq) mechanism (this file). do_waitq_select_n_locked() ends up picking up threads
+	// to notify and wake up. This is incompatible with Linux wait_queue. Even if we knew which thread is currently
+	// waiting on a Linux wait_queue event to occur, the way file_operations.poll callback is invoked, we cannot know
+	// when such polling _ends_ (which would result in removing such thread from XNU waitq structures).
+	//
+	// If args.event is NO_EVENT64, we abuse this function to not only select thread_t objects for waking up,
+	// but also do a wake_up call on the Linux wait_queue object we added into waitq_set.
+	if (args->event == NO_EVENT64)
+	{
+		wake_up_interruptible(&waitq->linux_wq);
+	}
+#endif
+
 	if (!waitq_irq_safe(waitq)) {
 		/* JMM - add flag to waitq to avoid global lookup if no waiters */
 		eventmask = _CAST_TO_EVENT_MASK(waitq);
@@ -3025,6 +3047,10 @@ kern_return_t waitq_init(struct waitq *waitq, int policy)
 
 	waitq_lock_init(waitq);
 	queue_init(&waitq->waitq_queue);
+
+#ifdef __DARLING__
+	init_waitqueue_head(&waitq->linux_wq);
+#endif
 
 	waitq->waitq_isvalid = 1;
 	return KERN_SUCCESS;

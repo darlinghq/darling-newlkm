@@ -75,6 +75,7 @@ int evpsetfd_create(unsigned int port_name, const struct evpset_options* opts)
 	char name[32];
 	int fd;
 
+	// TODO: Use ipc_right_lookup_read() instead and support plain Mach ports (instead of port sets only)
 	kr = ipc_object_translate(current_space(), port_name, MACH_PORT_RIGHT_PORT_SET, (ipc_object_t*) &pset);
 	if (kr != KERN_SUCCESS)
 		return -LINUX_ENOENT;
@@ -134,7 +135,11 @@ unsigned int evpsetfd_poll(struct file* file, poll_table* wait)
 	struct evpsetfd_ctx* ctx = (struct evpsetfd_ctx*) file->private_data;
 	ipc_mqueue_t set_mq = &ctx->pset->ips_messages;
 
-	poll_wait(file, &ctx->wait_queue, wait);
+	poll_wait(file, &ctx->wait_queue, wait); // For polling on Mach ports (not really supported, the code in this file assumes port sets)
+	poll_wait(file, &set_mq->imq_wait_queue.linux_wq, wait); // For polling on Mach port sets
+
+	if (!ctx->has_event)
+		ctx->has_event = ipc_mqueue_set_peek(set_mq);
 	
 	return ctx->has_event ? (POLLIN | POLLRDNORM) : 0;
 }
@@ -147,6 +152,7 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 	debug_msg("evpsetfd_read() called\n");
 
 	ctx->has_event = false;
+	char* process_data = ((struct evpset_event*) buf)->process_data;
 
 	if (count != sizeof(struct evpset_event))
 		return -LINUX_EINVAL;
@@ -185,7 +191,6 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 		addr = (mach_vm_address_t) ctx->opts.rcvbuf;
 		size = (mach_msg_size_t) ctx->opts.rcvbuf_size;
 
-#if 0
 		/*
 		 * If the kevent didn't specify a buffer and length, carve a buffer
 		 * from the filter processing data according to the flags.
@@ -193,13 +198,19 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 		if (size == 0 && process_data != NULL) {
 			used_filtprocess_data = TRUE;
 
+#ifdef __DARLING__
+			addr = process_data;
+			size = sizeof(ctx->event.process_data);
+			option |= (MACH_RCV_LARGE | MACH_RCV_LARGE_IDENTITY);
+#else
+
 			addr = (mach_vm_address_t)process_data->fp_data_out;
 			size = (mach_msg_size_t)process_data->fp_data_resid;
 			option |= (MACH_RCV_LARGE | MACH_RCV_LARGE_IDENTITY);
 			if (process_data->fp_flags & KEVENT_FLAG_STACK_DATA)
 				option |= MACH_RCV_STACK;
-		}
 #endif
+		}
 	} else {
 		/* just detect the port name (if a set) and size of the first message */
 		option = MACH_RCV_LARGE;
@@ -258,7 +269,8 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 		assert(self->ith_kmsg == IKM_NULL);
 		ctx->event.port = self->ith_receiver_name;
 		io_release(object);
-		return -LINUX_EAGAIN;
+
+		goto out;
 	}
 
 	/*
@@ -284,7 +296,7 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 		ctx->event.msg_size = size;
 		ctx->event.port = MACH_PORT_NULL;
 	}
-#if 0
+#ifndef __DARLING__
 	/*
 	 * If we used a data buffer carved out from the filt_process data,
 	 * store the address used in the knote and adjust the residual and
