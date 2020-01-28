@@ -391,6 +391,7 @@ struct task {
 	struct list_head* p_pthhash;
 	int tracer;
 	struct vfsmount* vchroot;
+	char* vchroot_path;
 #endif
 
 #if HYPERVISOR

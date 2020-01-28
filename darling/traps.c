@@ -1458,7 +1458,9 @@ unsigned long last_triggered_watchpoint_entry(task_t task, struct last_triggered
 int vchroot_entry(task_t task, int fd_vchroot)
 {
 	struct file* f;
+	int err = 0;
 
+	task_lock(task);
 	f = fget(fd_vchroot);
 	if (!f)
 		return -LINUX_EBADF;
@@ -1470,16 +1472,24 @@ int vchroot_entry(task_t task, int fd_vchroot)
 	}
 
 	task->vchroot = clone_private_mount(&f->f_path);
+
+	if (!IS_ERR(task->vchroot))
+	{
+		char* strpath = d_path(&f->f_path, task->vchroot_path, PAGE_SIZE);
+		if (strpath != task->vchroot_path)
+			memmove(task->vchroot_path, strpath, strlen(strpath)+1);
+	}
+
 	fput(f);
 
 	if (IS_ERR(task->vchroot))
 	{
-		int err = PTR_ERR(task->vchroot);
+		err = PTR_ERR(task->vchroot);
 		task->vchroot = NULL;
-		return err;
 	}
+	task_unlock(task);
 
-	return 0;
+	return err;
 }
 
 // Helper function for binfmt.c
@@ -1557,10 +1567,12 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 
 	if (!err)
 	{
-		path.mnt = linux_current->fs->root.mnt;
+		//path.mnt = linux_current->fs->root.mnt;
 
 		char* str = (char*) __get_free_page(GFP_KERNEL);
 		char* strpath = d_path(&path, str, PAGE_SIZE);
+		// This would return the path within the filesystem where the file resides
+		//char* strpath = dentry_path_raw(path.dentry, str, PAGE_SIZE);
 
 		if (IS_ERR(strpath))
 		{
@@ -1569,8 +1581,26 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 			goto fail;
 		}
 
+		task_lock(task);
+		int rootlen = strlen(task->vchroot_path);
+		task_unlock(task);
+
+		if (copy_to_user(in_args->path, task->vchroot_path, rootlen))
+		{
+			free_page((unsigned long) str);
+			err = -LINUX_EFAULT;
+			goto fail;
+		}
+
 		int pathlen = strlen(strpath);
-		if (copy_to_user(in_args->path, strpath, pathlen + 1))
+		if (rootlen + pathlen + 1 > PAGE_SIZE)
+		{
+			free_page((unsigned long) str);
+			err = -LINUX_ENAMETOOLONG;
+			goto fail;
+		}
+
+		if (copy_to_user(in_args->path + rootlen, strpath, pathlen + 1))
 		{
 			free_page((unsigned long) str);
 			err = -LINUX_EFAULT;
@@ -1581,7 +1611,7 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 		// If the lookup only succeeded after removing the last path component, append it back now
 		if (append != NULL)
 		{
-			if (strlen(strpath) + strlen(append) + 2 > PAGE_SIZE)
+			if (rootlen + pathlen + strlen(append) + 2 > PAGE_SIZE)
 			{
 				err = -LINUX_ENAMETOOLONG;
 				goto fail;
@@ -1610,7 +1640,6 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args
 {
 	int err = 0;
 	struct file* f;
-	struct dentry* relative_to;
 	char* str = NULL;
 
 	copyargs(args, in_args);
@@ -1634,17 +1663,82 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args
 		goto fail;
 	}
 
-	const int len = strlen(strpath) + 1;
-	if (len > args.maxlen)
+	if (strcmp(strpath, "/") == 0 && p.dentry->d_sb != p.mnt->mnt_sb)
 	{
-		err = -LINUX_ENAMETOOLONG;
-		goto fail;
-	}
+		// Path resolution gave us /, but we know it's wrong, because it is not really / of our vchroot
+		// -> we need to do this differently.
 
-	if (copy_to_user(args.path, strpath, len))
+		// Try resolving this name with the standard system /
+		strpath = d_path(&f->f_path, str, PAGE_SIZE);
+
+		if (IS_ERR(strpath))
+		{
+			err = PTR_ERR(strpath);
+			goto fail;
+		}
+
+		task_lock(task);
+		int rootlen = strlen(task->vchroot_path);
+		bool under_vchroot = strncmp(strpath, task->vchroot_path, rootlen) == 0;
+		task_unlock(task);
+
+		if (!under_vchroot)
+		{
+			// and prepend /sysroot to the result.
+			const char root[] = "/sysroot";
+			int rootlen = sizeof(root) - 1;
+
+			const int pathlen = strlen(strpath) + 1;
+			if (rootlen + pathlen > args.maxlen)
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+
+			if (copy_to_user(args.path, root, rootlen))
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+
+			if (copy_to_user(args.path + rootlen, strpath, pathlen))
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+		}
+		else
+		{
+			strpath += rootlen;
+
+			const int pathlen = strlen(strpath) + 1;
+			if (pathlen > args.maxlen)
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+
+			if (copy_to_user(args.path, strpath, pathlen))
+			{
+				err = -LINUX_ENAMETOOLONG;
+				goto fail;
+			}
+		}
+	}
+	else
 	{
-		err = -LINUX_EFAULT;
-		goto fail;
+		const int pathlen = strlen(strpath) + 1;
+		if (pathlen > args.maxlen)
+		{
+			err = -LINUX_ENAMETOOLONG;
+			goto fail;
+		}
+
+		if (copy_to_user(args.path, strpath, pathlen))
+		{
+			err = -LINUX_EFAULT;
+			goto fail;
+		}
 	}
 
 fail:

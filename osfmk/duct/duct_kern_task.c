@@ -122,6 +122,9 @@ void duct_task_destroy(task_t task)
                 return;
         }
 
+        if (task->vchroot_path)
+            free_page((unsigned long) task->vchroot_path);
+
         ipc_space_terminate (task->itk_space);
         pth_proc_hashdelete(task);
         task_deallocate(task);
@@ -150,6 +153,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         /* one ref for just being alive; one for our caller */
         new_task->ref_count = 2;
         new_task->vchroot = NULL;
+        new_task->vchroot_path = (char*) __get_free_page(GFP_KERNEL);
 
         // /* allocate with active entries */
         // assert(task_ledger_template != NULL);
