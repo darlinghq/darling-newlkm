@@ -462,34 +462,14 @@ int native_prot(int prot)
 	return protOut;
 }
 
-extern struct vfsmount* task_get_vchroot(task_t t);
+extern char* task_copy_vchroot_path(task_t t);
 void vchroot_detect(struct load_results* lr)
 {
-	struct vfsmount* vchroot;
-	struct path path;
-
 	// Find out if the current process has an associated XNU task_t
 	task_t task = darling_task_get_current();
 
-	if (!task)
-		return;
-
-	vchroot = task_get_vchroot(task);
-	if (!vchroot)
-		return;
-
-	// Get the path as a string into load_results
-	char* buf = (char*) __get_free_page(GFP_KERNEL);
-	char* p = dentry_path_raw(vchroot->mnt_root, buf, 1023);
-
-	if (IS_ERR(p))
-		goto out;
-
-	lr->root_path = kmalloc(strlen(p) + 1, GFP_KERNEL);
-	strcpy(lr->root_path, p);
-out:
-	free_page((unsigned long) buf);
-	mntput(vchroot);
+	if (task)
+		lr->root_path = task_copy_vchroot_path(task);
 }
 
 // Given that there's no proper way of passing special parameters to the binary loader

@@ -276,7 +276,7 @@ no_slide:
 				size_t length;
 				struct file* dylinker = NULL;
 
-				if (lr->root_path != NULL)
+				if (dylinker == NULL && lr->root_path != NULL)
 				{
 					const size_t root_len = strlen(lr->root_path);
 					const size_t linker_len = dy->cmdsize - dy->name.offset;

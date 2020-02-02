@@ -169,11 +169,11 @@ static const struct trap_entry mach_traps[80] = {
 };
 #undef TRAP
 
-// static struct miscdevice mach_dev = {
-// 	MISC_DYNAMIC_MINOR,
-// 	"mach",
-// 	&mach_chardev_ops,
-// };
+static struct miscdevice mach_dev = {
+	MISC_DYNAMIC_MINOR,
+	"mach",
+	&mach_chardev_ops,
+};
 
 extern void darling_xnu_init(void);
 extern void darling_xnu_deinit(void);
@@ -192,9 +192,9 @@ static int mach_init(void)
 	foreignmm_init();
 	macho_binfmt_init();
 
-	// err = misc_register(&mach_dev);
-	// if (err < 0)
-	// 	goto fail;
+	err = misc_register(&mach_dev);
+	if (err < 0)
+	 	goto fail;
 
 	printk(KERN_INFO "Darling Mach: kernel emulation loaded, API version " DARLING_MACH_API_VERSION_STR "\n");
 	return 0;
@@ -212,7 +212,7 @@ static void mach_exit(void)
 {
 	darling_xnu_deinit();
 	psynch_exit();
-	// misc_deregister(&mach_dev);
+	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 
 	macho_binfmt_exit();
@@ -257,7 +257,18 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		struct files_struct* files;
 		
 		new_task->tracer = old_task->tracer;
+
+		task_lock(old_task);
 		new_task->vchroot = mntget(old_task->vchroot);
+		if (new_task->vchroot)
+		{
+			strcpy(new_task->vchroot_path, old_task->vchroot_path);
+			debug_msg("- vchroot: %s\n", new_task->vchroot_path);
+		}
+		else
+			debug_msg("- no vchroot\n");
+		task_unlock(old_task);
+
 		darling_ipc_inherit(old_task, new_task);
 
 		if (old_task->map->linux_task != NULL)
@@ -308,7 +319,18 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		if (parent_task != NULL)
 		{
 			new_task->tracer = parent_task->tracer;
+			
+			task_lock(parent_task);
 			new_task->vchroot = mntget(parent_task->vchroot);
+			if (new_task->vchroot)
+			{
+				strcpy(new_task->vchroot_path, parent_task->vchroot_path);
+				debug_msg("- vchroot: %s\n", new_task->vchroot_path);
+			}
+			else
+				debug_msg("- no vchroot\n");
+			task_unlock(parent_task);
+
 			darling_ipc_inherit(parent_task, new_task);
 			task_deallocate(parent_task);
 
@@ -1493,9 +1515,22 @@ int vchroot_entry(task_t task, int fd_vchroot)
 }
 
 // Helper function for binfmt.c
-struct vfsmount* task_get_vchroot(task_t t)
+char* task_copy_vchroot_path(task_t task)
 {
-	return mntget(t->vchroot);
+	char* rv = NULL;
+
+	task_lock(task);
+	if (task->vchroot)
+	{
+		const int len = strlen(task->vchroot_path);
+		rv = kmalloc(len + 1, GFP_KERNEL);
+
+		strcpy(rv, task->vchroot_path);
+	}
+
+	task_unlock(task);
+
+	return rv;
 }
 
 // API exported by Linux, but not declared in the right headers
@@ -1526,20 +1561,27 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 		goto fail;
 	}
 
-	if (args->dfd == AT_FDCWD)
-		relative_to = linux_current->fs->pwd.dentry;
-	else
+	debug_msg("vchroot_expand %d %s\n", args->dfd, args->path);
+
+	if (args->path[0] != '/')
 	{
-		frel = fget(args->dfd);
-
-		if (!frel)
+		if (args->dfd == AT_FDCWD)
+			relative_to = linux_current->fs->pwd.dentry;
+		else
 		{
-			err = -LINUX_ENOENT;
-			goto fail;
-		}
+			frel = fget(args->dfd);
 
-		relative_to = frel->f_path.dentry;
+			if (!frel)
+			{
+				err = -LINUX_ENOENT;
+				goto fail;
+			}
+
+			relative_to = frel->f_path.dentry;
+		}
 	}
+	else
+		relative_to = vchroot->mnt_root;
 
 	err = vfs_path_lookup(relative_to, vchroot, args->path, (args->flags & VCHROOT_FOLLOW) ? LOOKUP_FOLLOW : 0, &path);
 	if (err == -LINUX_ENOENT)
@@ -1580,6 +1622,8 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 			err = PTR_ERR(strpath);
 			goto fail;
 		}
+
+		debug_msg("- vchroot d_path returned %s\n", strpath);
 
 		task_lock(task);
 		int rootlen = strlen(task->vchroot_path);
@@ -1652,7 +1696,7 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args
 	struct vfsmount* vchroot = mntget(task->vchroot);
 
 	p.dentry = f->f_path.dentry;
-	p.mnt = vchroot ? vchroot : linux_current->fs->root.mnt;
+	p.mnt = vchroot ? vchroot : f->f_path.mnt;
 
 	str = (char*) __get_free_page(GFP_KERNEL);
 	char* strpath = d_path(&p, str, PAGE_SIZE);
@@ -1663,7 +1707,7 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args
 		goto fail;
 	}
 
-	if (strcmp(strpath, "/") == 0 && p.dentry->d_sb != p.mnt->mnt_sb)
+	if (vchroot && strcmp(strpath, "/") == 0 && p.dentry->d_sb != p.mnt->mnt_sb)
 	{
 		// Path resolution gave us /, but we know it's wrong, because it is not really / of our vchroot
 		// -> we need to do this differently.
@@ -1685,7 +1729,7 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args
 		if (!under_vchroot)
 		{
 			// and prepend /sysroot to the result.
-			const char root[] = "/sysroot";
+			const char root[] = "/Volumes/SystemRoot";
 			int rootlen = sizeof(root) - 1;
 
 			const int pathlen = strlen(strpath) + 1;
@@ -1730,10 +1774,12 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* in_args
 		const int pathlen = strlen(strpath) + 1;
 		if (pathlen > args.maxlen)
 		{
+			debug_msg("FDPATH #1 %d>%d", pathlen, args.maxlen);
 			err = -LINUX_ENAMETOOLONG;
 			goto fail;
 		}
 
+		debug_msg("FDPATH %d resolved to %s", args.fd, strpath);
 		if (copy_to_user(args.path, strpath, pathlen))
 		{
 			err = -LINUX_EFAULT;
