@@ -627,6 +627,38 @@ task_resume(
 }
 
 kern_return_t
+task_map_corpse_info(
+	task_t task,
+	task_t corpse_task,
+	vm_address_t *kcd_addr_begin,
+	uint32_t *kcd_size)
+{
+        kprintf("not implemented: task_map_corpse_info()\n");
+        return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_set_phys_footprint_limit(
+	task_t task,
+	int new_limit_mb,
+	int *old_limit_mb)
+{
+        kprintf("not implemented: task_set_phys_footprint_limit()\n");
+        return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_map_corpse_info_64(
+	task_t task,
+	task_t corpse_task,
+	mach_vm_address_t *kcd_addr_begin,
+	mach_vm_size_t *kcd_size)
+{
+        kprintf("not implemented: task_map_corpse_info_64()\n");
+        return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
 task_pidsuspend_locked(task_t task)
 {
         kprintf("not implemented: task_pidsuspend_locked()\n");

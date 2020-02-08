@@ -670,6 +670,34 @@ wait_result_t thread_block(thread_continue_t cont)
 
 #undef current
 
+kern_return_t 
+thread_set_mach_voucher(
+	thread_t		thread,
+	ipc_voucher_t		voucher)
+{
+    printf("NOT IMPLEMENTED: thread_set_mach_voucher\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t 
+thread_get_mach_voucher(
+	thread_act_t		thread,
+	mach_voucher_selector_t which,
+	ipc_voucher_t		*voucherp)
+{
+    printf("NOT IMPLEMENTED: thread_get_mach_voucher\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+thread_swap_mach_voucher(
+	thread_t		thread,
+	ipc_voucher_t		new_voucher,
+	ipc_voucher_t		*in_out_old_voucher)
+{
+    printf("NOT IMPLEMENTED: thread_swap_mach_voucher\n");
+	return KERN_NOT_SUPPORTED;
+}
 
 #if 0
 kern_return_t thread_set_cthread_self (uint32_t cthread)

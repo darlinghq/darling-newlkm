@@ -8,6 +8,7 @@
 #include <kern/clock.h>
 #include <kern/ipc_kobject.h>
 #include <UserNotification/UNDTypes.h>
+#include <mach_debug/zone_info.h>
 
 
 
@@ -217,6 +218,19 @@ nanotime_to_absolutetime(
         uint64_t                *result)
 {
         kprintf("not implemented: nanotime_to_absolutetime()");
+}
+
+kern_return_t
+mach_memory_info(
+	host_priv_t		host,
+	mach_zone_name_array_t	*namesp,
+	mach_msg_type_number_t  *namesCntp,
+	mach_zone_info_array_t	*infop,
+	mach_msg_type_number_t  *infoCntp,
+	mach_memory_info_array_t *memoryInfop,
+	mach_msg_type_number_t   *memoryInfoCntp)
+{
+       kprintf("not implemented: mach_memory_info()");
 }
 
 #if 0

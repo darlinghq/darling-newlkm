@@ -747,3 +747,154 @@ kern_return_t task_exception_notify(exception_type_t exc, mach_exception_data_ty
     kprintf("not implemented: task_exception_notify\n");
     return KERN_FAILURE;
 }
+
+
+/* Placeholders for the task set/get voucher interfaces */
+kern_return_t 
+task_get_mach_voucher(
+	task_t			task,
+	mach_voucher_selector_t __unused which,
+	ipc_voucher_t		*voucher)
+{
+	if (TASK_NULL == task)
+		return KERN_INVALID_TASK;
+
+	*voucher = NULL;
+	return KERN_SUCCESS;
+}
+
+kern_return_t 
+task_set_mach_voucher(
+	task_t			task,
+	ipc_voucher_t		__unused voucher)
+{
+	if (TASK_NULL == task)
+		return KERN_INVALID_TASK;
+
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+task_swap_mach_voucher(
+	task_t			task,
+	ipc_voucher_t		new_voucher,
+	ipc_voucher_t		*in_out_old_voucher)
+{
+	if (TASK_NULL == task)
+		return KERN_INVALID_TASK;
+
+	*in_out_old_voucher = new_voucher;
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+task_get_dyld_image_infos(__unused task_t task,
+                          __unused dyld_kernel_image_info_array_t * dyld_images,
+                          __unused mach_msg_type_number_t * dyld_imagesCnt)
+{
+    printf("NOT IMPLEMENTED: task_get_dyld_image_infos\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_register_dyld_image_infos(task_t task,
+                               dyld_kernel_image_info_array_t infos_copy,
+                               mach_msg_type_number_t infos_len)
+{
+    printf("NOT IMPLEMENTED: task_register_dyld_image_infos\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_unregister_dyld_image_infos(task_t task,
+                                 dyld_kernel_image_info_array_t infos_copy,
+                                 mach_msg_type_number_t infos_len)
+{
+	printf("NOT IMPLEMENTED: task_unregister_dyld_image_infos\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_register_dyld_set_dyld_state(__unused task_t task,
+                                  __unused uint8_t dyld_state)
+{
+    printf("NOT IMPLEMENTED: task_register_dyld_set_dyld_state\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_register_dyld_shared_cache_image_info(task_t task,
+                                           dyld_kernel_image_info_t cache_img,
+                                           __unused boolean_t no_cache,
+                                           __unused boolean_t private_cache)
+{
+    printf("NOT IMPLEMENTED: task_register_dyld_shared_cache_image_info\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_generate_corpse(
+	task_t task,
+	ipc_port_t *corpse_task_port)
+{
+    printf("NOT IMPLEMENTED: task_generate_corpse\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+task_purgable_info(
+	task_t			task,
+	task_purgable_info_t	*stats)
+{
+    printf("NOT IMPLEMENTED: task_purgable_info\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+extern kern_return_t task_suspend(task_t     task);
+extern kern_return_t task_resume(task_t     task);
+
+kern_return_t
+task_suspend2(
+	task_t			task,
+	task_suspension_token_t *suspend_token)
+{
+	kern_return_t	 kr;
+ 
+	kr = task_suspend(task);
+	if (kr != KERN_SUCCESS) {
+		*suspend_token = TASK_NULL;
+		return (kr);
+	}
+
+	/*
+	 * Take a reference on the target task and return that to the caller
+	 * as a "suspension token," which can be converted into an SO right to
+	 * the now-suspended task's resume port.
+	 */
+	task_reference_internal(task);
+	*suspend_token = task;
+
+	return (KERN_SUCCESS);
+}
+
+kern_return_t
+task_resume2(
+	task_suspension_token_t		task)
+{
+	kern_return_t kr;
+
+	kr = task_resume(task);
+	task_suspension_token_deallocate(task);
+
+	return (kr);
+}
+
+kern_return_t
+task_register_dyld_get_process_state(__unused task_t task,
+                                     __unused dyld_kernel_process_info_t * dyld_process_state)
+{
+    printf("NOT IMPLEMENTED: task_register_dyld_get_process_state\n");
+	return KERN_NOT_SUPPORTED;
+}
+
+
