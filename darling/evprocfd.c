@@ -123,7 +123,7 @@ void evprocfd_notify(struct evprocfd_ctx* ctx, unsigned int event, unsigned int 
 {
 	struct evprocfd_event_entry* ev;
 
-	debug_msg("Received event 0x%x from PID %d\n", event, ctx->pid);
+	debug_msg("Received event 0x%x from PID %d with ctx %p\n", event, ctx->pid, ctx);
 	if (event != NOTE_CHILD && !(event & ctx->flags)
 		&& !(event == NOTE_FORK || (ctx->flags & NOTE_TRACK))
 		&& event != NOTE_EXIT)
@@ -161,6 +161,8 @@ int evprocfd_release(struct inode* inode, struct file* file)
 {
 	struct evprocfd_ctx* ctx = (struct evprocfd_ctx*) file->private_data;
 	struct list_head *next, *tmp;
+
+	debug_msg("evprocfd_release with ctx %p\n", ctx);
 
 	// deregister from task registry
 	darling_task_notify_deregister(ctx->pid, ctx);
