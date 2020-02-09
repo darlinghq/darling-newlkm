@@ -150,7 +150,6 @@ CFLAGS_UNDReply_server.o := $(miggen_cflags)
 CFLAGS_mach_port_server.o := $(miggen_cflags)
 #CFLAGS_default_pager_object_server.o := $(miggen_cflags)
 CFLAGS_mach_vm_server.o := $(miggen_cflags)
-CFLAGS_memory_object_name_server.o := $(miggen_cflags)
 CFLAGS_mach_host_server.o := $(miggen_cflags)
 CFLAGS_thread_act_server.o := $(miggen_cflags)
 CFLAGS_processor_set_server.o := $(miggen_cflags)
@@ -174,7 +173,6 @@ CFLAGS_$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o := $(miggen_cflags
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_port_server.o := $(miggen_cflags)
 #CFLAGS_$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o := $(miggen_cflags)
-CFLAGS_$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_host_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_voucher_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_voucher_attr_control_server.o := $(miggen_cflags)
@@ -309,7 +307,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		$(MIGDIR_REL)/osfmk/mach/mach_voucher_server.o \
 		$(MIGDIR_REL)/osfmk/mach/mach_voucher_attr_control_server.o \
 		$(MIGDIR_REL)/osfmk/mach/processor_set_server.o \
-		$(MIGDIR_REL)/osfmk/mach/memory_object_name_server.o \
 		$(MIGDIR_REL)/osfmk/mach/thread_act_server.o \
 		$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o \
 		$(MIGDIR_REL)/osfmk/mach/notify_user.o \
