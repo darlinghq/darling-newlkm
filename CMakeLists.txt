@@ -14,6 +14,7 @@ include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/osfmk)
 set(MIG_USER_SOURCE_SUFFIX "_user.c")
 set(MIG_SERVER_SOURCE_SUFFIX "_server.c")
 set(MIG_SERVER_HEADER_SUFFIX "_server.h")
+set(MIG_NO_XTRACE 1)
 
 mig(osfmk/device/device.defs)
 mig(osfmk/UserNotification/UNDReply.defs)
