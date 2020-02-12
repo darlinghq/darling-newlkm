@@ -510,6 +510,8 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	}
 	
 	exec_case = my_task->map->linux_task == NULL;
+	if (!exec_case)
+		darling_task_post_notification(current->tgid, NOTE_EXIT, current->exit_code);
 	darling_task_deregister(my_task);
 	// darling_thread_deregister(NULL);
 	

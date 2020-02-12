@@ -364,8 +364,6 @@ void darling_task_free(struct registry_entry* entry)
 	int i;
 	struct list_head *pos, *tmp;
 
-	darling_task_post_notification_internal(entry, NOTE_EXIT, current->exit_code);
-
 	list_for_each_safe(pos, tmp, &entry->proc_notification)
 	{
 		struct proc_notification* dn = list_entry(pos, struct proc_notification, list);
@@ -387,6 +385,7 @@ void darling_task_free(struct registry_entry* entry)
 void darling_task_deregister(task_t t)
 {
 	struct rb_node *node, *parent = NULL;
+
 	write_lock(&my_task_lock);
 
 	node = all_tasks.rb_node;
@@ -407,8 +406,8 @@ void darling_task_deregister(task_t t)
 			rb_erase(node, &all_tasks);
 			task_count--;
 
-			write_unlock(&my_task_lock);
 			darling_task_free(entry);
+			write_unlock(&my_task_lock);
 
 			return;
 		}
@@ -492,7 +491,6 @@ _Bool darling_task_notify_register(unsigned int pid, struct evprocfd_ctx* efd)
 
    	e = darling_task_get_entry_unlocked(pid);
    	
-   	read_unlock(&my_task_lock);
 	if (e == NULL)
 		goto out;
 
@@ -506,6 +504,7 @@ _Bool darling_task_notify_register(unsigned int pid, struct evprocfd_ctx* efd)
 	rv = true;
 
 out:
+	read_unlock(&my_task_lock);
 	return rv;
 }
 
@@ -519,7 +518,6 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 
 	e = darling_task_get_entry_unlocked(pid);
 
-	read_unlock(&my_task_lock);
 	if (e == NULL)
 	{
 		debug_msg("darling_task_notify_deregister failed to get task for PID %d\n", pid);
@@ -543,6 +541,7 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 	mutex_unlock(&e->mut_proc_notification);
 
 out:
+	read_unlock(&my_task_lock);
 	return rv;
 }
 
