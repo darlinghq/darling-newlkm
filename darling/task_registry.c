@@ -521,7 +521,10 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 
 	read_unlock(&my_task_lock);
 	if (e == NULL)
+	{
+		debug_msg("darling_task_notify_deregister failed to get task for PID %d\n", pid);
 		goto out;
+	}
 
 	mutex_lock(&e->mut_proc_notification);
 	list_for_each(next, &e->proc_notification)
@@ -530,6 +533,7 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 
 		if (dn->efd == efd)
 		{
+			debug_msg("darling_task_notify_deregister found proc notification entry for ctx %p, deleting it...\n", efd);
 			rv = true;
 			list_del(&dn->list);
 			kfree(dn);
