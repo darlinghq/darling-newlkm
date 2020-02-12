@@ -514,6 +514,7 @@ void duct_thread_destroy(thread_t thread)
 {
 	task_t task;
 	task = thread->task;
+	thread->linux_task = NULL;
 	
 	thread->active = FALSE;
 	hw_atomic_add(&task->active_thread_count, -1);
