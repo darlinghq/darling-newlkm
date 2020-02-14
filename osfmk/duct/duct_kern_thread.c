@@ -47,6 +47,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <darling/task_registry.h>
 #include <darling/debug_print.h>
 
+#define LockTimeOutUsec 1000*500
+
 static struct zone          *thread_zone;
 static lck_grp_attr_t       thread_lck_grp_attr;
 lck_attr_t                  thread_lck_attr;
@@ -648,17 +650,10 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
 wait_result_t thread_block(thread_continue_t cont)
 {
     thread_t thread = current_thread();
-    thread->wait_result = THREAD_AWAKENED;
-    
-    // NOTE: This is now done above in thread_mark_wait_locked()
-    // set_current_state(TASK_INTERRUPTIBLE);
     
     schedule();
     
-    if (signal_pending(linux_current))
-        thread->wait_result = THREAD_INTERRUPTED;
-    
-    set_current_state(TASK_RUNNING);
+    clear_wait(thread, signal_pending(linux_current) ? THREAD_INTERRUPTED : THREAD_AWAKENED);
 
     if (cont != THREAD_CONTINUE_NULL)
     {
@@ -668,6 +663,75 @@ wait_result_t thread_block(thread_continue_t cont)
     
     return thread->wait_result;
 }
+
+// COPED FROM kern/sched_prim.c START
+
+__private_extern__ kern_return_t
+clear_wait_internal(
+	thread_t		thread,
+	wait_result_t	wresult)
+{
+	uint32_t	i = LockTimeOutUsec;
+	struct waitq *waitq = thread->waitq;
+	
+	do {
+		if (wresult == THREAD_INTERRUPTED && (thread->state & TH_UNINT))
+			return (KERN_FAILURE);
+
+		if (waitq != NULL) {
+			if (!waitq_pull_thread_locked(waitq, thread)) {
+				thread_unlock(thread);
+				delay(1);
+				if (i > 0 && !machine_timeout_suspended())
+					i--;
+				thread_lock(thread);
+				if (waitq != thread->waitq)
+					return KERN_NOT_WAITING;
+				continue;
+			}
+		}
+
+		/* TODO: Can we instead assert TH_TERMINATE is not set?  */
+		if ((thread->state & (TH_WAIT|TH_TERMINATE)) == TH_WAIT)
+			return (thread_go(thread, wresult));
+		else
+			return (KERN_NOT_WAITING);
+	} while (i > 0);
+
+	panic("clear_wait_internal: deadlock: thread=%p, wq=%p, cpu=%d\n",
+		  thread, waitq, cpu_number());
+
+	return (KERN_FAILURE);
+}
+
+
+/*
+ *	clear_wait:
+ *
+ *	Clear the wait condition for the specified thread.  Start the thread
+ *	executing if that is appropriate.
+ *
+ *	parameters:
+ *	  thread		thread to awaken
+ *	  result		Wakeup result the thread should see
+ */
+kern_return_t
+clear_wait(
+	thread_t		thread,
+	wait_result_t	result)
+{
+	kern_return_t ret;
+	spl_t		s;
+
+	s = splsched();
+	thread_lock(thread);
+	ret = clear_wait_internal(thread, result);
+	thread_unlock(thread);
+	splx(s);
+	return ret;
+}
+
+// COPED FROM kern/sched_prim.c END
 
 #undef current
 
