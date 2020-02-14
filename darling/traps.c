@@ -152,7 +152,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_mk_timer_arm_trap, mk_timer_arm_entry),
 	TRAP(NR_mk_timer_cancel_trap, mk_timer_cancel_entry),
 	TRAP(NR_mk_timer_destroy_trap, mk_timer_destroy_entry),
-	
+
 	// TASKS
 	TRAP(NR_task_for_pid_trap, task_for_pid_entry),
 	TRAP(NR_pid_for_task_trap, pid_for_task_entry),
@@ -210,8 +210,8 @@ fail:
 }
 static void mach_exit(void)
 {
-	darling_xnu_deinit();
 	psynch_exit();
+	darling_xnu_deinit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 
@@ -221,136 +221,61 @@ static void mach_exit(void)
 	commpage_free(commpage64);
 }
 
-extern kern_return_t task_get_special_port(task_t, int which, ipc_port_t*);
-extern kern_return_t task_set_special_port(task_t, int which, ipc_port_t);
-static void darling_ipc_inherit(task_t old_task, task_t new_task);
-
 int mach_dev_open(struct inode* ino, struct file* file)
 {
 	kern_return_t ret;
-	task_t new_task, parent_task, old_task;
+	task_t new_task, inherit_task, old_task, parent_task = NULL;
 	thread_t new_thread;
-	int fd_old = -1;
-	int ppid_fork = -1;
-	
+	int ppid = -1;
+
 	debug_msg("Setting up new XNU task for pid %d\n", linux_current->tgid);
 
-	// Create a new task_t
-	ret = duct_task_create_internal(NULL, false, true, &new_task, linux_current);
-	if (ret != KERN_SUCCESS)
-		return -LINUX_EINVAL;
-
-	file->private_data = new_task;
-	// [1] = euid
-	// [2] = egid
-	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
-	
 	// Are we being opened after fork or execve?
 	old_task = darling_task_get_current();
 	if (old_task != NULL)
 	{
-		// execve case:
-		// 1) Take over the previously used bootstrap port
-		// 2) Find the old fd used before execve and close it
-		
-		int fd;
-		struct files_struct* files;
-		
-		new_task->tracer = old_task->tracer;
+		// execve case
+		inherit_task = old_task;
+	}
+	else
+	{
+		// fork case
+		ppid = linux_current->parent->tgid;
+		inherit_task = parent_task = darling_task_get(ppid);
+	}
 
-		task_lock(old_task);
-		new_task->vchroot = mntget(old_task->vchroot);
+	ret = duct_task_create_internal(inherit_task, false, true, &new_task, linux_current);
+	if (ret != KERN_SUCCESS)
+		goto out;
+
+	if (inherit_task != NULL)
+	{
+		new_task->tracer = inherit_task->tracer;
+
+		task_lock(inherit_task);
+		new_task->vchroot = mntget(inherit_task->vchroot);
+
 		if (new_task->vchroot)
 		{
-			strcpy(new_task->vchroot_path, old_task->vchroot_path);
+			strcpy(new_task->vchroot_path, inherit_task->vchroot_path);
 			debug_msg("- vchroot: %s\n", new_task->vchroot_path);
 		}
 		else
 			debug_msg("- no vchroot\n");
-		task_unlock(old_task);
+		task_unlock(inherit_task);
 
-		darling_ipc_inherit(old_task, new_task);
-
-		if (old_task->map->linux_task != NULL)
-		{
-			put_task_struct(old_task->map->linux_task);
-			old_task->map->linux_task = NULL;
-		}
-		
-		// Inherit UID and GID
-		new_task->audit_token.val[1] = old_task->audit_token.val[1];
-		new_task->audit_token.val[2] = old_task->audit_token.val[2];
-
-#if 0
-		// find the old fd and close it (later)
-		files = linux_current->files;
-		
-		spin_lock(&files->file_lock);
-		
-		for (fd = 0; fd < files_fdtable(files)->max_fds; fd++)
-		{
-			struct file* f = fcheck_files(files, fd);
-			
-			if (!f)
-				continue;
-			
-			if (f != file && f->f_op == &mach_chardev_ops)
-			{
-				fd_old = fd;
-				break;
-			}
-		}
-		
-		spin_unlock(&files->file_lock);
-#endif
+		new_task->audit_token.val[1] = inherit_task->audit_token.val[1];
+		new_task->audit_token.val[2] = inherit_task->audit_token.val[2];
 	}
 	else
 	{
-		unsigned int ppid;
-
-		// fork case:
-		// 1) Take over parent's bootstrap port
-		// 2) Signal the parent that it can continue running now
-		
-		ppid = linux_current->parent->tgid;
-
-		parent_task = darling_task_get(ppid);
-		debug_msg("- Fork case detected, ppid=%d, parent_task=%p\n", ppid, parent_task);
-		if (parent_task != NULL)
-		{
-			new_task->tracer = parent_task->tracer;
-			
-			task_lock(parent_task);
-			new_task->vchroot = mntget(parent_task->vchroot);
-			if (new_task->vchroot)
-			{
-				strcpy(new_task->vchroot_path, parent_task->vchroot_path);
-				debug_msg("- vchroot: %s\n", new_task->vchroot_path);
-			}
-			else
-				debug_msg("- no vchroot\n");
-			task_unlock(parent_task);
-
-			darling_ipc_inherit(parent_task, new_task);
-			task_deallocate(parent_task);
-
-			// Inherit UID and GID
-			new_task->audit_token.val[1] = parent_task->audit_token.val[1];
-			new_task->audit_token.val[2] = parent_task->audit_token.val[2];
-
-			ppid_fork = ppid;
-		}
-		else
-		{
-			// PID 1 case (or manually run mldr)
-			debug_msg("This task has no Darling parent\n");
-
-			new_task->tracer = 0;
-			// UID and GID are left as 0
-		}
+		// PID 1 case (or manually run Mach-O)
+		new_task->tracer = 0;
+		// UID and GID are left as 0, vchroot as NULL
 	}
+	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
+	file->private_data = new_task;
 
-	
 	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
 
 	// Create a new thread_t
@@ -358,52 +283,36 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	if (ret != KERN_SUCCESS)
 	{
 		duct_task_destroy(new_task);
-		return -LINUX_EINVAL;
+		goto out;
 	}
 
 	debug_msg("thread %p refc %d at #1\n", new_thread, new_thread->ref_count);
 	darling_task_register(new_task);
 	darling_thread_register(new_thread);
-	
+
 	debug_msg("thread refc %d at #2\n", new_thread->ref_count);
 	task_deallocate(new_task);
 	thread_deallocate(new_thread);
-	
-	// fork case only
-	if (ppid_fork != -1)
+
+out:
+	if (old_task != NULL)
 	{
-		darling_task_fork_child_done();
-		darling_task_post_notification(ppid_fork, NOTE_FORK, task_pid_vnr(linux_current));
+		put_task_struct(old_task->map->linux_task);
+		old_task->map->linux_task = NULL;
 	}
-	
-	return 0;
-}
-
-// Only select ports are inherited across fork or execve.
-// Copy them over.
-static void darling_ipc_inherit(task_t old_task, task_t new_task)
-{
-	int i;
-
-	// Inherit the bootstrap port
-	ipc_port_t bootstrap_port;
-	task_get_bootstrap_port(old_task, &bootstrap_port);
-	
-	debug_msg("Setting bootstrap port from old/parent task: %p\n", bootstrap_port);
-	if (bootstrap_port != NULL)
-		task_set_bootstrap_port(new_task, bootstrap_port);
-
-	// Copy exception ports
-	for (i = FIRST_EXCEPTION; i < EXC_TYPES_COUNT; i++)
+	if (parent_task != NULL)
 	{
-		if (IP_VALID(old_task->exc_actions[i].port))
+		task_deallocate(parent_task);
+		if (ret == KERN_SUCCESS)
 		{
-			new_task->exc_actions[i].port = ipc_port_copy_send(old_task->exc_actions[i].port);
-			new_task->exc_actions[i].behavior = old_task->exc_actions[i].behavior;
-			new_task->exc_actions[i].privileged = old_task->exc_actions[i].privileged;
-			debug_msg("Copied over exception port %p\n", new_task->exc_actions[i].port);
+			darling_task_fork_child_done();
+			darling_task_post_notification(ppid, NOTE_FORK, task_pid_vnr(linux_current));
 		}
 	}
+
+	if (ret != KERN_SUCCESS)
+		return -LINUX_EINVAL;
+	return 0;
 }
 
 // No vma from 4.11
