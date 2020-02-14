@@ -909,7 +909,26 @@ ipc_mqueue_receive_results(wait_result_t saved_wait_result)
 			return;
 
 		default:
+/*
+[ 6785.534456]  ? ipc_mqueue_receive_results+0x90/0x90 [darling_mach]
+[ 6785.535683]  ipc_mqueue_receive_results+0x4d/0x90 [darling_mach]
+[ 6785.536938]  ipc_mqueue_receive_continue+0xc/0x20 [darling_mach]
+[ 6785.538207]  compat_thread_block+0x62/0x90 [darling_mach]
+[ 6785.539354]  ipc_mqueue_receive+0x84/0xb0 [darling_mach]
+[ 6785.540451]  mach_msg_overwrite_trap+0x23d/0x310 [darling_mach]
+[ 6785.541693]  mach_msg_overwrite_entry+0xb8/0xd0 [darling_mach]
+[ 6785.542936]  ? _kernelrpc_mach_port_allocate_entry+0x70/0x70 [darling_mach]
+[ 6785.544344]  mach_dev_ioctl+0xa8/0x240 [darling_mach]
+[ 6785.545385]  do_vfs_ioctl+0x40e/0x670
+[ 6785.546155]  ksys_ioctl+0x5e/0x90
+[ 6785.546827]  ? __x64_sys_gettimeofday+0x6e/0xc0
+[ 6785.547768]  __x64_sys_ioctl+0x16/0x20
+[ 6785.548552]  do_syscall_64+0x52/0x160
+[ 6785.549331]  entry_SYSCALL_64_after_hwframe+0x44/0xa9
+*/
+			printf("!!! wait_result = %d", self->ith_state);
 			panic("ipc_mqueue_receive_results: strange ith_state");
+			return;
 		}
 
 	default:
