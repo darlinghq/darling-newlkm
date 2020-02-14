@@ -147,7 +147,7 @@ proc_pid(void * proc)
 void
 thread_poll_yield(thread_t self)
 {
-        kprintf("not implemented: thread_poll_yield()\n");
+        // kprintf("not implemented: thread_poll_yield()\n");
 }
 
 // osfmk/i386/trap.c

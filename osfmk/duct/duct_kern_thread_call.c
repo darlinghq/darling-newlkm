@@ -220,6 +220,32 @@ thread_call_enter_delayed(
 	return queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns)) == 0;
 }
 
+boolean_t
+thread_call_enter1_delayed(
+        thread_call_t           call,
+        thread_call_param_t     param1,
+        uint64_t            deadline)
+{
+    ((call_entry_t)call)->param1 = param1;
+	return thread_call_enter_delayed(call, deadline);
+}
+
+boolean_t
+thread_call_enter(
+        thread_call_t       call)
+{
+	return queue_delayed_work(_thread_call_wq, &call->tc_work, 0) == 0;
+}
+
+boolean_t
+thread_call_enter1(
+        thread_call_t           call,
+        thread_call_param_t     param1)
+{
+	((call_entry_t)call)->param1 = param1;
+	return thread_call_enter(call);
+}
+
 static void
 thread_call_worker(struct work_struct* work)
 {

@@ -228,6 +228,7 @@ thread_call_free(
  *  Returns TRUE if the call was
  *  already on a queue.
  */
+ /*
 boolean_t
 thread_call_enter(
         thread_call_t       call)
@@ -244,6 +245,7 @@ thread_call_enter1(
         kprintf("not implemented: thread_call_enter1()\n");
         return 0;
 }
+*/
 
 /*
  *  thread_call_enter_delayed:
@@ -264,7 +266,7 @@ thread_call_enter_delayed(
         return 0;
 }
 #endif
-
+/*
 boolean_t
 thread_call_enter1_delayed(
         thread_call_t           call,
@@ -274,6 +276,7 @@ thread_call_enter1_delayed(
         kprintf("not implemented: thread_call_enter1_delayed()\n");
         return 0;
 }
+*/
 
 #if 0
 /*
