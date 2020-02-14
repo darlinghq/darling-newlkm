@@ -41,6 +41,7 @@
 #include <duct/duct_pre_xnu.h>
 #endif
 
+#include <darling/debug_print.h>
 
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
@@ -244,7 +245,7 @@ semaphore_destroy_internal(
 	semaphore_t		semaphore)
 {
 #if defined (__DARLING__)
-        printk (KERN_NOTICE "not implemented: semaphore_destroy (), sema: 0x%p\n", semaphore);
+        debug_msg( "not implemented: semaphore_destroy (), sema: 0x%p\n", semaphore);
 #else
 	int			old_count;
 
@@ -379,7 +380,7 @@ semaphore_signal_internal(
 	int				options)
 {
 #if defined (__DARLING__)
-        printk (KERN_NOTICE "thread: sema: 0x%p, thread: 0x%p, options: 0x%x\n", semaphore, thread, options);
+        debug_msg( "thread: sema: 0x%p, thread: 0x%p, options: 0x%x\n", semaphore, thread, options);
 
         // WC - should lock as we are accessing internally
         if (!semaphore->active) {
@@ -387,7 +388,7 @@ semaphore_signal_internal(
         }
 
         if (thread != THREAD_NULL) {
-                printk (KERN_NOTICE "thread not null: not implemented\n");
+                debug_msg( "thread not null: not implemented\n");
         }
 
         up (&semaphore->lsem);
@@ -737,18 +738,18 @@ semaphore_wait_internal(
                 jiffies     = nsecs_to_jiffies (nsecs);
         }
 
-        printk (KERN_NOTICE "- to semwait %ld jiffies\n", jiffies);
+        debug_msg( "- to semwait %ld jiffies\n", jiffies);
 
         int     downret = down_interruptible_timeout (&wait_semaphore->lsem, jiffies);
-        printk (KERN_NOTICE "- tdownret: 0x%x\n", downret);
+        debug_msg( "- tdownret: 0x%x\n", downret);
 
         if (downret == -LINUX_ETIME) {
-                printk (KERN_NOTICE "- LINUX_ETIME: Timer expired\n");
+                debug_msg( "- LINUX_ETIME: Timer expired\n");
                 kr = KERN_OPERATION_TIMED_OUT;
         }
 
 	if (downret == -LINUX_EINTR) {
-		printk (KERN_NOTICE "- LINUX_EINTR: Interrupted\n");
+		debug_msg( "- LINUX_EINTR: Interrupted\n");
 		kr = KERN_ABORTED;
 	}
 

@@ -74,6 +74,7 @@
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_printf.h>
+#include <darling/debug_print.h>
 #endif
 
 #include <mach_debug.h>
@@ -351,7 +352,7 @@ ipc_kobject_server(
 	{
 	    if (ptr) {
             #if defined (__DARLING__)
-                printk ( KERN_NOTICE "- kobject routine: %pF\n", ptr->routine);
+                debug_msg( "- kobject routine: %pF\n", ptr->routine);
             #endif
 		/*
 		 * Check if the port is a task port, if its a task port then

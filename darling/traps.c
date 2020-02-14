@@ -32,6 +32,7 @@
 #include <linux/fdtable.h>
 #include <linux/syscalls.h>
 #include <linux/fs_struct.h>
+#include <linux/moduleparam.h>
 #include "traps.h"
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_task.h>
@@ -68,6 +69,7 @@
 typedef long (*trap_handler)(task_t, ...);
 
 static void *commpage32, *commpage64;
+bool debug_output = 0;
 
 struct trap_entry {
 	trap_handler handler;
@@ -1019,7 +1021,7 @@ int task_for_pid_entry(task_t task, struct task_for_pid* in_args)
 	// Convert virtual PID to global PID
 	pid = vpid_to_pid(args.pid);
 
-	printk(KERN_DEBUG "- task_for_pid(): pid %d -> %d\n", args.pid, pid);
+	debug_msg("- task_for_pid(): pid %d -> %d\n", args.pid, pid);
 	if (pid == 0)
 		return KERN_FAILURE;
 	
@@ -1057,7 +1059,7 @@ int task_name_for_pid_entry(task_t task, struct task_name_for_pid* in_args)
 
 	rcu_read_unlock();
 
-	printk(KERN_DEBUG "- task_name_for_pid(): pid %d -> %d\n", args.pid, pid);
+	debug_msg("- task_name_for_pid(): pid %d -> %d\n", args.pid, pid);
 	if (pid == 0)
 		return KERN_FAILURE;
 	
@@ -1137,7 +1139,7 @@ int kernel_printk_entry(task_t task, struct kernel_printk_args* in_args)
 	copyargs(args, in_args);
 
 	args.buf[sizeof(args.buf)-1] = '\0';
-	debug_msg("%s\n", args.buf);
+	printk(KERN_DEBUG "Darling TID %d (PID %d) says: %s\n", current->pid, current->tgid, args.buf);
 
 	return 0;
 }

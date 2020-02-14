@@ -71,6 +71,7 @@
 #if defined (__DARLING__)
 #include <duct/duct.h>
 #include <duct/duct_pre_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 #include <mach/mach_types.h>
@@ -999,7 +1000,7 @@ task_get_special_port(
 	itk_unlock(task);
 
 #if defined (__DARLING__)
-    printk ( KERN_NOTICE "- task_get_special_port(%s) (task: 0x%p, ->itk_bootstrap: 0x%p, which: %d) to return port: 0x%p\n",
+    debug_msg( "- task_get_special_port(%s) (task: 0x%p, ->itk_bootstrap: 0x%p, which: %d) to return port: 0x%p\n",
              linux_current->comm, task, task->itk_bootstrap, which, port );
 #endif
 
@@ -1030,7 +1031,7 @@ task_set_special_port(
 	ipc_port_t	port)
 {
 #if defined (__DARLING__)
-    printk ( KERN_NOTICE "- task_set_special_port(%s) (task: 0x%p, which: %d, port: 0x%p) called\n",
+    debug_msg( "- task_set_special_port(%s) (task: 0x%p, which: %d, port: 0x%p) called\n",
              linux_current->comm, task, which, port );
 #endif
 

@@ -4,6 +4,7 @@
 #include <linux/version.h>
 
 static int group = -1;
+extern bool debug_output;
 
 bool in_darling_group(void)
 {
@@ -30,6 +31,9 @@ bool in_darling_group(void)
 
 module_param(group, int, 0644);
 MODULE_PARM_DESC(group, "Restrict module functionality to given group ID");
+
+module_param(debug_output, bool, 0644);
+MODULE_PARM_DESC(debug_output, "Enable debug output");
 
 MODULE_ALIAS("binfmt-feed");
 MODULE_ALIAS("binfmt-cafe");

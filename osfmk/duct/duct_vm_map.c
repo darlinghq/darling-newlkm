@@ -223,7 +223,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                                           boolean_t src_destroy, boolean_t src_volatile,
                                           vm_map_copy_t * copy_result, boolean_t use_maxprot )
 {
-        printk ( KERN_NOTICE "- vm_map_copyin_common to current_map: %p from src_map: %p, addr: %p, len: 0x%llx destroy: %d\n",
+        debug_msg( "- vm_map_copyin_common to current_map: %p from src_map: %p, addr: %p, len: 0x%llx destroy: %d\n",
                  current_map (), src_map, (void*) src_addr, len, src_destroy );
 
         // dump_stack ();
@@ -294,7 +294,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
                         else
                             return KERN_FAILURE;
 
-                        printk(KERN_NOTICE "- copying OK\n");
+                        debug_msg("- copying OK\n");
                         *copy_result = copy;
                         return KERN_SUCCESS;
                 }
@@ -308,7 +308,7 @@ kern_return_t duct_vm_map_copyin_common ( vm_map_t src_map, vm_map_address_t src
 
 void duct_vm_map_copy_discard (vm_map_copy_t copy)
 {
-        printk(KERN_NOTICE "vm_map_copy_discard\n");
+        debug_msg("vm_map_copy_discard\n");
         if (copy == VM_MAP_COPY_NULL)   return;
 
         switch (copy->type) {
@@ -367,7 +367,7 @@ kern_return_t duct_vm_map_copyout (vm_map_t dst_map, vm_map_address_t * dst_addr
 
 kern_return_t vm_map_copyout_size(vm_map_t dst_map, vm_map_address_t* dst_addr, vm_map_copy_t copy, vm_map_size_t copy_size)
 {
-        printk ( KERN_NOTICE "- vm_map_copyout (current_map: 0x%p) to dst_map: 0x%p, addr: 0x%p, copy: 0x%p\n",
+        debug_msg( "- vm_map_copyout (current_map: 0x%p) to dst_map: 0x%p, addr: 0x%p, copy: 0x%p\n",
                  current_map (), dst_map, (void*) dst_addr, copy );
         switch (copy->type)
         {

@@ -69,7 +69,7 @@ kern_return_t duct_thread_terminate (thread_t thread)
 
         struct task_struct        * linux_task      = thread->linux_task;
 
-        printk ( KERN_NOTICE "- duct_thread_terminate, thread: %p, linux_task: %p, pid: %d, state: %ld\n",
+        debug_msg( "- duct_thread_terminate, thread: %p, linux_task: %p, pid: %d, state: %ld\n",
                  thread, linux_task, linux_task->pid, linux_task->state);
 
         kern_return_t   result;
@@ -94,7 +94,7 @@ kern_return_t duct_thread_terminate (thread_t thread)
         // other threads
         // CPH: refer to zap_other_threads () on how to kill other threads
         // sigaddset (&t->pending.signal, SIGKILL); signal_wake_up ();
-        printk (KERN_NOTICE "- BUG: duct_thread_terminate can't terminate other thread now\n");
+        printf ("- BUG: duct_thread_terminate can't terminate other thread now\n");
         return result;
 }
 

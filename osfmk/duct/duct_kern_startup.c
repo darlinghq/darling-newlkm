@@ -49,6 +49,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/ltable.h>
 #include <kern/thread_call.h>
 #include <libkern/version.h>
+#include <darling/debug_print.h>
 
 extern void compat_init (void);
 
@@ -73,7 +74,7 @@ void duct_kernel_bootstrap (void)
         // kprintf ("%s\n", version); /* log kernel version */
 
     // #define kernel_bootstrap_kprintf(x...) /**/
-    #define kernel_bootstrap_kprintf(x...) printk (KERN_NOTICE x)
+    #define kernel_bootstrap_kprintf(x...) debug_msg (x)
 
         // scale_setup();
 

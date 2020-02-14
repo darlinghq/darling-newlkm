@@ -43,6 +43,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_post_xnu.h"
 
 #include <linux/delay.h>
+#include <darling/debug_print.h>
 
 /* WC - todo wrapper */
 void duct_clock_init (void)
@@ -84,21 +85,21 @@ void clock_get_calendar_microtime (clock_sec_t *secs, clock_usec_t *microsecs)
 #if defined (XNU_USE_MACHTRAP_WRAPPERS_TIMEKEEPING)
 kern_return_t xnusys_mach_timebase_info_trap (struct mach_timebase_info_trap_args * args)
 {
-        printk (KERN_NOTICE "- args->info: 0x%llx\n", args->info);
+        debug_msg( "- args->info: 0x%llx\n", args->info);
 
-        // printk (KERN_NOTICE "xnusys_mach_timebase_info_trap: is invalid\n");
+        // debug_msg( "xnusys_mach_timebase_info_trap: is invalid\n");
         kern_return_t   retval  = duct_mach_timebase_info_trap (args);
-        // printk (KERN_NOTICE "- retval: %d", retval);
+        // debug_msg( "- retval: %d", retval);
         return retval;
 }
 
 kern_return_t xnusys_mach_wait_until_trap (struct mach_wait_until_trap_args * args)
 {
-        printk (KERN_NOTICE "- args->deadline: 0x%x\n", (unsigned int) args->deadline);
+        debug_msg( "- args->deadline: 0x%x\n", (unsigned int) args->deadline);
 
-        printk (KERN_NOTICE "xnusys_mach_wait_until_trap: not implemented\n");
+        debug_msg( "xnusys_mach_wait_until_trap: not implemented\n");
         // kern_return_t   retval  = mach_mach_wait_until_trap (args);
-        // printk (KERN_NOTICE "- retval: %d", retval);
+        // debug_msg( "- retval: %d", retval);
         // return retval;
         return 0;
 }

@@ -111,6 +111,7 @@ extern char	*proc_name_address(void *p);
 
 #if defined (__DARLING__)
 #include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 #if defined (__DARLING__)
@@ -143,7 +144,7 @@ ipc_mqueue_init(
 	boolean_t	is_set,
 	uint64_t	*reserved_link)
 {
-        // printk (KERN_NOTICE "- mqueue 0x%p init, is set: %d\n", mqueue, is_set ? 1 : 0);
+        // debug_msg( "- mqueue 0x%p init, is set: %d\n", mqueue, is_set ? 1 : 0);
 
 	if (is_set) {
 		waitq_set_init(&mqueue->imq_set_queue,
@@ -313,7 +314,7 @@ ipc_mqueue_add(
 	uint64_t	*reserved_link,
 	uint64_t	*reserved_prepost)
 {
-    printk (KERN_NOTICE "- ipc_mqueue_add (0x%p, 0x%p) called\n", port_mqueue, set_mqueue);
+    debug_msg( "- ipc_mqueue_add (0x%p, 0x%p) called\n", port_mqueue, set_mqueue);
 	struct waitq     *port_waitq = &port_mqueue->imq_wait_queue;
 	struct waitq_set *set_waitq = &set_mqueue->imq_set_queue;
 	ipc_kmsg_queue_t kmsgq;
@@ -344,7 +345,7 @@ ipc_mqueue_add(
 	     kmsg != IKM_NULL;
 	     kmsg = next) {
 		next = ipc_kmsg_queue_next(kmsgq, kmsg);
-		printf("There is a pending message on port\n");
+		debug_msg("There is a pending message on port\n");
 
 		for (;;) {
 			thread_t th;
@@ -361,7 +362,7 @@ ipc_mqueue_add(
 
 			if (th == THREAD_NULL)
 			{
-				printf("THREAD_NULL\n");
+				debug_msg("THREAD_NULL\n");
 				goto leave;
 			}
 
@@ -455,7 +456,7 @@ void
 ipc_mqueue_changed(
 	ipc_mqueue_t		mqueue)
 {
-    printk (KERN_NOTICE "- ipc_mqueue_changed (0x%p) called\n", mqueue);
+    debug_msg( "- ipc_mqueue_changed (0x%p) called\n", mqueue);
     waitq_wakeup64_all_locked(&mqueue->imq_wait_queue,
                   IPC_MQUEUE_RECEIVE,
                   THREAD_RESTART,
@@ -491,7 +492,7 @@ ipc_mqueue_send(
 	mach_msg_option_t	option,
 	mach_msg_timeout_t  send_timeout)
 {
-        printk (KERN_NOTICE "- ipc_mqueue_send (0x%p) called\n", mqueue);
+        debug_msg( "- ipc_mqueue_send (0x%p) called\n", mqueue);
 
 	int wresult;
 
@@ -638,7 +639,7 @@ extern void ipc_mqueue_override_send(
 void
 ipc_mqueue_release_msgcount(ipc_mqueue_t port_mq, ipc_mqueue_t set_mq)
 {
-    // printk (KERN_NOTICE "- ipc_mqueue_release_msgcount (0x%p) called\n", mqueue);
+    // debug_msg( "- ipc_mqueue_release_msgcount (0x%p) called\n", mqueue);
 
 	(void)set_mq;
 	assert(imq_held(port_mq));
@@ -690,7 +691,7 @@ ipc_mqueue_post(
 	ipc_kmsg_t                 kmsg,
 	mach_msg_option_t __unused option)
 {
-        printk (KERN_NOTICE "- ipc_mqueue_post (0x%p) called\n", mqueue);
+        debug_msg( "- ipc_mqueue_post (0x%p) called\n", mqueue);
 
 	uint64_t reserved_prepost = 0;
 	boolean_t destroy_msg = FALSE;
@@ -1033,7 +1034,7 @@ ipc_mqueue_receive_on_thread(
 	thread_t                thread)
 {
 #if defined (__DARLING__)
-    printk ( KERN_NOTICE "- ipc_mqueue_receive_on_thread (mqueue: 0x%p, option: 0x%x, rcv_timeout: %d) called\n",
+    debug_msg( "- ipc_mqueue_receive_on_thread (mqueue: 0x%p, option: 0x%x, rcv_timeout: %d) called\n",
              mqueue, option, (int) rcv_timeout );
 #endif
 
@@ -1044,7 +1045,7 @@ ipc_mqueue_receive_on_thread(
 
 	/* no need to reserve anything: we never prepost to anyone */
 
-     //   printk (KERN_NOTICE "- mqueue preposts empty: %d\n", queue_empty (q));
+     //   debug_msg( "- mqueue preposts empty: %d\n", queue_empty (q));
 	if (!imq_valid(mqueue)) {
 		/* someone raced us to destroy this mqueue/port! */
 		imq_unlock(mqueue);
@@ -1147,11 +1148,11 @@ ipc_mqueue_receive_on_thread(
         // WC - wait_queue_assert_wait64_locked implies waiting on current thread
         assert (thread == current_thread ());
 
-        // printk (KERN_NOTICE "- thread: 0x%p, current_thread: 0x%p\n", thread, current_thread ());
-        printk ( KERN_NOTICE "- &mqueue->data.port.linux_waitqh: 0x%p\n",
+        // debug_msg( "- thread: 0x%p, current_thread: 0x%p\n", thread, current_thread ());
+        debug_msg( "- &mqueue->data.port.linux_waitqh: 0x%p\n",
                  &mqueue->data.port.waitq.linux_waitqh );
 
-        printk (KERN_NOTICE "- ipc_mqueue_receive_on_thread (0x%p) to wait %ld jiffies\n", mqueue, jiffies);
+        debug_msg( "- ipc_mqueue_receive_on_thread (0x%p) to wait %ld jiffies\n", mqueue, jiffies);
 
         // WC: we reuse thread->wait_event here
         thread->wait_event      = IPC_MQUEUE_RECEIVE;
@@ -1172,11 +1173,11 @@ ipc_mqueue_receive_on_thread(
                 // WC - todo handle interruptible
                 prepare_to_wait (&mqueue->data.port.waitq.linux_waitqh, &lwait, TASK_INTERRUPTIBLE);
 
-                printk ( KERN_NOTICE "- thread->event: 0x%llx, event_ready: 0x%llx\n",
+                debug_msg( "- thread->event: 0x%llx, event_ready: 0x%llx\n",
                          thread->wait_event, DUCT_EVENT64_READY );
 
                 if (thread->wait_event == DUCT_EVENT64_READY) {
-                        printk (KERN_NOTICE "- I'm to wakeup...\n");
+                        debug_msg( "- I'm to wakeup...\n");
                         wresult     = THREAD_WAITING;
                         break;
                 }
@@ -1601,7 +1602,7 @@ boolean_t
 ipc_mqueue_destroy_locked(ipc_mqueue_t mqueue)
 {
 #if defined (__DARLING__)
-    // printk (KERN_NOTICE "- ipc_mqueue_destroy (0x%p) called\n", mqueue);
+    // debug_msg( "- ipc_mqueue_destroy (0x%p) called\n", mqueue);
 #endif
 
 	ipc_kmsg_queue_t kmqueue;

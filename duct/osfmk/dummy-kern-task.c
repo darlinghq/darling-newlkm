@@ -148,6 +148,7 @@
 #endif /* CONFIG_COUNTERS */
 
 #include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
 
 // task_t          kernel_task;
 extern zone_t          task_zone;
@@ -284,13 +285,13 @@ task_deallocate(
 {
         int refc = task_deallocate_internal (task);
         if (refc > 0) {
-			    printk(KERN_NOTICE "Not freeing task, %d refs left\n", refc);
+			    debug_msg("Not freeing task, %d refs left\n", refc);
                 return;
         }
 
         ipc_task_terminate (task);
 
-        printk(KERN_NOTICE "Freeing task %p\n", task);
+        debug_msg("Freeing task %p\n", task);
         duct_zfree(task_zone, task);
 }
 

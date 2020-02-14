@@ -36,8 +36,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_pre_xnu.h"
 #include "duct_kern_printf.h"
 
+extern bool debug_output;
+
 int duct_printf(const char * param, ...)
 {
-        printk (param);
-        return 0;
+  //if (debug_output) // for now always print, because this may contain useful messages, such as "not implemented: XXX"
+    printk (param);
+  return 0;
 }
