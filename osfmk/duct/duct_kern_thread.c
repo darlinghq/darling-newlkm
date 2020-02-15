@@ -677,8 +677,10 @@ clear_wait_internal(
 	struct waitq *waitq = thread->waitq;
 	
 	do {
+#ifndef DARLING // We don't maintain the value of thread->state
 		if (wresult == THREAD_INTERRUPTED && (thread->state & TH_UNINT))
 			return (KERN_FAILURE);
+#endif
 
 		if (waitq != NULL) {
 			if (!waitq_pull_thread_locked(waitq, thread)) {
