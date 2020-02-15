@@ -652,8 +652,10 @@ wait_result_t thread_block(thread_continue_t cont)
     thread_t thread = current_thread();
     
     schedule();
+    if (thread->wait_result == THREAD_WAITING)
+        thread->wait_result = THREAD_INTERRUPTED;
     
-    clear_wait(thread, signal_pending(linux_current) ? THREAD_INTERRUPTED : THREAD_AWAKENED);
+    clear_wait(thread, thread->wait_result);
 
     if (cont != THREAD_CONTINUE_NULL)
     {
