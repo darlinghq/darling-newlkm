@@ -1191,11 +1191,11 @@ failure:
 	int name##_trap(task_t task, struct name##_args* in_args) \
 	{ \
 		copyargs(args, in_args); \
-		uint32_t retval = 0; \
-		int error = name(task, &args, &retval); \
+		uint32_t* retval = darling_thread_get_current()->uu_rval; \
+		int error = XNU_CONTINUATION_ENABLED(name(task, &args, retval)); \
 		if (error) \
 			return -error; \
-		return retval; \
+		return *retval; \
 	}
 
 PSYNCH_ENTRY(psynch_mutexwait);

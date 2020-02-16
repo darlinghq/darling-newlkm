@@ -292,7 +292,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		duct/osfmk/dummy-kern-host-notify.o \
 		duct/bsd/dummy-kdebug.o \
 		duct/bsd/dummy-init.o \
-		duct/bsd/dummy-sched.o \
 		libkern/gen/OSAtomicOperations.o \
 		$(MIGDIR_REL)/osfmk/mach/task_server.o \
 		$(MIGDIR_REL)/osfmk/mach/clock_server.o \

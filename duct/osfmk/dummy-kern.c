@@ -33,7 +33,6 @@ wait_result_t thread_block (thread_continue_t continuation)
         kprintf("not implemented: thread_block()\n");
         return 0;
 }
-#endif
 
 wait_result_t
 thread_block_parameter(
@@ -62,7 +61,7 @@ assert_wait_deadline(
         return 0;
 }
 
-
+#endif
 
 
 

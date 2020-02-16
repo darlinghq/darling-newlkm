@@ -641,15 +641,21 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
 {
     if (interruptible == THREAD_UNINT || !signal_pending(linux_current))
     {
+        // printf("thread_mark_wait_locked - unint? %d\n", interruptible == THREAD_UNINT);
         set_current_state(interruptible == THREAD_UNINT ? TASK_KILLABLE : TASK_INTERRUPTIBLE);
         return thread->wait_result = THREAD_WAITING;
     }
     return thread->wait_result = THREAD_INTERRUPTED;
 }
 
-wait_result_t thread_block(thread_continue_t cont)
+
+wait_result_t
+thread_block_parameter(
+	thread_continue_t	cont,
+	void				*parameter)
 {
     thread_t thread = current_thread();
+    thread->parameter = parameter;
     
     schedule();
     if (thread->wait_result == THREAD_WAITING)
@@ -659,11 +665,16 @@ wait_result_t thread_block(thread_continue_t cont)
 
     if (cont != THREAD_CONTINUE_NULL)
     {
-        cont(NULL, thread->wait_result);
+        cont(thread->parameter, thread->wait_result);
         panic("thread_block: continuation isn't supposed to return!");
     }
     
     return thread->wait_result;
+}
+
+wait_result_t thread_block(thread_continue_t cont)
+{
+    return thread_block_parameter(cont, NULL);
 }
 
 // COPED FROM kern/sched_prim.c START
@@ -733,6 +744,85 @@ clear_wait(
 	thread_unlock(thread);
 	splx(s);
 	return ret;
+}
+
+kern_return_t
+thread_wakeup_one_with_pri(
+                           event_t      event,
+                           int          priority)
+{
+	if (__improbable(event == NO_EVENT))
+		panic("%s() called with NO_EVENT", __func__);
+
+	struct waitq *wq = global_eventq(event);
+
+	return waitq_wakeup64_one(wq, CAST_EVENT64_T(event), THREAD_AWAKENED, priority);
+}
+
+kern_return_t
+thread_wakeup_prim(
+                   event_t          event,
+                   boolean_t        one_thread,
+                   wait_result_t    result)
+{
+	if (__improbable(event == NO_EVENT))
+		panic("%s() called with NO_EVENT", __func__);
+
+	struct waitq *wq = global_eventq(event);
+
+	if (one_thread)
+		return waitq_wakeup64_one(wq, CAST_EVENT64_T(event), result, WAITQ_ALL_PRIORITIES);
+	else
+		return waitq_wakeup64_all(wq, CAST_EVENT64_T(event), result, WAITQ_ALL_PRIORITIES);
+}
+
+wait_result_t
+assert_wait_deadline(
+	event_t				event,
+	wait_interrupt_t	interruptible,
+	uint64_t			deadline)
+{
+	thread_t			thread = current_thread();
+	wait_result_t		wresult;
+	spl_t				s;
+
+	if (__improbable(event == NO_EVENT))
+		panic("%s() called with NO_EVENT", __func__);
+
+	struct waitq *waitq;
+	waitq = global_eventq(event);
+
+	s = splsched();
+	waitq_lock(waitq);
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+				  MACHDBG_CODE(DBG_MACH_SCHED, MACH_WAIT)|DBG_FUNC_NONE,
+				  VM_KERNEL_UNSLIDE_OR_PERM(event), interruptible, deadline, 0, 0);
+
+	wresult = waitq_assert_wait64_locked(waitq, CAST_EVENT64_T(event),
+					     interruptible,
+					     TIMEOUT_URGENCY_SYS_NORMAL, deadline,
+					     TIMEOUT_NO_LEEWAY, thread);
+	waitq_unlock(waitq);
+	splx(s);
+	return wresult;
+}
+
+wait_result_t
+assert_wait(
+	event_t				event,
+	wait_interrupt_t	interruptible)
+{
+	if (__improbable(event == NO_EVENT))
+		panic("%s() called with NO_EVENT", __func__);
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+		MACHDBG_CODE(DBG_MACH_SCHED, MACH_WAIT)|DBG_FUNC_NONE,
+		VM_KERNEL_UNSLIDE_OR_PERM(event), 0, 0, 0, 0);
+
+	struct waitq *waitq;
+	waitq = global_eventq(event);
+	return waitq_assert_wait64(waitq, CAST_EVENT64_T(event), interruptible, TIMEOUT_WAIT_FOREVER);
 }
 
 // COPED FROM kern/sched_prim.c END

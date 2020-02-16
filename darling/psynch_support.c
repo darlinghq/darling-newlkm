@@ -36,6 +36,7 @@
 
 #include <kern/task.h>
 #include <kern/thread_call.h>
+#include <kern/kern_types.h>
 #include <duct/duct_kern_printf.h>
 #include <duct/duct_post_xnu.h>
 
@@ -71,8 +72,8 @@ typedef thread_t uthread_t;
 typedef task_t proc_t;
 #define current_proc() darling_task_get_current()
 #define get_bsdthread_info(th) (th)
-#define unix_syscall_return(v) return (v)
-typedef kern_return_t wait_result_t;
+#define unix_syscall_return thread_syscall_return
+//typedef kern_return_t wait_result_t;
 #define M_PROC 0
 #define pthhashhead list_head
 
@@ -464,8 +465,8 @@ void ksyn_handle_cvbroad(ksyn_wait_queue_t ckwq, uint32_t upto, uint32_t *update
 void ksyn_cvupdate_fixup(ksyn_wait_queue_t ckwq, uint32_t *updatep, ksyn_queue_t kfreeq, int release);
 ksyn_waitq_element_t ksyn_queue_find_signalseq(ksyn_wait_queue_t kwq, ksyn_queue_t kq, uint32_t toseq, uint32_t lockseq);
 ksyn_waitq_element_t ksyn_queue_find_threadseq(ksyn_wait_queue_t ckwq, ksyn_queue_t kq, thread_t th, uint32_t toseq);
-int psynch_cvcontinue(void *, wait_result_t, uint32_t*);
-int psynch_mtxcontinue(void *, wait_result_t, uint32_t*);
+void psynch_cvcontinue(void *, wait_result_t);
+void psynch_mtxcontinue(void *, wait_result_t);
 
 int ksyn_wakeupreaders(ksyn_wait_queue_t kwq, uint32_t limitread, int longreadset, int allreaders, uint32_t updatebits, int * wokenp);
 int kwq_find_rw_lowest(ksyn_wait_queue_t kwq, int flags, uint32_t premgen, int * type, uint32_t lowest[]);
@@ -827,13 +828,9 @@ psynch_mutexwait(__unused proc_t p, struct psynch_mutexwait_args * uap, uint32_t
 		goto out;
 	}
 	
-#ifndef __DARLING__
 	kret = ksyn_block_thread_locked(kwq, (uint64_t)0, kwe, 0, psynch_mtxcontinue, (void *)kwq);
-#else
-	kret = ksyn_block_thread_locked(kwq, (uint64_t)0, kwe, 0, NULL, (void *)kwq);
-#endif
 
-	return psynch_mtxcontinue((void *)kwq, kret, retval);
+	psynch_mtxcontinue((void *)kwq, kret);
 
 	/* not expected to return from unix_syscall_return */
 	panic("psynch_mtxcontinue returned from unix_syscall_return");
@@ -847,8 +844,8 @@ out:
 	return(error);
 }
 
-int
-psynch_mtxcontinue(void * parameter, wait_result_t result, uint32_t* retval)
+void
+psynch_mtxcontinue(void * parameter, wait_result_t result)
 {
 	int error = 0;
 	uint32_t updatebits = 0;
@@ -882,7 +879,7 @@ psynch_mtxcontinue(void * parameter, wait_result_t result, uint32_t* retval)
 	} else {
 		updatebits = kwe->kwe_psynchretval;
 		updatebits &= ~PTH_RWL_MTX_WAIT;
-		/*uth->uu_rval[0]*/ *retval = updatebits;
+		uth->uu_rval[0] = updatebits;
 
 		if (updatebits == 0)
 			__FAILEDUSERTEST__("psynch_mutexwait: returning 0 lseq  in mutexwait with no EBIT \n");
@@ -1367,14 +1364,10 @@ psynch_cvwait(__unused proc_t p, struct psynch_cvwait_args * uap, uint32_t * ret
 		goto out;
 	}
 
-#ifndef __DARLING__
 	kret = ksyn_block_thread_locked(ckwq, abstime, kwe, 1, psynch_cvcontinue, (void *)ckwq);
-#else
-	kret = ksyn_block_thread_locked(ckwq, abstime, kwe, 1, THREAD_CONTINUE_NULL, (void *)ckwq);
-#endif
 	/* lock dropped */
 
-	return psynch_cvcontinue(ckwq, kret, retval);	
+	psynch_cvcontinue(ckwq, kret);	
 
 	/* not expected to return from unix_syscall_return */
 	panic("psynch_cvcontinue returned from unix_syscall_return");
@@ -1388,8 +1381,8 @@ out:
 }
 
 
-int
-psynch_cvcontinue(void * parameter, kern_return_t result, uint32_t* rv)
+void
+psynch_cvcontinue(void * parameter, kern_return_t result)
 {
 	int error = 0, local_error = 0;
 	uthread_t uth = current_uthread();
@@ -1418,7 +1411,7 @@ psynch_cvcontinue(void * parameter, kern_return_t result, uint32_t* rv)
 	if (error != 0) {
 		ksyn_wqlock(ckwq);
 		/* just in case it got woken up as we were granting */
-		/*uth->uu_rval[0] =*/ *rv = kwe->kwe_psynchretval;
+		uth->uu_rval[0] = kwe->kwe_psynchretval;
 
 #if __TESTPANICS__
 		if ((kwe->kwe_kwqqueue != NULL) && (kwe->kwe_kwqqueue != ckwq))
@@ -1462,9 +1455,9 @@ psynch_cvcontinue(void * parameter, kern_return_t result, uint32_t* rv)
 	} else  {
 		/* PTH_RWL_MTX_WAIT is removed */
 		if ((kwe->kwe_psynchretval & PTH_RWS_CV_MBIT)  != 0)
-			/*uth->uu_rval[0]*/ *rv = PTHRW_INC | PTH_RWS_CV_CBIT;
+			uth->uu_rval[0] = PTHRW_INC | PTH_RWS_CV_CBIT;
 		else
-			/*uth->uu_rval[0]*/ *rv = 0;
+			uth->uu_rval[0] = 0;
 		local_error = 0;
 	}
 out:
@@ -3172,27 +3165,13 @@ ksyn_block_thread_locked(ksyn_wait_queue_t kwq, uint64_t abstime, ksyn_waitq_ele
 #endif /* _PSYNCH_TRACE_ */
 
 	kwe->kwe_kwqqueue = (void *)kwq;
-#ifndef __DARLING__
 	assert_wait_deadline(&kwe->kwe_psynchretval, THREAD_ABORTSAFE, abstime);
-#endif
 	ksyn_wqunlock(kwq);
 
-#ifndef __DARLING__
 	if (continuation == THREAD_CONTINUE_NULL)
 		kret = thread_block(NULL);
 	else
 		kret = thread_block_parameter(continuation, parameter);
-#else
-	int lret = down_interruptible_timeout(&kwe->linux_sem, abstime ? abstime : LINUX_MAX_SCHEDULE_TIMEOUT);
-	if (lret == -LINUX_ETIME)
-		kret = THREAD_TIMED_OUT;
-	else if (lret == -LINUX_EINTR)
-		kret = THREAD_INTERRUPTED;
-	else if (lret == 0)
-		kret = KERN_SUCCESS;
-	else
-		kret = KERN_FAILURE;
-#endif
 		
 #if _PSYNCH_TRACE_
 	switch (kret) {
@@ -3224,12 +3203,7 @@ ksyn_wakeup_thread(__unused ksyn_wait_queue_t kwq, ksyn_waitq_element_t kwe)
 	uthread_t uth = NULL;
 #endif /* _PSYNCH_TRACE_ */
 
-#ifndef __DARLING__
 	kret = thread_wakeup_one((caddr_t)&kwe->kwe_psynchretval);
-#else
-	kret = KERN_SUCCESS;
-	up(&kwe->linux_sem);
-#endif
 
 	if ((kret != KERN_SUCCESS) && (kret != KERN_NOT_WAITING))
 		panic("ksyn_wakeup_thread: panic waking up thread %x\n", kret);
