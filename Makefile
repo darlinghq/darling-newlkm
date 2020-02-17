@@ -57,7 +57,7 @@ ccflags-y := -D__DARLING__ -DDARLING_DEBUG \
 	-I$(BUILD_ROOT)/ \
 	-I$(BUILD_ROOT)/darling \
 	-I$(MIGDIR)/osfmk \
-	-I$(MIGDIR)/../startup \
+	-I$(MIGDIR)/../../startup \
 	-DARCH_PRIVATE \
 	-DDRIVER_PRIVATE \
 	-D_KERNEL_BUILD \

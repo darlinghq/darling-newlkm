@@ -458,7 +458,11 @@ stack_snapshot_from_kernel(int pid, void *buf, uint32_t size, uint32_t flags,
 
 __BEGIN_DECLS
 
+#ifndef __DARLING__
 extern void panic(const char *string, ...) __printflike(1,2);
+#else
+extern void duct_panic(const char *string, ...) __printflike(1,2);
+#endif
 
 #if KERNEL_PRIVATE
 void _consume_panic_args(int, ...);
@@ -485,12 +489,12 @@ void panic_with_options(unsigned int reason, void *ctx, uint64_t debugger_option
 #endif
 #else /* CONFIGS_NO_PANIC_STRINGS */
 #define panic_plain(ex, ...) \
-	(panic)(ex, ## __VA_ARGS__)
+	(duct_panic)(ex, ## __VA_ARGS__)
 #define __STRINGIFY(x) #x
 #define LINE_NUMBER(x) __STRINGIFY(x)
 #define PANIC_LOCATION __FILE__ ":" LINE_NUMBER(__LINE__)
 #define panic(ex, ...) \
-	(panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__)
+	(duct_panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__)
 #endif /* CONFIGS_NO_PANIC_STRINGS */
 
 #ifdef KERNEL_PRIVATE
