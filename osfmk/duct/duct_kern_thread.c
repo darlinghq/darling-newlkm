@@ -602,7 +602,7 @@ void thread_timer_expire(void* p0, void* p1)
         if (thread->wait_timer_is_set)
         {
             thread->wait_timer_is_set = FALSE;
-            thread_go(thread, THREAD_TIMED_OUT);
+            clear_wait(thread, THREAD_TIMED_OUT);
         }
     }
     
@@ -617,6 +617,11 @@ kern_return_t thread_go(thread_t thread, wait_result_t wresult)
 kern_return_t thread_unblock(thread_t thread, wait_result_t wresult)
 {
     thread->wait_result = wresult;
+
+    thread->state &= ~(TH_WAIT|TH_UNINT);
+
+	if (!(thread->state & TH_RUN))
+		thread->state |= TH_RUN;
     
     if (thread->wait_timer_is_set)
     {
@@ -641,6 +646,12 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
 {
     if (interruptible == THREAD_UNINT || !signal_pending(linux_current))
     {
+        thread->state &= TH_RUN;
+        thread->state |= TH_WAIT;
+
+        if (interruptible == THREAD_UNINT)
+            thread->state |= TH_UNINT;
+
         // printf("thread_mark_wait_locked - unint? %d\n", interruptible == THREAD_UNINT);
         set_current_state(interruptible == THREAD_UNINT ? TASK_KILLABLE : TASK_INTERRUPTIBLE);
         return thread->wait_result = THREAD_WAITING;
@@ -649,8 +660,8 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
     thread->wait_result = THREAD_INTERRUPTED;
     clear_wait(thread, THREAD_INTERRUPTED);
 
-    if (thread->waitq != NULL)
-        duct_panic("thread->waitq is NOT NULL in thread_mark_wait_locked");
+    //if (thread->waitq != NULL)
+    //    duct_panic("thread->waitq is NOT NULL in thread_mark_wait_locked");
 
     return thread->wait_result;
 }
@@ -662,13 +673,21 @@ thread_block_parameter(
 	void				*parameter)
 {
     thread_t thread = current_thread();
+
+    thread_lock(thread);
     thread->parameter = parameter;
     
-    schedule();
+    while ((thread->state & TH_WAIT) && !signal_pending(linux_current))
+    {
+        thread_unlock(thread);
+        schedule();
+        thread_lock(thread);
+    }
+
     if (thread->wait_result == THREAD_WAITING)
         thread->wait_result = THREAD_INTERRUPTED;
     
-    clear_wait(thread, thread->wait_result);
+    thread_unlock(thread);
 
     if (thread->waitq != NULL)
         duct_panic("thread->waitq is NOT NULL in thread_block_parameter");
@@ -717,10 +736,10 @@ clear_wait_internal(
 		}
 
 		/* TODO: Can we instead assert TH_TERMINATE is not set?  */
-		if ((thread->state & (TH_WAIT|TH_TERMINATE)) == TH_WAIT)
+//		if ((thread->state & (TH_WAIT|TH_TERMINATE)) == TH_WAIT)
 			return (thread_go(thread, wresult));
-		else
-			return (KERN_NOT_WAITING);
+//		else
+//			return (KERN_NOT_WAITING);
 	} while (i > 0);
 
 	panic("clear_wait_internal: deadlock: thread=%p, wq=%p, cpu=%d\n",
