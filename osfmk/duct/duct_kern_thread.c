@@ -602,7 +602,7 @@ void thread_timer_expire(void* p0, void* p1)
         if (thread->wait_timer_is_set)
         {
             thread->wait_timer_is_set = FALSE;
-            clear_wait(thread, THREAD_TIMED_OUT);
+            clear_wait_internal(thread, THREAD_TIMED_OUT);
         }
     }
     
