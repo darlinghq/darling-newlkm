@@ -685,7 +685,7 @@ thread_block_parameter(
     }
 
     if (thread->wait_result == THREAD_WAITING)
-        thread->wait_result = THREAD_INTERRUPTED;
+        clear_wait_internal(thread, THREAD_INTERRUPTED);
     
     thread_unlock(thread);
 
