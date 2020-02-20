@@ -422,7 +422,38 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	
 	exec_case = my_task->map->linux_task == NULL;
 	if (!exec_case)
+	{
+		// Now that we're exiting, simulate the effects of ptrace(PTRACE_ATTACH)
+		// as if it were called on us by our tracer, so that the tracer can use wait()
+		// on us once we become a zombie, and retrieve the exit code.
+		int tracer_pid = my_task->tracer;
+		if (tracer_pid != 0 && list_empty(&linux_current->ptrace_entry))
+		{
+			// The following mimics the steps of ptrace_link().
+			// ptrace_link() holds this spinlock, which is no longer exported from Linux.
+			// I'd feel more comfortable holding it, however, since our process is already exiting,
+			// it shouldn't be possible to ptrace() us and race with us by ordinary syscall means.
+
+			//write_lock_irq(&tasklist_lock);
+			rcu_read_lock();
+
+			struct task_struct* tracer = pid_task(find_pid_ns(tracer_pid, &init_pid_ns), PIDTYPE_PID);
+
+			if (tracer != NULL)
+			{
+				const struct cred* ptracer_cred = __task_cred(tracer);
+
+				list_add(&linux_current->ptrace_entry, &tracer->ptraced);
+				linux_current->ptrace = PT_PTRACED;
+				linux_current->parent = tracer;
+				linux_current->ptracer_cred = get_cred(ptracer_cred);
+			}
+			//write_unlock_irq(&tasklist_lock);
+
+			rcu_read_unlock();
+		}
 		darling_task_post_notification(current->tgid, NOTE_EXIT, current->exit_code);
+	}
 	darling_task_deregister(my_task);
 	// darling_thread_deregister(NULL);
 	
