@@ -54,6 +54,8 @@
 // To get LINUX_SIGRTMIN
 #include <rtsig.h>
 
+extern char* task_copy_vchroot_path(task_t t);
+
 struct load_results
 {
 	unsigned long mh;
@@ -462,7 +464,6 @@ int native_prot(int prot)
 	return protOut;
 }
 
-extern char* task_copy_vchroot_path(task_t t);
 void vchroot_detect(struct load_results* lr)
 {
 	// Find out if the current process has an associated XNU task_t

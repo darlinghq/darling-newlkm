@@ -42,6 +42,7 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	char kernfd[12];
 	char __user* applep_contents[3];
 	char* env_value = NULL;
+	char* vchroot_path = NULL;
 
 	// Produce executable_path=... for applep
 	executable_buf = kmalloc(4096, GFP_KERNEL);
@@ -53,6 +54,30 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	{
 		err = -ENAMETOOLONG;
 		goto out;
+	}
+
+	task_t task = darling_task_get_current();
+
+	if (task)
+		vchroot_path = task_copy_vchroot_path(task);
+
+	if (vchroot_path != NULL)
+	{
+		const size_t vchroot_len = strlen(vchroot_path);
+		exepath_len = strlen(executable_path);
+
+		if (strncmp(executable_path, vchroot_path, vchroot_len) == 0)
+		{
+			memmove(executable_buf, executable_path + vchroot_len, exepath_len - vchroot_len + 1);
+		}
+		else
+		{
+			static const char SYSTEM_ROOT[] = "/Volumes/SystemRoot";
+
+			memcpy(executable_buf, SYSTEM_ROOT, sizeof(SYSTEM_ROOT) - 1);
+			memmove(executable_buf + sizeof(SYSTEM_ROOT) - 1, executable_path, exepath_len + 1);
+		}
+		executable_path = executable_buf;
 	}
 
 	// printk(KERN_NOTICE "Stack top: %p\n", bprm->p);
@@ -192,6 +217,8 @@ int FUNCTION_NAME(struct linux_binprm* bprm, struct load_results* lr)
 	// TODO: produce main_stack?
 	
 out:
+	if (vchroot_path)
+		kfree(vchroot_path);
 	if (executable_buf)
 		kfree(executable_buf);
 	if (env_value)

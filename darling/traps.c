@@ -454,6 +454,11 @@ int mach_dev_release(struct inode* ino, struct file* file)
 		}
 		darling_task_post_notification(current->tgid, NOTE_EXIT, current->exit_code);
 	}
+
+	// This works around an occasional race caused by the above trick when the debugger is terminating.
+	// Without this, this BUG_ON sometimes fires: https://github.com/torvalds/linux/blob/master/include/linux/ptrace.h#L237
+	INIT_LIST_HEAD(&current->ptraced);
+	
 	darling_task_deregister(my_task);
 	// darling_thread_deregister(NULL);
 	
