@@ -78,7 +78,6 @@ typedef task_t proc_t;
 #define pthhashhead list_head
 
 #define nanoseconds_to_absolutetime(ns, to) *to = ns
-#define clock_absolutetime_interval_to_deadline(from, to) *to = nsecs_to_jiffies64(from)
 #define microuptime(t) ktime_get_ts(t)
 #define tvtoabstime(t) ((t)->tv_nsec + ((uint64_t)(t)->tv_sec) * NSEC_PER_SEC)
 

@@ -200,17 +200,12 @@ thread_call_enter_delayed(
         thread_call_t       call,
         uint64_t            deadline)
 {
-	struct linux_timespec now;
 	int64_t diffns;
-	uint64_t arm_time;
 
 	debug_msg("thread_call_enter_delayed(call=%p, deadline=%lld)\n", call, deadline);
 	assert(_thread_call_wq != NULL);
 
-	ktime_get_ts(&now);
-
-	arm_time = now.tv_nsec + now.tv_sec * NSEC_PER_SEC;
-	diffns = deadline - arm_time;
+	diffns = deadline - mach_absolute_time();
 
 	if (diffns < 0)
 		diffns = 0;

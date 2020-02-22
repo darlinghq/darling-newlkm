@@ -506,7 +506,9 @@ void darling_task_mark_start_suspended(void)
 _Bool darling_task_marked_start_suspended(void)
 {
 	struct registry_entry* e = darling_task_get_current_entry();
-	return e->do_sigstop;
+	bool rv = e->do_sigstop;
+	e->do_sigstop = false;
+	return rv;
 }
 
 _Bool darling_thread_canceled(void)
