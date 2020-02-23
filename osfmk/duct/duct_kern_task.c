@@ -582,7 +582,10 @@ task_info(
 
 			struct task_basic_info_64* info = (struct task_basic_info_64*) task_info_out;
 
-			info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
+            if (task->tracer == 0)
+			    info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
+            else
+                info->suspend_count = task->suspend_count;
 			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;
@@ -603,7 +606,10 @@ task_info(
 
 			struct task_basic_info_32* info = (struct task_basic_info_32*) task_info_out;
 
-			info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
+            if (task->tracer == 0)
+			    info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
+            else
+                info->suspend_count = task->suspend_count;
 			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;

@@ -617,6 +617,7 @@ task_suspend(
         {
                 thread_suspend(thread);
         }
+        task->suspend_count++;
 	return KERN_SUCCESS;
 }
 
@@ -636,6 +637,7 @@ task_resume(
         {
                 thread_resume(thread);
         }
+        task->suspend_count = 0;
 	return KERN_SUCCESS;
 }
 
