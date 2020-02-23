@@ -176,6 +176,9 @@ int task_max = CONFIG_TASK_MAX; /* Max number of tasks */
 /* externs for BSD kernel */
 extern void proc_getexecutableuuid(void *, unsigned char *, unsigned long);
 
+extern kern_return_t thread_suspend(thread_t thread);
+extern kern_return_t thread_resume(thread_t thread);
+
 /* Forwards */
 
 void        task_hold_locked(
@@ -609,7 +612,12 @@ kern_return_t
 task_suspend(
     register task_t     task)
 {
-	return state_to_task(task, TASK_STOPPED);
+        thread_t thread;
+        queue_iterate(&task->threads, thread, thread_t, task_threads)
+        {
+                thread_suspend(thread);
+        }
+	return KERN_SUCCESS;
 }
 
 /*
@@ -623,7 +631,12 @@ kern_return_t
 task_resume(
     register task_t task)
 {
-	return state_to_task(task, TASK_INTERRUPTIBLE);
+        thread_t thread;
+	queue_iterate(&task->threads, thread, thread_t, task_threads)
+        {
+                thread_resume(thread);
+        }
+	return KERN_SUCCESS;
 }
 
 kern_return_t

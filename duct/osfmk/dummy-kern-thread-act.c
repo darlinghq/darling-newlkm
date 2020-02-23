@@ -87,6 +87,9 @@
 #include <asm/ptrace.h>
 #include <asm/barrier.h>
 #include <linux/thread_info.h>
+#include <rtsig.h>
+
+#define SI_QUEUE -1
 
 void            act_abort(thread_t);
 void            install_special_handler_locked(thread_t);
@@ -175,7 +178,19 @@ thread_suspend(
 		return KERN_FAILURE;
 	kprintf(KERN_DEBUG " - thread_suspend(): thread=%p, linux_task=%p\n", thread, thread->linux_task);
 	
-	smp_store_mb(thread->linux_task->state, TASK_STOPPED);
+    if (thread->task->tracer == 0)
+	    smp_store_mb(thread->linux_task->state, TASK_STOPPED);
+    else
+    {
+        struct kernel_siginfo info;
+
+        memset(&info, 0, sizeof(info));
+        info.si_signo = LINUX_SIGRTMIN + 1;
+        info.si_code = SI_QUEUE;
+        info.si_int = -100;
+
+        send_sig_info(info.si_signo, &info, thread->linux_task);
+    }
 	// wake_up_process(thread->linux_task);
 	thread->suspend_count = 1;
 
@@ -193,8 +208,22 @@ thread_resume(
 	if (thread->linux_task == NULL)
 		return KERN_FAILURE;
 
-	smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
-	wake_up_process(thread->linux_task);
+    if (thread->task->tracer == 0)
+    {
+        smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
+        wake_up_process(thread->linux_task);
+    }
+    else
+    {
+        struct kernel_siginfo info;
+
+        memset(&info, 0, sizeof(info));
+        info.si_signo = LINUX_SIGRTMIN + 1;
+        info.si_code = SI_QUEUE;
+        info.si_int = -101;
+
+        send_sig_info(info.si_signo, &info, thread->linux_task);
+    }
 	thread->suspend_count = 0;
 
 	return KERN_SUCCESS;

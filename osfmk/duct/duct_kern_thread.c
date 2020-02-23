@@ -677,7 +677,7 @@ thread_block_parameter(
     thread_lock(thread);
     thread->parameter = parameter;
     
-    while ((thread->state & TH_WAIT) && !signal_pending(linux_current))
+    while ((thread->state & TH_WAIT) && !signal_pending(linux_current) && linux_current->state != TASK_RUNNING)
     {
         thread_unlock(thread);
         schedule();
