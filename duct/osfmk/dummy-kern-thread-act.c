@@ -182,7 +182,11 @@ thread_suspend(
 	    smp_store_mb(thread->linux_task->state, TASK_STOPPED);
     else
     {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
         struct kernel_siginfo info;
+#else
+        struct siginfo info;
+#endif
 
         memset(&info, 0, sizeof(info));
         info.si_signo = LINUX_SIGRTMIN + 1;
@@ -215,7 +219,11 @@ thread_resume(
     }
     else
     {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
         struct kernel_siginfo info;
+#else
+        struct siginfo info;
+#endif
 
         memset(&info, 0, sizeof(info));
         info.si_signo = LINUX_SIGRTMIN + 1;
