@@ -658,7 +658,7 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
     }
 
     thread->wait_result = THREAD_INTERRUPTED;
-    clear_wait(thread, THREAD_INTERRUPTED);
+    clear_wait_internal(thread, THREAD_INTERRUPTED);
 
     //if (thread->waitq != NULL)
     //    duct_panic("thread->waitq is NOT NULL in thread_mark_wait_locked");
