@@ -121,6 +121,9 @@ int macho_load(struct linux_binprm* bprm)
 	struct pt_regs* regs = current_pt_regs();
 	struct file* xnu_task;
 
+	// Zero this structure early
+	memset(&lr, 0, sizeof(lr));
+
 	// Do quick checks on the executable
 	err = test_load(bprm);
 	if (err)
@@ -145,7 +148,6 @@ int macho_load(struct linux_binprm* bprm)
 	if (err)
 		goto out;
 
-	memset(&lr, 0, sizeof(lr));
 	err = load(bprm, bprm->file, 0, &lr);
 
 	if (err)
