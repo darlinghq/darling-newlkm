@@ -187,9 +187,8 @@ CFLAGS_libkern/gen/OSAtomicOperations.o := $(atomic_cflags)
 # KERNELVERSION is a dmks variable to specify the right version of the kernel.
 # If this is not done like this, then when updating your kernel, you will
 # build against the wrong kernel
-KERNELVERSION = $(shell ls /lib/modules | sort | tail -n1)
-$(info Latest installed kernel version is $(KERNELVERSION))
-
+KERNELVERSION = $(shell uname -r)
+$(info Running kernel version is $(KERNELVERSION))
 # If KERNELRELEASE is defined, we've been invoked from the
 # kernel build system and can use its language.
 ifneq ($(KERNELRELEASE),)
@@ -340,6 +339,4 @@ clean:
 
 install:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules_install
-ifneq ($(KERNELVERSION),$(shell uname -r))
-	@echo "\n\033[0;31mYou must reboot in order to use the installed kernel module because the latest installed kernel is not running!\033[0m\n"
-endif
+
