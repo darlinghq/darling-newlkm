@@ -242,7 +242,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	else
 	{
 		// fork case
-		ppid = linux_current->parent->tgid;
+		ppid = linux_current->real_parent->tgid;
 		inherit_task = parent_task = darling_task_get(ppid);
 	}
 
