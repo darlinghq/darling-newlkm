@@ -106,4 +106,6 @@ int vchroot_entry(task_t task, int fd_vchroot);
 int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* path);
 int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* args);
 
+int handle_to_path_entry(task_t, struct handle_to_path_args* args);
+
 #endif

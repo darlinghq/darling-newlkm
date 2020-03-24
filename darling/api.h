@@ -99,6 +99,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_vchroot, // fd as paramv
 	NR_vchroot_expand,
 	NR_vchroot_fdpath,
+	NR_handle_to_path,
 };
 
 struct set_tracer_args
@@ -482,6 +483,15 @@ struct vchroot_fdpath_args
 	int fd;
 	char* path;
 	unsigned int maxlen;
+};
+
+// Like open_by_handle_at, but provides a path and doesn't need CAP_DAC_READ_SEARCH
+struct handle_to_path_args
+{
+	int mfd; // in
+	//int mntid; // in
+	char fh[80]; // in
+	char path[4096]; // out
 };
 
 #pragma pack (pop)

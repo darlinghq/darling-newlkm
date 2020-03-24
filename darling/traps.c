@@ -33,6 +33,7 @@
 #include <linux/syscalls.h>
 #include <linux/fs_struct.h>
 #include <linux/moduleparam.h>
+#include <linux/exportfs.h>
 #include "traps.h"
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_task.h>
@@ -105,6 +106,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_pid_get_state, pid_get_state_entry),
 	TRAP(NR_task_64bit, task_64bit_entry),
 	TRAP(NR_last_triggered_watchpoint, last_triggered_watchpoint_entry),
+	TRAP(NR_handle_to_path, handle_to_path_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -1744,6 +1746,98 @@ fail:
 
 	if (vchroot)
 		mntput(vchroot);
+	return err;
+}
+
+// Callback for handle_to_path_entry()
+static int all_acceptable(void* context, struct dentry* d)
+{
+	return 1;
+}
+
+// We need the original Linux functions
+#undef task_lock
+#undef task_unlock
+
+int handle_to_path_entry(task_t t, struct handle_to_path_args* in_args)
+{
+	struct path path;
+	struct file_handle* fh;
+	int err = 0;
+	char* str = NULL;
+
+	copyargs(args, in_args);
+
+	fh = (struct file_handle*) args.fh;
+
+	spin_lock(&linux_current->fs->lock);
+	struct fd f = fdget(args.mfd);
+
+	if (!f.file)
+	{
+		spin_unlock(&linux_current->fs->lock);
+		return ERR_PTR(-LINUX_EBADF);
+	}
+
+	path.mnt = mntget(f.file->f_path.mnt);
+	fdput(f);
+	spin_unlock(&linux_current->fs->lock);
+
+	// Linux doesn't export the header files we'd need for this
+#if 0
+	path.mnt = NULL;
+	task_lock(linux_current);
+
+	struct mount* mnt;
+	struct mnt_namespace* ns = linux_current->nsproxy->mnt_ns;
+	list_for_each_entry(mnt, &ns->list, mnt_list)
+	{
+		if (mnt->mnt_id == args.mntid)
+		{
+			path.mnt = mntget(mnt->mnt);
+			break;
+		}
+	}
+
+	task_unlock(linux_current);
+	
+	if (path.mnt == NULL)
+		return -LINUX_ENOENT;
+#endif
+	if (IS_ERR(path.mnt))
+		return PTR_ERR(path.mnt);
+	
+	int handle_dwords = fh->handle_bytes >> 2;
+	path.dentry = exportfs_decode_fh(path.mnt,
+		(struct fid*) fh->f_handle, handle_dwords, fh->handle_type,
+		all_acceptable, NULL);
+	
+	if (IS_ERR(path.dentry))
+	{
+		err = PTR_ERR(path.dentry);
+		goto fail;
+	}
+
+	str = (char*) __get_free_page(GFP_KERNEL);
+	char* strpath = d_path(&path, str, PAGE_SIZE);
+
+	if (IS_ERR(strpath))
+	{
+		err = PTR_ERR(strpath);
+		goto fail;
+	}
+
+	if (copy_to_user(in_args->path, strpath, strlen(strpath)+1))
+	{
+		err = -LINUX_EFAULT;
+		goto fail;
+	}
+
+fail:
+	if (str)
+		free_page((unsigned long) str);
+
+	mntput(path.mnt);
 	return err;
 }
 
