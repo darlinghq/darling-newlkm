@@ -1,5 +1,11 @@
 /* Copyright (C) 2018 Intel Corporation */
 #include <linux/linkage.h>
+#ifndef ENTRY
+#define ENTRY(name) SYM_FUNC_START(name)
+#endif
+#ifndef ENDPROC(name)
+#define ENDPROC(name) SYM_FUNC_END(name)
+#endif
 
 .text
 .align 8
