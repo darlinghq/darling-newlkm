@@ -873,7 +873,7 @@ int semaphore_signal_entry(task_t task, struct semaphore_signal_args* in_args)
 
 	out.signal_name = args.signal;
 
-	return semaphore_signal_trap(&out);
+	return XNU_CONTINUATION_ENABLED(semaphore_signal_trap(&out));
 }
 
 int semaphore_signal_all_entry(task_t task, struct semaphore_signal_all_args* in_args)
@@ -883,7 +883,7 @@ int semaphore_signal_all_entry(task_t task, struct semaphore_signal_all_args* in
 
 	out.signal_name = args.signal;
 
-	return semaphore_signal_all_trap(&out);
+	return XNU_CONTINUATION_ENABLED(semaphore_signal_all_trap(&out));
 }
 
 int semaphore_wait_entry(task_t task, struct semaphore_wait_args* in_args)
@@ -893,7 +893,7 @@ int semaphore_wait_entry(task_t task, struct semaphore_wait_args* in_args)
 
 	out.wait_name = args.signal;
 
-	return semaphore_wait_trap(&out);
+	return XNU_CONTINUATION_ENABLED(semaphore_wait_trap(&out));
 }
 
 int semaphore_wait_signal_entry(task_t task, struct semaphore_wait_signal_args* in_args)
@@ -904,7 +904,7 @@ int semaphore_wait_signal_entry(task_t task, struct semaphore_wait_signal_args* 
 	out.wait_name = args.wait;
 	out.signal_name = args.signal;
 
-	return semaphore_wait_signal_trap(&out);
+	return XNU_CONTINUATION_ENABLED(semaphore_wait_signal_trap(&out));
 }
 
 int semaphore_timedwait_signal_entry(task_t task, struct semaphore_timedwait_signal_args* in_args)
@@ -917,7 +917,7 @@ int semaphore_timedwait_signal_entry(task_t task, struct semaphore_timedwait_sig
 	out.sec = args.sec;
 	out.nsec = args.nsec;
 
-	return semaphore_timedwait_signal_trap(&out);
+	return XNU_CONTINUATION_ENABLED(semaphore_timedwait_signal_trap(&out));
 }
 
 int semaphore_timedwait_entry(task_t task, struct semaphore_timedwait_args* in_args)
@@ -929,7 +929,7 @@ int semaphore_timedwait_entry(task_t task, struct semaphore_timedwait_args* in_a
 	out.sec = args.sec;
 	out.nsec = args.nsec;
 
-	return semaphore_timedwait_trap(&out);
+	return XNU_CONTINUATION_ENABLED(semaphore_timedwait_trap(&out));
 }
 
 int mk_timer_create_entry(task_t task)

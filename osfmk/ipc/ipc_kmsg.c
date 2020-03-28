@@ -2947,11 +2947,7 @@ ipc_kmsg_copyin_body(
     mach_msg_descriptor_t	*daddr, *naddr;
     mach_msg_descriptor_t	*user_addr, *kern_addr;
     mach_msg_type_number_t	dsc_count;
-#if defined (__DARLING__)
-    boolean_t 			is_task_64bit = darling_is_task_64bit();
-#else
     boolean_t 			is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
-#endif
     boolean_t 			complex = FALSE;
     vm_size_t			space_needed = 0;
     vm_offset_t			paddr = 0;
@@ -4272,12 +4268,8 @@ ipc_kmsg_copyout_body(
     mach_msg_type_number_t	dsc_count, sdsc_count;
     int i;
     mach_msg_return_t 		mr = MACH_MSG_SUCCESS;
-
-#if defined (__DARLING__)
-        boolean_t       is_task_64bit  = darling_is_task_64bit();
-#else
     boolean_t 			is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
-#endif
+
 
     body = (mach_msg_body_t *) (kmsg->ikm_header + 1);
     dsc_count = body->msgh_descriptor_count;
@@ -4351,11 +4343,7 @@ ipc_kmsg_copyout_size(
 
     send_size = kmsg->ikm_header->msgh_size;
 
-#if defined (__DARLING__)
-        boolean_t       is_task_64bit   = darling_is_task_64bit();
-#else
     boolean_t is_task_64bit = (map->max_offset > VM_MAX_ADDRESS);
-#endif
 
 #if defined(__LP64__)
 	send_size -= LEGACY_HEADER_SIZE_DELTA;

@@ -114,15 +114,6 @@ extern char	*proc_name_address(void *p);
 #include <darling/debug_print.h>
 #endif
 
-#if defined (__DARLING__)
-extern struct waitq* duct__wait_queue_walkup (struct waitq* waitq, event64_t event);
-
-extern int duct_autoremove_wake_function (linux_wait_queue_t * lwait, unsigned mode, int sync, void * key);
-
-extern int      duct_event64_ready;
-#define DUCT_EVENT64_READY      CAST_EVENT64_T (&duct_event64_ready)
-#endif
-
 int ipc_mqueue_full;		/* address is event for queue space */
 int ipc_mqueue_rcv;		/* address is event for message arrival */
 
@@ -745,16 +736,8 @@ ipc_mqueue_post(
 			 * logic below).
 			 */
 			if (mqueue->imq_msgcount > 0) {
-#if 0 //def __DARLING__
-				// Needed for kevpsetfd
-				// It doesn't enqueue itself as an IPC thread waiting for a message,
-				// hence it doesn't get picked up in the list_for_each_entry_safe() loop above.
-#warning Missing wait_queue_notify
-				// wait_queue_notify(waitq, IPC_MQUEUE_RECEIVE);
-#else
 				if (ipc_kmsg_enqueue_qos(&mqueue->imq_messages, kmsg))
 					KNOTE(&mqueue->imq_klist, 0);
-#endif
 				break;
 			}
 
@@ -970,9 +953,6 @@ ipc_mqueue_receive(
 		return;
 
 	if (wresult == THREAD_WAITING) {
-#if 0 // defined (__DARLING__)
-        wresult = THREAD_AWAKENED;
-#else
 		counter((interruptible == THREAD_ABORTSAFE) ? 
 			c_ipc_mqueue_receive_block_user++ :
 			c_ipc_mqueue_receive_block_kernel++);
@@ -982,7 +962,6 @@ ipc_mqueue_receive(
 			/* NOTREACHED */
 
 		wresult = thread_block(THREAD_CONTINUE_NULL);
-#endif
 	}
 	ipc_mqueue_receive_results(wresult);
 }
@@ -1133,73 +1112,6 @@ ipc_mqueue_receive_on_thread(
 	else
 		thread->ith_state = MACH_RCV_IN_PROGRESS;
 
-#if 0 // defined (__DARLING__)
-        unsigned long   jiffies     = LINUX_MAX_SCHEDULE_TIMEOUT;
-
-        if (option & MACH_RCV_TIMEOUT) {
-                uint64_t	    nsecs;  // initially used as abstime
-                clock_interval_to_absolutetime_interval (rcv_timeout, 1000*NSEC_PER_USEC, &nsecs);
-
-                absolutetime_to_nanoseconds (nsecs, &nsecs);
-                jiffies     = nsecs_to_jiffies (nsecs);
-        }
-
-        wresult     = THREAD_AWAKENED;
-
-        // WC - wait_queue_assert_wait64_locked implies waiting on current thread
-        assert (thread == current_thread ());
-
-        // debug_msg( "- thread: 0x%p, current_thread: 0x%p\n", thread, current_thread ());
-        debug_msg( "- &mqueue->data.port.linux_waitqh: 0x%p\n",
-                 &mqueue->data.port.waitq.linux_waitqh );
-
-        debug_msg( "- ipc_mqueue_receive_on_thread (0x%p) to wait %ld jiffies\n", mqueue, jiffies);
-
-        // WC: we reuse thread->wait_event here
-        thread->wait_event      = IPC_MQUEUE_RECEIVE;
-
-        linux_wait_queue_t      lwait;
-        // linux_init_wait_func_proc (&lwait, duct_autoremove_wake_function, linux_current);
-        lwait.private       = linux_current;
-        lwait.func          = duct_autoremove_wake_function;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
-        INIT_LIST_HEAD (&lwait.entry);
-#else
-        INIT_LIST_HEAD (&lwait.task_list);
-#endif
-        lwait.flags         = 0;
-
-
-        for (;;) {
-                // WC - todo handle interruptible
-                prepare_to_wait (&mqueue->data.port.waitq.linux_waitqh, &lwait, TASK_INTERRUPTIBLE);
-
-                debug_msg( "- thread->event: 0x%llx, event_ready: 0x%llx\n",
-                         thread->wait_event, DUCT_EVENT64_READY );
-
-                if (thread->wait_event == DUCT_EVENT64_READY) {
-                        debug_msg( "- I'm to wakeup...\n");
-                        wresult     = THREAD_WAITING;
-                        break;
-                }
-
-                if (signal_pending (linux_current) || darling_thread_canceled()) {
-                        wresult     = THREAD_INTERRUPTED;
-                        break;
-                }
-
-                thread_unlock (thread);
-                imq_unlock (mqueue);
-
-                schedule_timeout (jiffies);
-
-                imq_lock (mqueue);
-                thread_lock (thread);
-        }
-        finish_wait (&mqueue->data.port.waitq.linux_waitqh, &lwait);
-
-        // wresult     = THREAD_AWAKENED;
-#else
 	if (option & MACH_RCV_TIMEOUT)
 		clock_interval_to_deadline(rcv_timeout, 1000*NSEC_PER_USEC, &deadline);
 	else
@@ -1212,7 +1124,7 @@ ipc_mqueue_receive_on_thread(
 					     deadline,
 					     TIMEOUT_NO_LEEWAY,
 					     thread);
-#endif
+
 	/* preposts should be detected above, not here */
 	if (wresult == THREAD_AWAKENED)
 		panic("ipc_mqueue_receive_on_thread: sleep walking");
@@ -1619,16 +1531,12 @@ ipc_mqueue_destroy_locked(ipc_mqueue_t mqueue)
 	 */
 	mqueue->imq_fullwaiters = FALSE;
 
-#if 0 // defined (__DARLING__)
-        // CPH: need check here, close temporarily - todo error
-#else
 	waitq_wakeup64_all_locked(&mqueue->imq_wait_queue,
 				  IPC_MQUEUE_FULL,
 				  THREAD_RESTART,
 				  NULL,
 				  WAITQ_ALL_PRIORITIES,
 				  WAITQ_KEEP_LOCKED);
-#endif
 
 	/*
 	 * Move messages from the specified queue to the per-thread

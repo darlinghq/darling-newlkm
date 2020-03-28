@@ -194,6 +194,7 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 	if (linux_task)
 		get_task_struct(linux_task);
 	result->linux_task = linux_task;
+    result->max_offset = darling_is_task_64bit() ? 0x7fffffffffffull : VM_MAX_ADDRESS;
 	result->ref_count = 1;
 #endif
 

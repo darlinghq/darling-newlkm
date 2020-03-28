@@ -186,17 +186,12 @@ semaphore_create(
 	if (s == SEMAPHORE_NULL)
 		return KERN_RESOURCE_SHORTAGE; 
 
-#if defined (__DARLING__)
-    sema_init (&s->lsem, value);
-#else
 	kret = waitq_init(&s->waitq, policy | SYNC_POLICY_DISABLE_IRQ); /* also inits lock */
 	if (kret != KERN_SUCCESS) {
 		zfree(semaphore_zone, s);
 		return kret;
 	}
 	s->count = value;
-
-#endif
 
 	/*
 	 * One reference for caller, one for port, and one for owner
@@ -244,9 +239,6 @@ semaphore_destroy_internal(
 	task_t			task,
 	semaphore_t		semaphore)
 {
-#if defined (__DARLING__)
-        debug_msg( "not implemented: semaphore_destroy (), sema: 0x%p\n", semaphore);
-#else
 	int			old_count;
 
 	/* unlink semaphore from owning task */
@@ -277,7 +269,6 @@ semaphore_destroy_internal(
 	} else {
 		semaphore_unlock(semaphore);
 	}
-#endif
 }
 
 /*
@@ -291,7 +282,6 @@ semaphore_destroy(
 	task_t			task,
 	semaphore_t		semaphore)
 {
-#ifndef __DARLING__
 	spl_t spl_level;
 
 	if (semaphore == SEMAPHORE_NULL)
@@ -320,7 +310,6 @@ semaphore_destroy(
 	task_unlock(task);
 
 	semaphore_dereference(semaphore);
-#endif
 	return KERN_SUCCESS;
 }
 
@@ -335,7 +324,6 @@ void
 semaphore_destroy_all(
 	task_t			task)
 {
-#ifndef __DARLING__
 	uint32_t count;
 	spl_t spl_level;
 
@@ -363,7 +351,6 @@ semaphore_destroy_all(
 		splx(spl_level);
 
 	task_unlock(task);
-#endif
 }
 
 /*
@@ -379,22 +366,6 @@ semaphore_signal_internal(
 	thread_t		thread,
 	int				options)
 {
-#if defined (__DARLING__)
-        debug_msg( "thread: sema: 0x%p, thread: 0x%p, options: 0x%x\n", semaphore, thread, options);
-
-        // WC - should lock as we are accessing internally
-        if (!semaphore->active) {
-                return KERN_TERMINATED;
-        }
-
-        if (thread != THREAD_NULL) {
-                debug_msg( "thread not null: not implemented\n");
-        }
-
-        up (&semaphore->lsem);
-
-        return KERN_NOT_WAITING;
-#else
 
 	kern_return_t kr;
 	spl_t  spl_level;
@@ -472,7 +443,6 @@ semaphore_signal_internal(
 	semaphore_unlock(semaphore);
 	splx(spl_level);
 	return KERN_NOT_WAITING;
-#endif
 }
 
 /*
@@ -719,46 +689,6 @@ semaphore_wait_internal(
 	int				option,
 	void 			(*caller_cont)(kern_return_t))
 {
-#if defined (__DARLING__)
-        kern_return_t       kr  = KERN_ALREADY_WAITING;
-
-        if (!wait_semaphore->active) {
-                kr = KERN_TERMINATED;
-        }
-
-        /* WC - unwind a bit */
-
-        unsigned long   jiffies     = LINUX_MAX_SCHEDULE_TIMEOUT;
-        if (deadline != 0ULL) {
-                uint64_t        nsecs;  // initially used as abstime
-
-                nsecs       = deadline - mach_absolute_time ();
-                absolutetime_to_nanoseconds (nsecs, &nsecs);
-
-                jiffies     = nsecs_to_jiffies (nsecs);
-        }
-
-        debug_msg( "- to semwait %ld jiffies\n", jiffies);
-
-        int     downret = down_interruptible_timeout (&wait_semaphore->lsem, jiffies);
-        debug_msg( "- tdownret: 0x%x\n", downret);
-
-        if (downret == -LINUX_ETIME) {
-                debug_msg( "- LINUX_ETIME: Timer expired\n");
-                kr = KERN_OPERATION_TIMED_OUT;
-        }
-
-	if (downret == -LINUX_EINTR) {
-		debug_msg( "- LINUX_EINTR: Interrupted\n");
-		kr = KERN_ABORTED;
-	}
-
-        /* WC - todo: signal here */
-
-        if (kr != KERN_ALREADY_WAITING)     return kr;
-
-        return KERN_SUCCESS;
-#else
 	int					wait_result;
 	spl_t				spl_level;
 	kern_return_t		kr = KERN_ALREADY_WAITING;
@@ -855,7 +785,6 @@ semaphore_wait_internal(
 	}
 
 	return (semaphore_convert_wait_result(wait_result));
-#endif
 }
 
 
@@ -1228,7 +1157,6 @@ semaphore_dereference(
 		ipc_port_dealloc_kernel(port);
 	}
 
-#ifndef __DARLING__
 	/*
 	 * Lock the semaphore to lock in the owner task reference.
 	 * Then continue to try to lock the task (inverse order).
@@ -1257,7 +1185,6 @@ semaphore_dereference(
 	}
 	semaphore_unlock(semaphore);
 	splx(spl_level);
-#endif
 
  out:
 	zfree(semaphore_zone, semaphore);

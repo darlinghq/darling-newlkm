@@ -45,6 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/task.h>
 #include <kern/locks.h>
 #include <kern/ipc_tt.h>
+#include <kern/sync_sema.h>
 
 #include "duct_post_xnu.h"
 
@@ -125,6 +126,7 @@ void duct_task_destroy(task_t task)
         if (task->vchroot_path)
             free_page((unsigned long) task->vchroot_path);
 
+        semaphore_destroy_all(task);
         ipc_space_terminate (task->itk_space);
         pth_proc_hashdelete(task);
         task_deallocate(task);
