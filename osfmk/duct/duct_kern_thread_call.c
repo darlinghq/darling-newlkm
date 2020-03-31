@@ -170,7 +170,7 @@ thread_call_cancel(
 {
 	assert(_thread_call_wq != NULL);
 	debug_msg("thread_call_cancel(%p)\n", call);
-	return cancel_delayed_work(&call->tc_work);
+	return cancel_delayed_work_sync(&call->tc_work);
 }
 
 boolean_t
@@ -212,7 +212,14 @@ thread_call_enter_delayed(
 
 	debug_msg("... delayed by %lld ns\n", diffns);
 
-	return queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns)) == 0;
+	if (queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns)) == 0)
+	{
+		// Re-schedule
+		cancel_delayed_work_sync(&call->tc_work);
+		queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns));
+		return TRUE;
+	}
+	return FALSE;
 }
 
 boolean_t
@@ -229,7 +236,14 @@ boolean_t
 thread_call_enter(
         thread_call_t       call)
 {
-	return queue_delayed_work(_thread_call_wq, &call->tc_work, 0) == 0;
+	if (queue_delayed_work(_thread_call_wq, &call->tc_work, 0) == 0)
+	{
+		// Re-schedule
+		cancel_delayed_work_sync(&call->tc_work);
+		queue_delayed_work(_thread_call_wq, &call->tc_work, 0);
+		return TRUE;
+	}
+	return FALSE;
 }
 
 boolean_t
