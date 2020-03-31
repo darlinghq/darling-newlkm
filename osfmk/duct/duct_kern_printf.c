@@ -35,12 +35,26 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct.h"
 #include "duct_pre_xnu.h"
 #include "duct_kern_printf.h"
+#include <linux/sched.h>
 
 extern bool debug_output;
 
 int duct_printf(const char * param, ...)
 {
+  char buf[512];
+  int len;
+
+  snprintf(buf, sizeof(buf), "<%d> ", linux_current->pid);
+  len = strlen(buf);
+
+  va_list args;
+  va_start(args, param);
+
+  vsnprintf(buf + len, sizeof(buf) - len - 1, param, args);
+
+  va_end(args);
+
   //if (debug_output) // for now always print, because this may contain useful messages, such as "not implemented: XXX"
-    printk (param);
+    printk (buf);
   return 0;
 }
