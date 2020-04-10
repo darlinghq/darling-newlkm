@@ -373,12 +373,14 @@ task_complete_halt(task_t task)
  *
  *  CONDITIONS: the task is locked and active.
  */
+ /*
 void
 task_hold_locked(
     register task_t     task)
 {
         kprintf("not implemented: task_hold_locked()\n");
 }
+*/
 
 /*
  *  task_hold:
@@ -391,6 +393,7 @@ task_hold_locked(
  *
  *  CONDITIONS: the caller holds a reference on the task
  */
+ /*
 kern_return_t
 task_hold(
     register task_t     task)
@@ -398,6 +401,7 @@ task_hold(
         kprintf("not implemented: task_hold()\n");
         return 0;
 }
+*/
 
 kern_return_t
 task_wait(
@@ -431,12 +435,14 @@ task_wait_locked(
  *
  *  CONDITIONS: the task is locked and active
  */
+ /*
 void
 task_release_locked(
     register task_t     task)
 {
         kprintf("not implemented: task_release_locked()\n");
 }
+*/
 
 /*
  *  task_release:
@@ -446,6 +452,7 @@ task_release_locked(
  *
  *  CONDITIONS: The caller holds a reference to the task
  */
+ /*
 kern_return_t
 task_release(
     task_t      task)
@@ -453,6 +460,7 @@ task_release(
         kprintf("not implemented: task_release()\n");
         return 0;
 }
+*/
 
 kern_return_t
 task_threads(
@@ -608,6 +616,7 @@ static kern_return_t state_to_task(task_t task, int state)
  * Conditions:
  *  The caller holds a reference to the task
  */
+ /*
 kern_return_t
 task_suspend(
     register task_t     task)
@@ -620,6 +629,7 @@ task_suspend(
         task->suspend_count++;
 	return KERN_SUCCESS;
 }
+*/
 
 /*
  *  task_resume:
@@ -628,6 +638,7 @@ task_suspend(
  * Conditions:
  *      The caller holds a reference to the task
  */
+ /*
 kern_return_t 
 task_resume(
     register task_t task)
@@ -640,6 +651,7 @@ task_resume(
         task->suspend_count = 0;
 	return KERN_SUCCESS;
 }
+*/
 
 kern_return_t
 task_map_corpse_info(

@@ -22,6 +22,7 @@
 
 #ifdef KERNEL
 #	include <linux/types.h>
+#	include <linux/siginfo.h>
 #else
 #	include <stdint.h>
 #endif
@@ -102,6 +103,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_handle_to_path,
 	NR_fileport_makeport,
 	NR_fileport_makefd,
+	NR_sigprocess,
 };
 
 struct set_tracer_args
@@ -501,6 +503,25 @@ struct fileport_makeport_args
 	int fd;
 	int port_out;
 };
+
+#ifdef LINUX_SIGACTION_H
+#	define siginfo linux_siginfo
+#	define ucontext linux_ucontext
+#endif
+
+#if defined(LINUX_SIGACTION_H) || defined(KERNEL)
+struct sigprocess_args
+{
+	int signum;
+	struct siginfo siginfo;
+	struct ucontext ucontext;
+};
+#endif
+
+#ifdef LINUX_SIGACTION_H
+#	undef siginfo
+#	undef ucontext
+#endif
 
 #pragma pack (pop)
 

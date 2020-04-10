@@ -168,6 +168,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_setuidgid, setuidgid_entry),
 	TRAP(NR_fileport_makeport, fileport_makeport_entry),
 	TRAP(NR_fileport_makefd, fileport_makefd_entry),
+	TRAP(NR_sigprocess, sigprocess_entry),
 
 	// VIRTUAL CHROOT
 	TRAP(NR_vchroot, vchroot_entry),
@@ -339,6 +340,83 @@ out:
 	if (ret != KERN_SUCCESS)
 		return -LINUX_EINVAL;
 	return 0;
+}
+
+kern_return_t xnu_kthread_register(void)
+{
+	task_t new_task;
+	thread_t new_thread;
+	kern_return_t ret;
+
+	ret = duct_task_create_internal(NULL, false, true, &new_task, linux_current);
+	if (ret != KERN_SUCCESS)
+		return ret;
+
+	new_task->tracer = 0;
+	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
+
+	// Create a new thread_t
+	ret = duct_thread_create(new_task, &new_thread);
+	if (ret != KERN_SUCCESS)
+	{
+		duct_task_destroy(new_task);
+		return ret;
+	}
+
+	darling_task_register(new_task);
+	darling_thread_register(new_thread);
+
+	task_deallocate(new_task);
+	thread_deallocate(new_thread);
+	return KERN_SUCCESS;
+}
+
+kern_return_t xnu_kthread_deregister(void)
+{
+	thread_t cur_thread;
+	task_t my_task = darling_task_get_current();
+	darling_task_deregister(my_task);
+	
+	cur_thread = darling_thread_get_current();
+	
+	task_lock(my_task);
+	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
+	while (!queue_empty(&my_task->threads))
+	{
+		thread = (thread_t) queue_first(&my_task->threads);
+		
+		// debug_msg("mach_dev_release() - thread refc %d\n", thread->ref_count);
+		
+		// Because IPC space termination needs a current thread
+		if (thread != cur_thread)
+		{
+			task_unlock(my_task);
+			duct_thread_destroy(thread);
+			darling_thread_deregister(thread);
+			task_lock(my_task);
+		}
+		else
+			queue_remove(&my_task->threads, thread, thread_t, task_threads);
+	}
+	my_task->thread_count = 0;
+	
+	if (my_task->map->linux_task != NULL)
+	{
+		put_task_struct(my_task->map->linux_task);
+		my_task->map->linux_task = NULL;
+	}
+
+	task_unlock(my_task);
+	duct_task_destroy(my_task);
+
+	if (cur_thread->linux_task != NULL)
+	{
+		put_task_struct(cur_thread->linux_task);
+		cur_thread->linux_task = NULL;
+	}
+	darling_thread_deregister(cur_thread);
+
+	return KERN_SUCCESS;
 }
 
 // No vma from 4.11
@@ -1948,6 +2026,72 @@ out:
 		ipc_port_release_send(port);
 
 	return err;
+}
+
+int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
+{
+	thread_t thread = current_thread();
+	copyargs(args, in_args);
+
+	struct siginfo si;
+	if (copy_from_user(&si, args.siginfo, sizeof(si)))
+		return -LINUX_EFAULT;
+
+	if (!task->sigexc && si.si_code == SI_USER)
+		return 0;
+
+	thread->pending_signal = 0;
+	thread->in_sigprocess = TRUE;
+
+	mach_exception_data_type_t codes[EXCEPTION_CODE_MAX] = { 0, 0 };
+	if (si.si_code == SI_USER)
+	{
+		codes[0] = EXC_SOFT_SIGNAL;	
+		codes[1] = args.signum; // signum has the BSD signal number
+		bsd_exception(EXC_SOFTWARE, codes, 2);
+
+		goto out;
+	}
+
+	int mach_exception = 0;
+	switch (si.si_signo) // signo has the Linux signal number
+	{
+		case SIGSEGV:
+			mach_exception = EXC_BAD_ACCESS;
+			codes[0] = EXC_I386_GPFLT;
+			break;
+		case SIGBUS:
+			mach_exception = EXC_BAD_ACCESS;
+			codes[0] = EXC_I386_ALIGNFLT;
+			break;
+		case SIGILL:
+			mach_exception = EXC_BAD_INSTRUCTION;
+			codes[0] = EXC_I386_INVOP;
+			break;
+		case SIGFPE:
+			mach_exception = EXC_ARITHMETIC;
+			codes[0] = si.si_code;
+			break;
+		case SIGTRAP:
+			mach_exception = EXC_BREAKPOINT;
+			codes[0] = (si.si_code == SI_KERNEL) ? EXC_I386_BPT : EXC_I386_SGL;
+
+			if (si.si_code == TRAP_HWBKPT)
+				codes[1] = thread->triggered_watchpoint_address;
+			break;
+		default:
+			bsd_exception(EXC_SOFTWARE, EXC_SOFT_SIGNAL, 2);
+			goto out;
+	}
+
+	exception_triage_thread(mach_exception, codes, EXCEPTION_CODE_MAX, thread);
+
+out:
+	// TODO: Check and copy thread->pending_signal
+	// TODO: modify ucontext
+
+	thread->in_sigprocess = FALSE;
+	return 0;
 }
 
 module_init(mach_init);

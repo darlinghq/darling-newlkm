@@ -446,6 +446,8 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
         new_thread->active = TRUE;
         get_task_struct(linux_current);
         new_thread->linux_task = linux_current;
+        new_thread->in_sigprocess = FALSE;
+        new_thread->sigexc = FALSE;
         *out_thread = new_thread;
 
     // {
@@ -602,6 +604,7 @@ void thread_timer_expire(void* p0, void* p1)
         if (thread->wait_timer_is_set)
         {
             thread->wait_timer_is_set = FALSE;
+	    printf("calling clear_wait\n");
             clear_wait_internal(thread, THREAD_TIMED_OUT);
         }
     }
@@ -680,6 +683,7 @@ thread_block_parameter(
     while ((thread->state & TH_WAIT) && !signal_pending(linux_current) && linux_current->state != TASK_RUNNING)
     {
         thread_unlock(thread);
+	printf("about to schedule - my state: %d\n", thread->linux_task->state);
         schedule();
         thread_lock(thread);
     }
@@ -814,6 +818,7 @@ assert_wait_deadline(
 	thread_t			thread = current_thread();
 	wait_result_t		wresult;
 	spl_t				s;
+	printf("assert wait with deadline %d\n", deadline);
 
 	if (__improbable(event == NO_EVENT))
 		panic("%s() called with NO_EVENT", __func__);

@@ -212,7 +212,9 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		osfmk/ipc/ipc_right.o \
 		osfmk/ipc/ipc_mqueue.o \
 		osfmk/ipc/ipc_port.o \
+		osfmk/kern/exception.o \
 		osfmk/kern/sync_sema.o \
+		bsd/uxkern/ux_exception.o \
 		darling/down_interruptible.o \
 		darling/traps.o \
 		darling/task_registry.o \

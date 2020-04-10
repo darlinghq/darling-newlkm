@@ -110,4 +110,6 @@ int handle_to_path_entry(task_t, struct handle_to_path_args* args);
 int fileport_makeport_entry(task_t, struct fileport_makeport_args* args);
 int fileport_makefd_entry(task_t, void* port_in);
 
+int sigprocess_entry(task_t task, struct sigprocess_args* args);
+
 #endif
