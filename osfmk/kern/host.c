@@ -104,6 +104,9 @@
 #if defined (__DARLING__)
 #include <duct/duct_post_xnu.h>
 #include <linux/version.h>
+#include <linux/kernel_stat.h>
+#undef avenrun
+#include <linux/sched/loadavg.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
 #define global_zone_page_state global_page_state
@@ -340,16 +343,13 @@ host_info(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_num
 kern_return_t
 host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_number_t * count)
 {
-#if defined (__DARLING__)
-    kprintf("not implemented: host_statistics()\n");
-    return -1;
-#else
 	uint32_t i;
 
 	if (host == HOST_NULL)
 		return (KERN_INVALID_HOST);
 
 	switch (flavor) {
+
 	case HOST_LOAD_INFO: {
 		host_load_info_t load_info;
 
@@ -358,13 +358,23 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 
 		load_info = (host_load_info_t)info;
 
+#ifndef __DARLING__
 		bcopy((char *)avenrun, (char *)load_info->avenrun, sizeof avenrun);
 		bcopy((char *)mach_factor, (char *)load_info->mach_factor, sizeof mach_factor);
+#else
+		
+		for (int i = 0; i < 3; i++)
+		{
+			unsigned long v = avenrun[i] + FIXED_1/200; // This is what /proc/loadavg does
+			load_info->xnu_avenrun[i] = LOAD_INT(v) * 1000 + LOAD_FRAC(v) * 10;
+		}
+		memset(load_info->mach_factor, 0, sizeof(load_info->mach_factor));
+#endif
 
 		*count = HOST_LOAD_INFO_COUNT;
 		return (KERN_SUCCESS);
 	}
-
+#ifndef __DARLING__
 	case HOST_VM_INFO: {
 		processor_t processor;
 		vm_statistics64_t stat;
@@ -447,7 +457,7 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 
 		return (KERN_SUCCESS);
 	}
-
+#endif
 	case HOST_CPU_LOAD_INFO: {
 		processor_t processor;
 		host_cpu_load_info_t cpu_load_info;
@@ -455,6 +465,28 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 		if (*count < HOST_CPU_LOAD_INFO_COUNT)
 			return (KERN_FAILURE);
 
+#ifdef __DARLING__
+
+		int i;
+		cpu_load_info = (host_cpu_load_info_t)info;
+
+		for_each_possible_cpu(i) {
+			struct kernel_cpustat kcpustat;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
+			kcpustat_cpu_fetch(&kcpustat, i);
+#else
+			kcpustat = kcpustat_cpu(i);
+#endif
+
+			cpu_load_info->cpu_ticks[CPU_STATE_USER] = kcpustat.cpustat[CPUTIME_USER];
+			cpu_load_info->cpu_ticks[CPU_STATE_SYSTEM] = kcpustat.cpustat[CPUTIME_SYSTEM] + \
+				kcpustat.cpustat[CPUTIME_SOFTIRQ] + kcpustat.cpustat[CPUTIME_IRQ];
+			cpu_load_info->cpu_ticks[CPU_STATE_IDLE] = kcpustat.cpustat[CPUTIME_IDLE];
+			cpu_load_info->cpu_ticks[CPU_STATE_NICE] = kcpustat.cpustat[CPUTIME_NICE];
+		}
+
+#else // __DARLING__
 #define GET_TICKS_VALUE(state, ticks)                                                      \
 	MACRO_BEGIN cpu_load_info->cpu_ticks[(state)] += (uint32_t)(ticks / hz_tick_interval); \
 	MACRO_END
@@ -507,12 +539,13 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 			}
 		}
 		simple_unlock(&processor_list_lock);
-
+#endif
 		*count = HOST_CPU_LOAD_INFO_COUNT;
 
 		return (KERN_SUCCESS);
 	}
 
+#ifndef __DARLING__
 	case HOST_EXPIRED_TASK_INFO: {
 		if (*count < TASK_POWER_INFO_COUNT) {
 			return (KERN_FAILURE);
@@ -533,8 +566,13 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 		return (KERN_SUCCESS);
 	}
 	default: return (KERN_INVALID_ARGUMENT);
-	}
 #endif
+
+#ifdef __DARLING__
+	default:
+		printf("Unimplemented host_statistics: flavor %d\n", flavor);
+#endif
+	}
 }
 
 extern uint32_t c_segment_pages_compressed;
@@ -755,7 +793,7 @@ kern_return_t
 get_sched_statistics(struct _processor_statistics_np * out, uint32_t * count)
 {
 #if defined (__DARLING__)
-    kprintf("not implemented: host_statistics()\n");
+    kprintf("not implemented: get_sched_statistics()\n");
     return -1;
 #else
 	processor_t processor;
