@@ -352,7 +352,7 @@ ipc_kobject_server(
 	{
 	    if (ptr) {
             #if defined (__DARLING__)
-                debug_msg( "- kobject routine: %pF\n", ptr->routine);
+                printf( "- kobject routine: %pF\n", ptr->routine);
             #endif
 		/*
 		 * Check if the port is a task port, if its a task port then

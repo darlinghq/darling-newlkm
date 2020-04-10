@@ -108,4 +108,6 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* args);
 
 int handle_to_path_entry(task_t, struct handle_to_path_args* args);
 
+int sigprocess_entry(task_t task, struct sigprocess_args* args);
+
 #endif

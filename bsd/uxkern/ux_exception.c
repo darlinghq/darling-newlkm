@@ -38,7 +38,14 @@
  **********************************************************************
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
+#ifndef __DARLING__
 #include <sys/param.h>
+#endif
 
 #include <mach/boolean.h>
 #include <mach/exception.h>
@@ -54,6 +61,7 @@
 #include <kern/sched_prim.h>
 #include <kern/kalloc.h>
 
+#ifndef __DARLING__
 #include <sys/proc.h>
 #include <sys/user.h>
 #include <sys/systm.h>
@@ -61,6 +69,20 @@
 #include <sys/vmparam.h>	/* MAXSSIZ */
 
 #include <vm/vm_protos.h>	/* get_task_ipcspace() */
+#else
+
+#define proc_list_lock
+#define proc_list_unlock
+
+#endif
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+
+extern kern_return_t xnu_kthread_register(void);
+extern kern_return_t xnu_kthread_deregister(void);
+#endif
+
 /*
  * XXX Things that should be retrieved from Mach headers, but aren't
  */
@@ -97,10 +119,18 @@ mach_port_name_t		ux_exception_port;
 
 static task_t			ux_handler_self;
 
+#ifndef __DARLING__
 __attribute__((noreturn))
 static void
 ux_handler(void)
+#else
+static int ux_handler(void* unused_arg)
+#endif
 {
+#ifdef __DARLING__
+	xnu_kthread_register();
+	allow_signal(SIGTERM);
+#endif
     task_t		self = current_task();
     mach_port_name_t	exc_port_name;
     mach_port_name_t	exc_set_name;
@@ -130,9 +160,11 @@ ux_handler(void)
 			(void *) &ux_exception_port) != MACH_MSG_SUCCESS)
 		panic("ux_handler: object_copyin(ux_exception_port) failed");
 
+#ifndef __DARLING__
     proc_list_lock();
     thread_wakeup(&ux_exception_port);
     proc_list_unlock();
+#endif
 
     /* Message handling loop. */
 
@@ -182,14 +214,24 @@ ux_handler(void)
 	}
 	else if (result == MACH_RCV_TOO_LARGE)
 		/* ignore oversized messages */;
-	else
+	else {
+#ifndef __DARLING__
 		panic("exception_handler");
+#else
+		xnu_kthread_deregister();
+		return 0;
+#endif
+	}
     }
 }
 
+#ifdef __DARLING__
+static struct task_struct* ux_kthread = NULL;
+#endif
 void
 ux_handler_init(void)
 {
+#ifndef __DARLING__
 	thread_t	thread = THREAD_NULL;
 
 	ux_exception_port = MACH_PORT_NULL;
@@ -200,7 +242,25 @@ ux_handler_init(void)
 		(void)msleep(&ux_exception_port, proc_list_mlock, 0, "ux_handler_wait", 0);
 	}
 	proc_list_unlock();
+#else
+
+	ux_exception_port = MACH_PORT_NULL;
+
+	ux_kthread = kthread_run(ux_handler, NULL, "ux_exception");
+#endif
 }
+
+#ifdef __DARLING__
+void ux_handler_stop(void)
+{
+	if (ux_kthread != NULL)
+	{
+		kill_proc(ux_kthread->thread->pid, SIGTERM, 1);
+		kthread_stop(ux_kthread);
+		ux_kthread = NULL;
+	}
+}
+#endif
 
 kern_return_t
 catch_exception_raise(
@@ -238,11 +298,15 @@ catch_mach_exception_raise(
 	task_t			self = current_task();
 	thread_t		th_act;
 	ipc_port_t 		thread_port;
+#ifndef __DARLING__
 	struct proc		*p;
+#endif
 	kern_return_t		result = MACH_MSG_SUCCESS;
 	int			ux_signal = 0;
 	mach_exception_code_t 	ucode = 0;
+#ifndef __DARLING__
 	struct uthread 		*ut;
+#endif
 	mach_port_name_t thread_name = CAST_MACH_PORT_TO_NAME(thread);
 	mach_port_name_t task_name = CAST_MACH_PORT_TO_NAME(task);
 
@@ -270,6 +334,7 @@ catch_mach_exception_raise(
 	     */
 	    ux_exception(exception, code[0], code[1], &ux_signal, &ucode);
 
+#ifndef __DARLING__
 	    ut = get_bsdthread_info(th_act);
 	    p = proc_findthread(th_act);
 
@@ -326,6 +391,7 @@ catch_mach_exception_raise(
 			    }
 		    }
 	    }
+#endif
 	    /*
 	     *	Send signal.
 	     */
@@ -335,8 +401,10 @@ catch_mach_exception_raise(
 			ut->uu_subcode = code[1];			
 			threadsignal(th_act, ux_signal, code[0], TRUE);
 	    }
+#ifndef __DARLING__
 	    if (p != NULL) 
 		    proc_rele(p);
+#endif
 	    thread_deallocate(th_act);
 	}
 	else
@@ -352,6 +420,27 @@ catch_mach_exception_raise(
 
     return (result);
 }
+
+#ifdef __DARLING__
+void	threadsignal(thread_t sig_actthread, int signum, 
+		mach_exception_code_t code, boolean_t set_exitreason)
+{
+	if (sig_actthread->in_sigprocess)
+	{
+		if (signum == SIGSTOP)
+		{
+			// TODO: deliver LINUX_SIGSTOP directly
+		}
+		else
+			sig_actthread->pending_signal = signum;
+	}
+	else
+	{
+		printf("Someone introduced a new signal by sending a message to the exception port.\n");
+		printf("This is not supported under Darling.\n");
+	}
+}
+#endif
 
 kern_return_t
 catch_exception_raise_state(
@@ -432,11 +521,13 @@ void ux_exception(
 		int			*ux_signal,
 		mach_exception_code_t 	*ux_code)
 {
+#ifndef __DARLING__
     /*
      *	Try machine-dependent translation first.
      */
     if (machine_exception(exception, code, subcode, ux_signal, ux_code))
 	return;
+#endif
 	
     switch(exception) {
 

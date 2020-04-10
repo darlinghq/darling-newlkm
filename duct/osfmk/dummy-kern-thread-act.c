@@ -146,12 +146,14 @@ thread_terminate(
  *
  * Called with thread mutex held.
  */
+/*
 void
 thread_hold(
     register thread_t   thread)
 {
         kprintf("not implemented: thread_hold()\n");
 }
+*/
 
 /*
  * Decrement internal suspension count, setting thread
@@ -159,13 +161,16 @@ thread_hold(
  *
  * Called with thread mutex held.
  */
+/*
 void
 thread_release(
     register thread_t   thread)
 {
         kprintf("not implemented: thread_release()\n");
 }
+*/
 
+#if 0
 kern_return_t
 thread_suspend(
     register thread_t   thread)
@@ -178,9 +183,9 @@ thread_suspend(
 		return KERN_FAILURE;
 	kprintf(KERN_DEBUG " - thread_suspend(): thread=%p, linux_task=%p\n", thread, thread->linux_task);
 	
-    if (thread->task->tracer == 0)
+    //if (thread->task->tracer == 0)
 	    smp_store_mb(thread->linux_task->state, TASK_STOPPED);
-    else
+    /*else
     {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
         struct kernel_siginfo info;
@@ -194,9 +199,9 @@ thread_suspend(
         info.si_int = -100;
 
         send_sig_info(info.si_signo, &info, thread->linux_task);
-    }
+    }*/
 	// wake_up_process(thread->linux_task);
-	thread->suspend_count = 1;
+	thread->suspend_count++;
 
 	return KERN_SUCCESS;
 }
@@ -212,12 +217,12 @@ thread_resume(
 	if (thread->linux_task == NULL)
 		return KERN_FAILURE;
 
-    if (thread->task->tracer == 0)
-    {
+    //if (thread->task->tracer == 0)
+    /*{
         smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
         wake_up_process(thread->linux_task);
-    }
-    else
+    }*/
+    /*else
     {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
         struct kernel_siginfo info;
@@ -231,11 +236,19 @@ thread_resume(
         info.si_int = -101;
 
         send_sig_info(info.si_signo, &info, thread->linux_task);
+    }*/
+    if (thread->suspend_count > 0)
+	    thread->suspend_count--;
+
+    if (thread->suspend_count == 0)
+    {
+        smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
+        wake_up_process(thread->linux_task);
     }
-	thread->suspend_count = 0;
 
 	return KERN_SUCCESS;
 }
+#endif
 
 /*
  *  thread_depress_abort:
@@ -272,6 +285,7 @@ thread_abort(
         return 0;
 }
 
+/*
 kern_return_t
 thread_abort_safely(
     thread_t        thread)
@@ -279,6 +293,7 @@ thread_abort_safely(
         kprintf("not implemented: thread_abort_safely()\n");
         return 0;
 }
+*/
 
 /*** backward compatibility hacks ***/
 #include <mach/thread_info.h>

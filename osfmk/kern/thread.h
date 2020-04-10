@@ -524,6 +524,8 @@ struct thread {
 
 #if defined (__DARLING__)
         struct task_struct        * linux_task;
+		boolean_t in_sigprocess;
+		int pending_signal;
         // linux_wait_queue_t          lwait;
 		uint32_t uu_rval[1];
 #ifdef __x86_64__

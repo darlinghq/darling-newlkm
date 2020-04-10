@@ -1,6 +1,6 @@
 /*
 Copyright (c) 2014-2017, Wenqi Chen
-COpyright (C) 2018 Lubos Dolezel
+COpyright (C) 2018-2020 Lubos Dolezel
 
 Shanghai Mifu Infotech Co., Ltd
 B112-113, IF Industrial Park, 508 Chunking Road, Shanghai 201103, China
@@ -42,6 +42,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_vm_map.h"
 
 #include <mach/mach_types.h>
+#include <vm/vm_map.h>
 #include <kern/mach_param.h>
 #include <kern/thread.h>
 #include <darling/task_registry.h>
@@ -321,6 +322,8 @@ thread_get_state(
 
 			memcpy(s, &thread->thread_state.uts.ts64, sizeof(*s));
 
+			// printf("Returning RIP 0x%x\n", s->rip);
+
 			return KERN_SUCCESS;
 		}
 		case x86_DEBUG_STATE32:
@@ -569,6 +572,8 @@ thread_set_state(
 
 			const x86_thread_state64_t* s = (x86_thread_state64_t*) state;
 
+			// printf("Saving RIP 0x%lx, FLG 0x%lx\n", s->rip, s->rflags);
+
 			memcpy(&thread->thread_state.uts.ts64, s, sizeof(*s));
 			return KERN_SUCCESS;
 		}
@@ -751,3 +756,238 @@ static void watchpoint_callback(struct perf_event* pevent, struct perf_sample_da
 	}
 }
 
+static void load_regs64(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
+{
+	x86_thread_state64_t ms;
+	x86_float_state64_t mfs;
+
+	mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
+	thread_get_state(thread, x86_THREAD_STATE64, (thread_state_t) &ms, &count);
+
+	count = x86_FLOAT_STATE64_COUNT;
+	thread_get_state(thread, x86_FLOAT_STATE64, (thread_state_t) &mfs, &count);
+
+	regs->ax = ms.rax;
+	regs->bx = ms.rbx;
+	regs->cx = ms.rcx;
+	regs->dx = ms.rdx;
+	regs->di = ms.rdi;
+	regs->si = ms.rsi;
+	regs->bp = ms.rbp;
+	regs->sp = ms.rsp;
+	regs->r8 = ms.r8;
+	regs->r9 = ms.r9;
+	regs->r10 = ms.r10;
+	regs->r11 = ms.r11;
+	regs->r12 = ms.r12;
+	regs->r13 = ms.r13;
+	regs->r14 = ms.r14;
+	regs->r15 = ms.r15;
+	regs->ip = ms.rip;
+	regs->flags = ms.rflags;
+	regs->cs = ms.cs;
+
+	memcpy(&xsave->i387.twd, &mfs.fpu_ftw, sizeof(xsave->i387.twd));
+	memcpy(&xsave->i387.cwd, &mfs.fpu_fcw, sizeof(xsave->i387.cwd));
+	memcpy(&xsave->i387.swd, &mfs.fpu_fsw, sizeof(xsave->i387.swd));
+	xsave->i387.rip = mfs.fpu_ip;
+	xsave->i387.rdp = mfs.fpu_dp;
+	xsave->i387.mxcsr = mfs.fpu_mxcsr;
+	xsave->i387.mxcsr_mask = mfs.fpu_mxcsrmask;
+
+	memcpy(xsave->i387.st_space, &mfs.fpu_stmm0, 128);
+	memcpy(xsave->i387.xmm_space, &mfs.fpu_xmm0, 256);
+}
+
+static void load_regs32(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
+{
+	// TODO
+}
+
+void
+thread_release(
+    register thread_t   thread)
+{
+	if (thread->linux_task)
+	{
+		if (!thread->in_sigprocess)
+		{
+			// copy thread state from thread_t into task_pt_regs(thread->linux_task)
+			const boolean_t is_task_64bit = thread->task->map->max_offset > VM_MAX_ADDRESS;
+			struct fpu* fpu = &thread->linux_task->thread.fpu;
+			struct xregs_state* xsave = &fpu->state.xsave;
+
+			if (is_task_64bit)
+			{
+				load_regs64(thread, task_pt_regs(thread->linux_task), xsave);
+			}
+			else
+			{
+				load_regs32(thread, task_pt_regs(thread->linux_task), xsave);
+			}
+		}
+
+		smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
+		wake_up_process(thread->linux_task);
+	}
+}
+
+void
+thread_hold(
+    register thread_t   thread)
+{
+	if (thread->linux_task)
+	{
+    	smp_store_mb(thread->linux_task->state, TASK_STOPPED);
+		kick_process(thread->linux_task);
+	}
+}
+
+static void save_regs64(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
+{
+	x86_thread_state64_t ms;
+	x86_float_state64_t mfs;
+
+	ms.rax = regs->ax;
+	ms.rbx = regs->bx;
+	ms.rcx = regs->cx;
+	ms.rdx = regs->dx;
+	ms.rdi = regs->di;
+	ms.rsi = regs->si;
+	ms.rbp = regs->bp;
+	ms.rsp = regs->sp;
+	ms.r8 = regs->r8;
+	ms.r9 = regs->r9;
+	ms.r10 = regs->r10;
+	ms.r11 = regs->r11;
+	ms.r12 = regs->r12;
+	ms.r13 = regs->r13;
+	ms.r14 = regs->r14;
+	ms.r15 = regs->r15;
+	ms.rip = regs->ip;
+	ms.rflags = regs->flags;
+	ms.cs = regs->cs;
+	ms.fs = 0;
+	ms.gs = 0;
+
+	memcpy(&mfs.fpu_ftw, &xsave->i387.twd, sizeof(xsave->i387.twd));
+	memcpy(&mfs.fpu_fcw, &xsave->i387.cwd, sizeof(xsave->i387.cwd));
+	memcpy(&mfs.fpu_fsw, &xsave->i387.swd, sizeof(xsave->i387.swd));
+	mfs.fpu_ip = xsave->i387.rip;
+	mfs.fpu_dp = xsave->i387.rdp;
+	mfs.fpu_mxcsr = xsave->i387.mxcsr;
+	mfs.fpu_mxcsrmask = xsave->i387.mxcsr_mask;
+
+	memcpy(&mfs.fpu_stmm0, xsave->i387.st_space, 128);
+	memcpy(&mfs.fpu_xmm0, xsave->i387.xmm_space, 256);
+
+	thread_set_state(thread, x86_THREAD_STATE64, (thread_state_t) &ms, x86_THREAD_STATE64_COUNT);
+	thread_set_state(thread, x86_FLOAT_STATE64, (thread_state_t) &mfs, x86_FLOAT_STATE64_COUNT);
+}
+
+static void save_regs32(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
+{
+	x86_thread_state32_t ms;
+	x86_float_state32_t mfs;
+
+	thread_set_state(thread, x86_THREAD_STATE32, (thread_state_t) &ms, x86_THREAD_STATE32_COUNT);
+	thread_set_state(thread, x86_FLOAT_STATE32, (thread_state_t) &mfs, x86_FLOAT_STATE32_COUNT);
+}
+
+static void wait_cb(void* info)
+{
+	thread_t thread = (thread_t) info;
+	if (!thread->in_sigprocess)
+	{
+		// copy task_pt_regs(thread->linux_task) into thread_t
+		const boolean_t is_task_64bit = thread->task->map->max_offset > VM_MAX_ADDRESS;
+		struct fpu* fpu = &thread->linux_task->thread.fpu;
+		struct xregs_state* xsave = &fpu->state.xsave;
+
+		if (is_task_64bit)
+		{
+			save_regs64(thread, task_pt_regs(thread->linux_task), xsave);
+		}
+		else
+		{
+			save_regs32(thread, task_pt_regs(thread->linux_task), xsave);
+		}
+	}
+}
+
+void
+thread_wait(
+	thread_t	thread,
+	boolean_t	until_not_runnable)
+{
+	if (thread->linux_task)
+	{
+		unsigned int cpu = task_cpu(thread->linux_task);
+		smp_call_function_single(cpu, wait_cb, (void*) thread, true);
+	}
+}
+
+kern_return_t
+thread_abort_safely(
+    thread_t        thread)
+{
+	if (thread->linux_task)
+	{
+		kick_process(thread->linux_task);
+		thread_wait(thread, FALSE);
+	}
+    return KERN_SUCCESS;
+}
+
+// The following is copied from osfmk/kern/thread_act.c
+
+kern_return_t
+thread_suspend(thread_t thread)
+{
+	kern_return_t result = KERN_SUCCESS;
+
+	if (thread == THREAD_NULL || thread->task == kernel_task)
+		return (KERN_INVALID_ARGUMENT);
+
+	thread_mtx_lock(thread);
+
+	if (thread->active) {
+		if (thread->user_stop_count++ == 0)
+			thread_hold(thread);
+	} else {
+		result = KERN_TERMINATED;
+	}
+
+	thread_mtx_unlock(thread);
+
+	if (thread != current_thread() && result == KERN_SUCCESS)
+		thread_wait(thread, FALSE);
+
+	return (result);
+}
+
+kern_return_t
+thread_resume(thread_t thread)
+{
+	kern_return_t result = KERN_SUCCESS;
+
+	if (thread == THREAD_NULL || thread->task == kernel_task)
+		return (KERN_INVALID_ARGUMENT);
+
+	thread_mtx_lock(thread);
+
+	if (thread->active) {
+		if (thread->user_stop_count > 0) {
+			if (--thread->user_stop_count == 0)
+				thread_release(thread);
+		} else {
+			result = KERN_FAILURE;
+		}
+	} else {
+		result = KERN_TERMINATED;
+	}
+
+	thread_mtx_unlock(thread);
+
+	return (result);
+}

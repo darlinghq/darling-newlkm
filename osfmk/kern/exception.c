@@ -56,6 +56,11 @@
 /*
  */
 
+#if defined (__DARLING__)
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -86,6 +91,10 @@
 #include <security/mac_mach_internal.h>
 #include <string.h>
 #include <pexpert/pexpert.h>
+
+#if defined (__DARLING__)
+#include <duct/duct_post_xnu.h>
+#endif
 
 extern int panic_on_exception_triage;
 

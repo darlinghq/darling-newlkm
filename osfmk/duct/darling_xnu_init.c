@@ -47,6 +47,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 static void machine_startup (void);
 extern void duct_kernel_early_bootstrap(void);
 extern void duct_kernel_bootstrap(void);
+extern void ux_handler_init(void);
+extern void ux_handler_stop(void);
 
 // [i386|arm]_init.h
 void darling_xnu_init ()
@@ -60,6 +62,7 @@ void darling_xnu_init ()
         duct_kernel_early_bootstrap ();
         duct_thread_bootstrap ();
         machine_startup ();
+        ux_handler_init();
 
         //kprintf ("darling.xnu.init.2 ()\n");
         //machine_startup();
@@ -67,6 +70,7 @@ void darling_xnu_init ()
 
 void darling_xnu_deinit (void)
 {
+        ux_handler_stop();
         thread_call_deinitialize();
 
         // TODO: add many more!

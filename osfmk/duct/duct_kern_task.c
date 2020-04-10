@@ -46,6 +46,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/locks.h>
 #include <kern/ipc_tt.h>
 #include <kern/sync_sema.h>
+#include <ipc/ipc_hash.h>
 
 #include "duct_post_xnu.h"
 
@@ -156,6 +157,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         new_task->ref_count = 2;
         new_task->vchroot = NULL;
         new_task->vchroot_path = (char*) __get_free_page(GFP_KERNEL);
+		new_task->sigexc = FALSE;
 
         // /* allocate with active entries */
         // assert(task_ledger_template != NULL);
@@ -858,9 +860,344 @@ task_purgable_info(
 	return KERN_NOT_SUPPORTED;
 }
 
-extern kern_return_t task_suspend(task_t     task);
-extern kern_return_t task_resume(task_t     task);
+static void task_hold_locked(task_t task);
+static void task_wait_locked(task_t task, boolean_t until_not_runnable) {}
+static void task_release_locked(task_t task);
 
+
+// The following stuff is copied from osfmk/kern/task.c
+
+#define TASK_HOLD_NORMAL	0
+#define TASK_HOLD_PIDSUSPEND	1
+#define TASK_HOLD_LEGACY	2
+#define TASK_HOLD_LEGACY_ALL	3
+
+static kern_return_t
+place_task_hold    (
+	task_t task,
+	int mode)
+{    
+	if (!task->active && !task_is_a_corpse(task)) {
+		return (KERN_FAILURE);
+	}
+
+	/* Return success for corpse task */
+	if (task_is_a_corpse(task)) {
+		return KERN_SUCCESS;
+	}
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	    MACHDBG_CODE(DBG_MACH_IPC,MACH_TASK_SUSPEND) | DBG_FUNC_NONE,
+	    task_pid(task), ((thread_t)queue_first(&task->threads))->thread_id,
+	    task->user_stop_count, task->user_stop_count + 1, 0);
+
+#if MACH_ASSERT
+	current_task()->suspends_outstanding++;
+#endif
+
+	if (mode == TASK_HOLD_LEGACY)
+		task->legacy_stop_count++;
+
+	if (task->user_stop_count++ > 0) {
+		/*
+		 *	If the stop count was positive, the task is
+		 *	already stopped and we can exit.
+		 */
+		return (KERN_SUCCESS);
+	}
+
+	/*
+	 * Put a kernel-level hold on the threads in the task (all
+	 * user-level task suspensions added together represent a
+	 * single kernel-level hold).  We then wait for the threads
+	 * to stop executing user code.
+	 */
+	task_hold_locked(task);
+	task_wait_locked(task, FALSE);
+	
+	return (KERN_SUCCESS);
+}
+
+static kern_return_t
+release_task_hold    (
+	task_t		task,
+	int           		mode)
+{
+	boolean_t release = FALSE;
+    
+	if (!task->active && !task_is_a_corpse(task)) {
+		return (KERN_FAILURE);
+	}
+
+	/* Return success for corpse task */
+	if (task_is_a_corpse(task)) {
+		return KERN_SUCCESS;
+	}
+	
+	if (mode == TASK_HOLD_PIDSUSPEND) {
+	    if (task->pidsuspended == FALSE) {
+		    return (KERN_FAILURE);
+	    }
+	    task->pidsuspended = FALSE;
+	}
+
+	if (task->user_stop_count > (task->pidsuspended ? 1 : 0)) {
+
+		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+		    MACHDBG_CODE(DBG_MACH_IPC,MACH_TASK_RESUME) | DBG_FUNC_NONE,
+		    task_pid(task), ((thread_t)queue_first(&task->threads))->thread_id,
+		    task->user_stop_count, mode, task->legacy_stop_count);
+
+#if MACH_ASSERT
+		/*
+		 * This is obviously not robust; if we suspend one task and then resume a different one,
+		 * we'll fly under the radar. This is only meant to catch the common case of a crashed
+		 * or buggy suspender.
+		 */
+		current_task()->suspends_outstanding--;
+#endif
+
+		if (mode == TASK_HOLD_LEGACY_ALL) {
+			if (task->legacy_stop_count >= task->user_stop_count) {
+				task->user_stop_count = 0;
+				release = TRUE;
+			} else {
+				task->user_stop_count -= task->legacy_stop_count;
+			}
+			task->legacy_stop_count = 0;
+		} else {
+			if (mode == TASK_HOLD_LEGACY && task->legacy_stop_count > 0)
+				task->legacy_stop_count--;
+			if (--task->user_stop_count == 0)
+				release = TRUE;
+		}
+	}
+	else {
+		return (KERN_FAILURE);
+	}
+
+	/*
+	 *	Release the task if necessary.
+	 */
+	if (release)
+		task_release_locked(task);
+		
+    return (KERN_SUCCESS);
+}
+
+/*
+ *	task_release_locked:
+ *
+ *	Release a kernel hold on a task.
+ *
+ * 	CONDITIONS: the task is locked and active
+ */
+void
+task_release_locked(
+	task_t		task)
+{
+	thread_t	thread;
+
+	assert(task->active);
+	assert(task->suspend_count > 0);
+
+	if (--task->suspend_count > 0)
+		return;
+
+	queue_iterate(&task->threads, thread, thread_t, task_threads) {
+		thread_mtx_lock(thread);
+		thread_release(thread);
+		thread_mtx_unlock(thread);
+	}
+}
+
+/*
+ *	task_release:
+ *
+ *	Same as the internal routine above, except that it must lock
+ *	and verify that the task is active.
+ *
+ * 	CONDITIONS: The caller holds a reference to the task
+ */
+kern_return_t
+task_release(
+	task_t		task)
+{
+	if (task == TASK_NULL)
+		return (KERN_INVALID_ARGUMENT);
+
+	task_lock(task);
+
+	if (!task->active) {
+		task_unlock(task);
+
+		return (KERN_FAILURE);
+	}
+
+	task_release_locked(task);
+	task_unlock(task);
+
+	return (KERN_SUCCESS);
+}
+
+
+/*
+ *	task_suspend:
+ *
+ *	Implement an (old-fashioned) user-level suspension on a task.
+ *
+ *	Because the user isn't expecting to have to manage a suspension
+ *	token, we'll track it for him in the kernel in the form of a naked
+ *	send right to the task's resume port.  All such send rights
+ *	account for a single suspension against the task (unlike task_suspend2()
+ *	where each caller gets a unique suspension count represented by a
+ *	unique send-once right).
+ *
+ * Conditions:
+ * 	The caller holds a reference to the task
+ */
+kern_return_t
+task_suspend(
+	task_t		task)
+{
+	kern_return_t	 		kr;
+	mach_port_t			port, send, old_notify;
+	mach_port_name_t		name;
+
+	if (task == TASK_NULL || task == kernel_task)
+		return (KERN_INVALID_ARGUMENT);
+
+	task_lock(task);
+
+	/* 
+	 * Claim a send right on the task resume port, and request a no-senders
+	 * notification on that port (if none outstanding). 
+	 */
+	if (task->itk_resume == IP_NULL) {
+		task->itk_resume = ipc_port_alloc_kernel();
+		if (!IP_VALID(task->itk_resume))
+			panic("failed to create resume port");
+		ipc_kobject_set(task->itk_resume, (ipc_kobject_t)task, IKOT_TASK_RESUME);
+	}
+
+	port = task->itk_resume;
+	ip_lock(port);
+	assert(ip_active(port));
+
+	send = ipc_port_make_send_locked(port);
+	assert(IP_VALID(send));
+
+	if (port->ip_nsrequest == IP_NULL) {
+		ipc_port_nsrequest(port, port->ip_mscount, ipc_port_make_sonce_locked(port), &old_notify);
+		assert(old_notify == IP_NULL);
+		/* port unlocked */
+	} else {
+		ip_unlock(port);
+	}
+
+	/*
+	 * place a legacy hold on the task.
+	 */
+	kr = place_task_hold(task, TASK_HOLD_LEGACY);
+	if (kr != KERN_SUCCESS) {
+		task_unlock(task);
+		ipc_port_release_send(send);
+		return kr;
+	}
+
+	task_unlock(task);
+
+	/*
+	 * Copyout the send right into the calling task's IPC space.  It won't know it is there,
+	 * but we'll look it up when calling a traditional resume.  Any IPC operations that
+	 * deallocate the send right will auto-release the suspension.
+	 */
+	if ((kr = ipc_kmsg_copyout_object(current_task()->itk_space, (ipc_object_t)send,
+		MACH_MSG_TYPE_MOVE_SEND, &name)) != KERN_SUCCESS) {
+#ifndef __DARLING__
+		printf("warning: %s(%d) failed to copyout suspension token for pid %d with error: %d\n",
+				proc_name_address(current_task()->bsd_info), proc_pid(current_task()->bsd_info),
+				task_pid(task), kr);
+#endif
+		return (kr);
+	}
+
+	return (kr);
+}
+
+/*
+ *	task_resume:
+ *		Release a user hold on a task.
+ *		
+ * Conditions:
+ *		The caller holds a reference to the task
+ */
+kern_return_t 
+task_resume(
+	task_t	task)
+{
+	kern_return_t	 kr;
+	mach_port_name_t resume_port_name;
+	ipc_entry_t		 resume_port_entry;
+	ipc_space_t		 space = current_task()->itk_space;
+
+	if (task == TASK_NULL || task == kernel_task )
+		return (KERN_INVALID_ARGUMENT);
+
+	/* release a legacy task hold */
+	task_lock(task);
+	kr = release_task_hold(task, TASK_HOLD_LEGACY);
+	task_unlock(task);
+
+	is_write_lock(space);
+	if (is_active(space) && IP_VALID(task->itk_resume) &&
+	    ipc_hash_lookup(space, (ipc_object_t)task->itk_resume, &resume_port_name, &resume_port_entry) == TRUE) {
+		/*
+		 * We found a suspension token in the caller's IPC space. Release a send right to indicate that
+		 * we are holding one less legacy hold on the task from this caller.  If the release failed,
+		 * go ahead and drop all the rights, as someone either already released our holds or the task
+		 * is gone.
+		 */
+		if (kr == KERN_SUCCESS)
+			ipc_right_dealloc(space, resume_port_name, resume_port_entry);
+		else
+			ipc_right_destroy(space, resume_port_name, resume_port_entry, FALSE, 0);
+		/* space unlocked */
+	} else {
+		is_write_unlock(space);
+#ifndef __DARLING__
+		if (kr == KERN_SUCCESS)
+			printf("warning: %s(%d) performed out-of-band resume on pid %d\n",
+			       proc_name_address(current_task()->bsd_info), proc_pid(current_task()->bsd_info),
+			       task_pid(task));
+#endif
+	}
+
+	return kr;
+}
+
+/*
+ * Suspend the target task.
+ * Making/holding a token/reference/port is the callers responsibility.
+ */
+kern_return_t
+task_suspend_internal(task_t task)
+{
+	kern_return_t	 kr;
+       
+	if (task == TASK_NULL || task == kernel_task)
+		return (KERN_INVALID_ARGUMENT);
+
+	task_lock(task);
+	kr = place_task_hold(task, TASK_HOLD_NORMAL);
+	task_unlock(task);
+	return (kr);
+}
+
+/*
+ * Suspend the target task, and return a suspension token. The token
+ * represents a reference on the suspended task.
+ */
 kern_return_t
 task_suspend2(
 	task_t			task,
@@ -868,7 +1205,7 @@ task_suspend2(
 {
 	kern_return_t	 kr;
  
-	kr = task_suspend(task);
+	kr = task_suspend_internal(task);
 	if (kr != KERN_SUCCESS) {
 		*suspend_token = TASK_NULL;
 		return (kr);
@@ -885,16 +1222,100 @@ task_suspend2(
 	return (KERN_SUCCESS);
 }
 
+/*
+ * Resume the task
+ * (reference/token/port management is caller's responsibility).
+ */
+kern_return_t
+task_resume_internal(
+	task_suspension_token_t		task)
+{
+	kern_return_t kr;
+
+	if (task == TASK_NULL || task == kernel_task)
+		return (KERN_INVALID_ARGUMENT);
+
+	task_lock(task);
+	kr = release_task_hold(task, TASK_HOLD_NORMAL);
+	task_unlock(task);
+	return (kr);
+}
+
+/*
+ * Resume the task using a suspension token. Consumes the token's ref.
+ */
 kern_return_t
 task_resume2(
 	task_suspension_token_t		task)
 {
 	kern_return_t kr;
 
-	kr = task_resume(task);
+	kr = task_resume_internal(task);
 	task_suspension_token_deallocate(task);
 
 	return (kr);
+}
+
+/*
+ *	task_hold_locked:
+ *
+ *	Suspend execution of the specified task.
+ *	This is a recursive-style suspension of the task, a count of
+ *	suspends is maintained.
+ *
+ * 	CONDITIONS: the task is locked and active.
+ */
+void
+task_hold_locked(
+	task_t		task)
+{
+	thread_t	thread;
+
+	assert(task->active);
+
+	if (task->suspend_count++ > 0)
+		return;
+
+	/*
+	 *	Iterate through all the threads and hold them.
+	 */
+	queue_iterate(&task->threads, thread, thread_t, task_threads) {
+		thread_mtx_lock(thread);
+		thread_hold(thread);
+		thread_mtx_unlock(thread);
+	}
+}
+
+/*
+ *	task_hold:
+ *
+ *	Same as the internal routine above, except that is must lock
+ *	and verify that the task is active.  This differs from task_suspend
+ *	in that it places a kernel hold on the task rather than just a 
+ *	user-level hold.  This keeps users from over resuming and setting
+ *	it running out from under the kernel.
+ *
+ * 	CONDITIONS: the caller holds a reference on the task
+ */
+kern_return_t
+task_hold(
+	task_t		task)
+{
+	if (task == TASK_NULL)
+		return (KERN_INVALID_ARGUMENT);
+
+	task_lock(task);
+
+	if (!task->active) {
+		task_unlock(task);
+
+		return (KERN_FAILURE);
+	}
+
+	task_hold_locked(task);
+	task_unlock(task);
+
+	return (KERN_SUCCESS);
 }
 
 kern_return_t

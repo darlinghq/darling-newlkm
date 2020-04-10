@@ -392,6 +392,7 @@ struct task {
 	int tracer;
 	struct vfsmount* vchroot;
 	char* vchroot_path;
+	boolean_t sigexc;
 #endif
 
 #if HYPERVISOR
