@@ -96,5 +96,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define bitmap_alloc                linux_bitmap_alloc
 
 #define uuid_t                      linux_uuid_t
+#define sigset_t                    linux_sigset_t
 
 #endif // DUCT__PRE_LINUX_TYPES_H

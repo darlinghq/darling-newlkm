@@ -752,12 +752,13 @@ boolean_t task_suspension_notify(mach_msg_header_t* m)
     return FALSE;
 }
 
+#if 0
 kern_return_t task_exception_notify(exception_type_t exc, mach_exception_data_type_t code, mach_exception_data_type_t subcode)
 {
     kprintf("not implemented: task_exception_notify\n");
     return KERN_FAILURE;
 }
-
+#endif
 
 /* Placeholders for the task set/get voucher interfaces */
 kern_return_t 

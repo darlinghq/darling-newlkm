@@ -89,6 +89,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/cpumask.h>
 #include <linux/version.h>
 #include <linux/kernel.h>
+#include <asm/ucontext.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
 #include <linux/alarmtimer.h>
 #endif

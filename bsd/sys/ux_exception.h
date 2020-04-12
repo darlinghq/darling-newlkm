@@ -41,7 +41,9 @@
 #ifndef	_SYS_UX_EXCEPTION_H_
 #define _SYS_UX_EXCEPTION_H_
 
+#ifndef __DARLING__
 #include <sys/appleapiopts.h>
+#endif
 
 #ifdef __APPLE_API_UNSTABLE
 
