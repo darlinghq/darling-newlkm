@@ -74,6 +74,7 @@ void darling_xnu_deinit (void)
         thread_call_deinitialize();
 
         // TODO: add many more!
+        task_deallocate(kernel_task);
 }
 
 // WC: should be in duct_model_dep.c
