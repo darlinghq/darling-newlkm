@@ -324,70 +324,30 @@ out:
 
 kern_return_t xnu_kthread_register(void)
 {
-	task_t new_task;
 	thread_t new_thread;
 	kern_return_t ret;
 
-	ret = duct_task_create_internal(NULL, false, true, &new_task, linux_current);
-	if (ret != KERN_SUCCESS)
-		return ret;
-
-	new_task->tracer = 0;
-	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
-
 	// Create a new thread_t
-	ret = duct_thread_create(new_task, &new_thread);
+	ret = duct_thread_create(kernel_task, &new_thread);
 	if (ret != KERN_SUCCESS)
 	{
-		duct_task_destroy(new_task);
 		return ret;
 	}
 
-	darling_task_register(new_task);
 	darling_thread_register(new_thread);
 
-	task_deallocate(new_task);
 	thread_deallocate(new_thread);
 	return KERN_SUCCESS;
 }
 
 kern_return_t xnu_kthread_deregister(void)
 {
-	thread_t cur_thread;
-	task_t my_task = darling_task_get_current();
-	darling_task_deregister(my_task);
+	thread_t cur_thread = darling_thread_get_current();
 	
-	cur_thread = darling_thread_get_current();
-	
-	task_lock(my_task);
-	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
-	while (!queue_empty(&my_task->threads))
-	{
-		thread_t thread = (thread_t) queue_first(&my_task->threads);
-		
-		// debug_msg("mach_dev_release() - thread refc %d\n", thread->ref_count);
-		
-		// Because IPC space termination needs a current thread
-		if (thread != cur_thread)
-		{
-			task_unlock(my_task);
-			duct_thread_destroy(thread);
-			darling_thread_deregister(thread);
-			task_lock(my_task);
-		}
-		else
-			queue_remove(&my_task->threads, thread, thread_t, task_threads);
-	}
-	my_task->thread_count = 0;
-	
-	if (my_task->map->linux_task != NULL)
-	{
-		put_task_struct(my_task->map->linux_task);
-		my_task->map->linux_task = NULL;
-	}
-
-	task_unlock(my_task);
-	duct_task_destroy(my_task);
+	task_lock(kernel_task);
+	queue_remove(&kernel_task->threads, cur_thread, thread_t, task_threads);
+	kernel_task->thread_count--;
+	task_unlock(kernel_task);
 
 	if (cur_thread->linux_task != NULL)
 	{

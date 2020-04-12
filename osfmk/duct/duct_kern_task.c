@@ -129,7 +129,8 @@ void duct_task_destroy(task_t task)
 
         semaphore_destroy_all(task);
         ipc_space_terminate (task->itk_space);
-        pth_proc_hashdelete(task);
+        if (task->map != NULL)
+            pth_proc_hashdelete(task);
         task_deallocate(task);
 
 }
@@ -146,7 +147,9 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
     #endif
 
         new_task = (task_t) duct_zalloc(task_zone);
-        pth_proc_hashinit(new_task);
+
+        if (ltask != NULL && ltask->mm != NULL)
+            pth_proc_hashinit(new_task);
 
         // printk (KERN_NOTICE "task create internal's new task: 0x%x", (unsigned int) new_task);
 
@@ -223,7 +226,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
         new_task->semaphores_owned = 0;
         // new_task->lock_sets_owned = 0;
 
-        if (ltask != NULL)
+        if (ltask != NULL && ltask->mm != NULL)
         {
             new_task->map = duct_vm_map_create(ltask);
         }
