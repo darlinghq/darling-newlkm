@@ -160,6 +160,9 @@ CFLAGS_notify_user.o := $(miggen_cflags)
 CFLAGS_mach_voucher_server.o := $(miggen_cflags)
 CFLAGS_mach_voucher_attr_control_server.o := $(miggen_cflags)
 CFLAGS_OSAtomicOperations.o := $(atomic_cflags)
+CFLAGS_mach_exc_server.o := $(atomic_cflags)
+CFLAGS_mach_exc_user.o := $(atomic_cflags)
+CFLAGS_exc_user.o := $(atomic_cflags)
 
 # This takes effect on Linux 5.4+
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/task_server.o := $(miggen_cflags)
@@ -172,6 +175,9 @@ CFLAGS_$(MIGDIR_REL)/osfmk/mach/host_security_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/UserNotification/UNDReply_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_port_server.o := $(miggen_cflags)
 #CFLAGS_$(MIGDIR_REL)/osfmk/default_pager/default_pager_object_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_exc_server.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_exc_user.o := $(miggen_cflags)
+CFLAGS_$(MIGDIR_REL)/osfmk/mach/exc_user.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_host_server.o := $(miggen_cflags)
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/mach_voucher_server.o := $(miggen_cflags)
@@ -301,6 +307,9 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		$(MIGDIR_REL)/osfmk/mach/host_priv_server.o \
 		$(MIGDIR_REL)/osfmk/mach/host_security_server.o \
 		$(MIGDIR_REL)/osfmk/mach/lock_set_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_exc_server.o \
+		$(MIGDIR_REL)/osfmk/mach/mach_exc_user.o \
+		$(MIGDIR_REL)/osfmk/mach/exc_user.o \
 		$(MIGDIR_REL)/osfmk/mach/mach_port_server.o \
 		$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o \
 		$(MIGDIR_REL)/osfmk/mach/mach_host_server.o \

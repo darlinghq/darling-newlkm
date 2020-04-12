@@ -18,6 +18,7 @@
  */
 
 #include <duct/duct.h>
+#include "traps.h"
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/slab.h>
@@ -34,7 +35,6 @@
 #include <linux/fs_struct.h>
 #include <linux/moduleparam.h>
 #include <linux/exportfs.h>
-#include "traps.h"
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_task.h>
 #include <duct/duct_kern_thread.h>
@@ -50,6 +50,8 @@
 #include <vm/vm_map.h>
 #include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
+#include <uapi/linux/ptrace.h>
+#include <asm/signal.h>
 #include "task_registry.h"
 #include "pthread_kill.h"
 #include "debug_print.h"
@@ -383,7 +385,7 @@ kern_return_t xnu_kthread_deregister(void)
 	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
 	while (!queue_empty(&my_task->threads))
 	{
-		thread = (thread_t) queue_first(&my_task->threads);
+		thread_t thread = (thread_t) queue_first(&my_task->threads);
 		
 		// debug_msg("mach_dev_release() - thread refc %d\n", thread->ref_count);
 		
@@ -2028,23 +2030,29 @@ out:
 	return err;
 }
 
+#define LINUX_SI_USER 0
+extern kern_return_t bsd_exception(
+	exception_type_t	exception,
+	mach_exception_data_t	code,
+	mach_msg_type_number_t  codeCnt);
+
 int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 {
 	thread_t thread = current_thread();
 	copyargs(args, in_args);
 
 	struct siginfo si;
-	if (copy_from_user(&si, args.siginfo, sizeof(si)))
+	if (copy_from_user(&si, &args.siginfo, sizeof(si)))
 		return -LINUX_EFAULT;
 
-	if (!task->sigexc && si.si_code == SI_USER)
+	if (!task->sigexc && si.si_code == LINUX_SI_USER)
 		return 0;
 
 	thread->pending_signal = 0;
 	thread->in_sigprocess = TRUE;
 
 	mach_exception_data_type_t codes[EXCEPTION_CODE_MAX] = { 0, 0 };
-	if (si.si_code == SI_USER)
+	if (si.si_code == LINUX_SI_USER)
 	{
 		codes[0] = EXC_SOFT_SIGNAL;	
 		codes[1] = args.signum; // signum has the BSD signal number
@@ -2056,31 +2064,48 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 	int mach_exception = 0;
 	switch (si.si_signo) // signo has the Linux signal number
 	{
-		case SIGSEGV:
+		case LINUX_SIGSEGV:
 			mach_exception = EXC_BAD_ACCESS;
 			codes[0] = EXC_I386_GPFLT;
 			break;
-		case SIGBUS:
+		case LINUX_SIGBUS:
 			mach_exception = EXC_BAD_ACCESS;
 			codes[0] = EXC_I386_ALIGNFLT;
 			break;
-		case SIGILL:
+		case LINUX_SIGILL:
 			mach_exception = EXC_BAD_INSTRUCTION;
 			codes[0] = EXC_I386_INVOP;
 			break;
-		case SIGFPE:
+		case LINUX_SIGFPE:
 			mach_exception = EXC_ARITHMETIC;
 			codes[0] = si.si_code;
 			break;
-		case SIGTRAP:
+		case LINUX_SIGTRAP:
 			mach_exception = EXC_BREAKPOINT;
 			codes[0] = (si.si_code == SI_KERNEL) ? EXC_I386_BPT : EXC_I386_SGL;
 
 			if (si.si_code == TRAP_HWBKPT)
 				codes[1] = thread->triggered_watchpoint_address;
 			break;
+		/*
+		case LINUX_SIGSYS:
+			mach_exception = EXC_SOFTWARE;
+			if (codes[0] == 0)
+				codes[0] = EXC_UNIX_BAD_SYSCALL;
+		case LINUX_SIGPIPE:
+			mach_exception = EXC_SOFTWARE;
+			if (codes[0] == 0)
+				codes[0] = EXC_UNIX_BAD_PIPE;
+		case LINUX_SIGABRT:
+			mach_exception = EXC_SOFTWARE;
+			if (codes[0] == 0)
+				codes[0] = EXC_UNIX_ABORT;
+		*/
 		default:
-			bsd_exception(EXC_SOFTWARE, EXC_SOFT_SIGNAL, 2);
+			if (codes[0] == 0)
+				codes[0] = EXC_SOFT_SIGNAL;
+			codes[1] = args.signum;
+			bsd_exception(EXC_SOFTWARE, codes, 2);
 			goto out;
 	}
 

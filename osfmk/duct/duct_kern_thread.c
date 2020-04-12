@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2014-2017, Wenqi Chen
+Copyright (c) 2019-2020, Lubos Dolezel
 
 Shanghai Mifu Infotech Co., Ltd
 B112-113, IF Industrial Park, 508 Chunking Road, Shanghai 201103, China
@@ -46,6 +47,27 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_post_xnu.h"
 #include <darling/task_registry.h>
 #include <darling/debug_print.h>
+
+// From pcb.c
+#ifdef __x86_64__
+unsigned int _MachineStateCount[] = {
+	[x86_THREAD_STATE32]	= x86_THREAD_STATE32_COUNT,
+	[x86_THREAD_STATE64]	= x86_THREAD_STATE64_COUNT,
+	[x86_THREAD_STATE]	= x86_THREAD_STATE_COUNT,
+	[x86_FLOAT_STATE32]	= x86_FLOAT_STATE32_COUNT,
+	[x86_FLOAT_STATE64]	= x86_FLOAT_STATE64_COUNT,
+	[x86_FLOAT_STATE]	= x86_FLOAT_STATE_COUNT,
+	[x86_EXCEPTION_STATE32]	= x86_EXCEPTION_STATE32_COUNT,
+	[x86_EXCEPTION_STATE64]	= x86_EXCEPTION_STATE64_COUNT,
+	[x86_EXCEPTION_STATE]	= x86_EXCEPTION_STATE_COUNT,
+	[x86_DEBUG_STATE32]	= x86_DEBUG_STATE32_COUNT,
+	[x86_DEBUG_STATE64]	= x86_DEBUG_STATE64_COUNT,
+	[x86_DEBUG_STATE]	= x86_DEBUG_STATE_COUNT,
+	[x86_AVX_STATE32]	= x86_AVX_STATE32_COUNT,
+	[x86_AVX_STATE64]	= x86_AVX_STATE64_COUNT,
+	[x86_AVX_STATE]		= x86_AVX_STATE_COUNT,
+};
+#endif
 
 #define LockTimeOutUsec 1000*500
 
@@ -447,7 +469,6 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
         get_task_struct(linux_current);
         new_thread->linux_task = linux_current;
         new_thread->in_sigprocess = FALSE;
-        new_thread->sigexc = FALSE;
         *out_thread = new_thread;
 
     // {
@@ -656,7 +677,7 @@ wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interrup
             thread->state |= TH_UNINT;
 
         // printf("thread_mark_wait_locked - unint? %d\n", interruptible == THREAD_UNINT);
-        set_current_state(interruptible == THREAD_UNINT ? TASK_KILLABLE : TASK_INTERRUPTIBLE);
+        thread_interrupt_level(interruptible);
         return thread->wait_result = THREAD_WAITING;
     }
 
@@ -860,6 +881,20 @@ assert_wait(
 }
 
 // COPED FROM kern/sched_prim.c END
+
+wait_interrupt_t
+thread_interrupt_level(
+	wait_interrupt_t new_level)
+{
+    int rv = (linux_current->state & TASK_UNINTERRUPTIBLE) ? THREAD_UNINT : THREAD_INTERRUPTIBLE;
+    set_current_state(new_level == THREAD_UNINT ? TASK_KILLABLE : TASK_INTERRUPTIBLE);
+    return rv;
+}
+
+void thread_exception_return(void)
+{
+    printf("thread_exception_return called!\n");
+}
 
 #undef current
 

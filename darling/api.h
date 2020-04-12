@@ -22,7 +22,8 @@
 
 #ifdef KERNEL
 #	include <linux/types.h>
-#	include <linux/siginfo.h>
+#	include <asm/ucontext.h>
+#	include <linux/signal.h>
 #else
 #	include <stdint.h>
 #endif

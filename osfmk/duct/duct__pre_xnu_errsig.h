@@ -394,6 +394,38 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define LINUX_SIGSYS            31
 #define LINUX_SIGUNUSED         31
 
+#define	XNU_SIGHUP	1
+#define	XNU_SIGINT	2
+#define	XNU_SIGQUIT	3
+#define	XNU_SIGILL	4
+#define	XNU_SIGTRAP	5
+#define	XNU_SIGABRT	6
+#define	XNU_SIGPOLL	7
+#define	XNU_SIGFPE	8
+#define	XNU_SIGKILL	9
+#define	XNU_SIGBUS	10
+#define	XNU_SIGSEGV	11
+#define	XNU_SIGSYS	12
+#define	XNU_SIGPIPE	13
+#define	XNU_SIGALRM	14
+#define	XNU_SIGTERM	15
+#define	XNU_SIGURG	16
+#define	XNU_SIGSTOP	17
+#define	XNU_SIGTSTP	18
+#define	XNU_SIGCONT	19
+#define	XNU_SIGCHLD	20
+#define	XNU_SIGTTIN	21
+#define	XNU_SIGTTOU	22
+#define	XNU_SIGIO	23
+#define	XNU_SIGXCPU	24
+#define	XNU_SIGXFSZ	25
+#define	XNU_SIGVTALRM 26
+#define	XNU_SIGPROF	27
+#define XNU_SIGWINCH 28
+#define XNU_SIGINFO	29
+#define XNU_SIGUSR1 30
+#define XNU_SIGUSR2 31
+
 #undef SIGHUP
 #undef SIGINT
 #undef SIGQUIT

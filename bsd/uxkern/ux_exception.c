@@ -77,10 +77,30 @@
 #endif
 
 #if defined (__DARLING__)
+#include <sys/ux_exception.h>
 #include <duct/duct_post_xnu.h>
+#include <linux/delay.h>
 
 extern kern_return_t xnu_kthread_register(void);
 extern kern_return_t xnu_kthread_deregister(void);
+
+#define SIGSTOP XNU_SIGSTOP
+#define SIGSEGV XNU_SIGSEGV
+#define SIGBUS XNU_SIGBUS
+#define SIGILL XNU_SIGILL
+#define SIGFPE XNU_SIGFPE
+#define SIGSYS XNU_SIGSYS
+#define SIGPIPE XNU_SIGPIPE
+#define SIGABRT XNU_SIGABRT
+#define SIGKILL XNU_SIGKILL
+#define SIGTRAP XNU_SIGTRAP
+
+ipc_space_t  get_task_ipcspace(task_t t)
+{
+	return(t->itk_space);
+}
+
+int panic_on_exception_triage = 0;
 #endif
 
 /*
@@ -129,7 +149,7 @@ static int ux_handler(void* unused_arg)
 {
 #ifdef __DARLING__
 	xnu_kthread_register();
-	allow_signal(SIGTERM);
+	allow_signal(LINUX_SIGTERM);
 #endif
     task_t		self = current_task();
     mach_port_name_t	exc_port_name;
@@ -247,6 +267,9 @@ ux_handler_init(void)
 	ux_exception_port = MACH_PORT_NULL;
 
 	ux_kthread = kthread_run(ux_handler, NULL, "ux_exception");
+
+	while (ux_exception_port == MACH_PORT_NULL)
+		msleep(100);
 #endif
 }
 
@@ -255,7 +278,7 @@ void ux_handler_stop(void)
 {
 	if (ux_kthread != NULL)
 	{
-		kill_proc(ux_kthread->thread->pid, SIGTERM, 1);
+		send_sig(LINUX_SIGTERM, ux_kthread, 1);
 		kthread_stop(ux_kthread);
 		ux_kthread = NULL;
 	}
@@ -391,7 +414,7 @@ catch_mach_exception_raise(
 			    }
 		    }
 	    }
-#endif
+
 	    /*
 	     *	Send signal.
 	     */
@@ -401,9 +424,19 @@ catch_mach_exception_raise(
 			ut->uu_subcode = code[1];			
 			threadsignal(th_act, ux_signal, code[0], TRUE);
 	    }
-#ifndef __DARLING__
+
 	    if (p != NULL) 
 		    proc_rele(p);
+#else
+		if (th_act->in_sigprocess)
+		{
+			th_act->pending_signal = ux_signal;
+		}
+		else
+		{
+			// TODO: Introduce signal
+			printf("ux_exception: TODO introduce signal\n");
+		}
 #endif
 	    thread_deallocate(th_act);
 	}
@@ -546,9 +579,11 @@ void ux_exception(
 	    *ux_signal = SIGFPE;
 	    break;
 
+#ifndef __DARLING__
 	case EXC_EMULATION:
 	    *ux_signal = SIGEMT;
 	    break;
+#endif
 
 	case EXC_SOFTWARE:
 	    switch (code) {
