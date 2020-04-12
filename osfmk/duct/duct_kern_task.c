@@ -104,6 +104,7 @@ void duct_task_init (void)
         if (duct_task_create_internal(TASK_NULL, FALSE, FALSE, &kernel_task, NULL) != KERN_SUCCESS)
     #endif
             panic("task_init\n");
+	task_deallocate(kernel_task);
 
 
 #if defined (__DARLING__)
