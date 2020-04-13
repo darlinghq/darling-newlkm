@@ -249,6 +249,24 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		// fork case
 		ppid = linux_current->real_parent->tgid;
 		inherit_task = parent_task = darling_task_get(ppid);
+
+		// Try inheriting from VPID 1
+		if (inherit_task == NULL)
+		{
+			unsigned int pid = 0;
+			struct pid* pidobj;
+
+			rcu_read_lock();
+
+			pidobj = find_vpid(1);
+			if (pidobj != NULL)
+				pid = pid_nr(pidobj);
+
+			rcu_read_unlock();
+
+			if (pid != 0)
+				inherit_task = darling_task_get(pid);
+		}
 	}
 
 	ret = duct_task_create_internal(inherit_task, false, true, &new_task, linux_current);
