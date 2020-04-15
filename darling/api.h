@@ -100,6 +100,8 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_vchroot_expand,
 	NR_vchroot_fdpath,
 	NR_handle_to_path,
+	NR_fileport_makeport,
+	NR_fileport_makefd,
 };
 
 struct set_tracer_args
@@ -492,6 +494,12 @@ struct handle_to_path_args
 	//int mntid; // in
 	char fh[80]; // in
 	char path[4096]; // out
+};
+
+struct fileport_makeport_args
+{
+	int fd;
+	int port_out;
 };
 
 #pragma pack (pop)

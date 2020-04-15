@@ -46,6 +46,7 @@
 #include <kern/task.h>
 #include <kern/ipc_tt.h>
 #include <kern/queue.h>
+#include <kern/ipc_misc.h>
 #include <vm/vm_map.h>
 #include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
@@ -165,6 +166,8 @@ static const struct trap_entry mach_traps[80] = {
 	// BSD
 	TRAP(NR_getuidgid, getuidgid_entry),
 	TRAP(NR_setuidgid, setuidgid_entry),
+	TRAP(NR_fileport_makeport, fileport_makeport_entry),
+	TRAP(NR_fileport_makefd, fileport_makefd_entry),
 
 	// VIRTUAL CHROOT
 	TRAP(NR_vchroot, vchroot_entry),
@@ -1856,6 +1859,85 @@ fail:
 		free_page((unsigned long) str);
 
 	mntput(path.mnt);
+	return err;
+}
+
+extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
+int fileport_makeport_entry(task_t task, struct fileport_makeport_args* in_args)
+{
+	copyargs(args, in_args);
+
+	int err;
+
+	struct file* f = fget(args.fd);
+	if (f == NULL)
+		return -LINUX_EBADF;
+	
+	ipc_port_t fileport = fileport_alloc((struct fileglob*) f);
+	if (fileport == IPC_PORT_NULL)
+	{
+		fput(f);
+		return -LINUX_EAGAIN;
+	}
+
+	mach_port_name_t name = ipc_port_copyout_send(fileport, task->itk_space);
+	if (!MACH_PORT_VALID(name))
+	{
+		err = -LINUX_EINVAL;
+		goto out;
+	}
+
+	if (copy_to_user(&in_args->port_out, &name, sizeof(name)))
+	{
+		err = -LINUX_EFAULT;
+		goto out;
+	}
+
+	return 0;
+out:
+	if (MACH_PORT_VALID(name))
+		mach_port_deallocate(task->itk_space, name);
+	return err;
+}
+
+void fileport_releasefg(struct fileglob* fg)
+{
+	struct file* f = (struct file*) fg;
+	fput(f);
+}
+
+int fileport_makefd_entry(task_t task, void* port_in)
+{
+	mach_port_name_t send = (mach_port_name_t)(uintptr_t) port_in;
+
+ 	struct file* f;
+	ipc_port_t port = IPC_PORT_NULL;
+	kern_return_t kr;
+	int err;
+
+	kr = ipc_object_copyin(task->itk_space, send, MACH_MSG_TYPE_COPY_SEND, (ipc_object_t*) &port);
+
+	if (kr != KERN_SUCCESS)
+	{
+		err = -LINUX_EINVAL;
+		goto out;
+	}
+
+	f = (struct file*) fileport_port_to_fileglob(port);
+	if (f == NULL)
+	{
+		err = -LINUX_EINVAL;
+		goto out;
+	}
+
+	int fd = get_unused_fd_flags(O_CLOEXEC);
+	fd_install(fd, f);
+	err = fd;
+
+out:
+	if (port != IPC_PORT_NULL)
+		ipc_port_release_send(port);
+
 	return err;
 }
 

@@ -250,7 +250,6 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		osfmk/duct/duct_vm_map.o \
 		osfmk/duct/duct_vm_user.o \
 		osfmk/duct/duct_arm_locks_arm.o \
-		osfmk/duct/duct_fileport.o \
 		osfmk/kern/clock_oldops.o \
 		osfmk/kern/ipc_clock.o \
 		osfmk/kern/ipc_tt.o \
