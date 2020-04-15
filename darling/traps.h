@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2018 Lubos Dolezel
+ * Copyright (C) 2015-2020 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -109,5 +109,6 @@ int vchroot_fdpath_entry(task_t task, struct vchroot_fdpath_args __user* args);
 int handle_to_path_entry(task_t, struct handle_to_path_args* args);
 
 int sigprocess_entry(task_t task, struct sigprocess_args* args);
+int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* args);
 
 #endif

@@ -36,6 +36,7 @@ task_t darling_task_get_current(void);
 task_t darling_task_get(int pid);
 thread_t darling_thread_get_current(void);
 
+// Caller MUST hold a RCU lock!
 thread_t darling_thread_get(unsigned int tid);
 
 void darling_task_register(task_t t);
