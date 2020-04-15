@@ -199,20 +199,16 @@ thread_t darling_thread_get_current(void)
 	return e->thread;
 }
 
-/*
 thread_t darling_thread_get(unsigned int pid)
 {
 	struct registry_entry* e;
 
-	rcu_read_lock();
 	e = darling_thread_get_entry(current->pid);
-	rcu_read_unlock();
 
 	if (e != NULL)
 		return e->thread;
 	return NULL;
 }
-*/
 
 void darling_task_register(task_t task)
 {

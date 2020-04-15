@@ -171,6 +171,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_fileport_makeport, fileport_makeport_entry),
 	TRAP(NR_fileport_makefd, fileport_makefd_entry),
 	TRAP(NR_sigprocess, sigprocess_entry),
+	TRAP(NR_ptrace_thupdate, ptrace_thupdate_entry),
 
 	// VIRTUAL CHROOT
 	TRAP(NR_vchroot, vchroot_entry),
@@ -1990,6 +1991,16 @@ out:
 	return err;
 }
 
+static void mcontext_to_thread64(const struct sigcontext* sc, thread_t thread)
+{
+
+}
+
+static void mcontext_flt_to_thread64(const struct _fpstate* fp, thread_t thread)
+{
+	
+}
+
 #define LINUX_SI_USER 0
 extern kern_return_t bsd_exception(
 	exception_type_t	exception,
@@ -2010,6 +2021,25 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 
 	thread->pending_signal = 0;
 	thread->in_sigprocess = TRUE;
+
+#if defined(__x86_64__)
+	// TODO: Copy ucontext to thread state
+	if (test_thread_flag(TIF_IA32))
+	{
+		// i386
+	}
+	else
+	{
+		// x86-64
+		mcontext_to_thread64(&args.ucontext.uc_mcontext, thread);
+
+		struct _fpstate fpstate;
+		if (copy_from_user(&fpstate, args.ucontext.uc_mcontext.fpstate, sizeof(fpstate)) == 0)
+			mcontext_flt_to_thread64(&fpstate, thread);
+	}
+#else
+#	warning sigprocess_entry: Missing code for current arch
+#endif
 
 	mach_exception_data_type_t codes[EXCEPTION_CODE_MAX] = { 0, 0 };
 	if (si.si_code == LINUX_SI_USER)
@@ -2072,10 +2102,40 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 	exception_triage_thread(mach_exception, codes, EXCEPTION_CODE_MAX, thread);
 
 out:
+#if defined(__x86_64__)
+	// TODO: Copy thread state to ucontext
+	if (test_thread_flag(TIF_IA32))
+	{
+		// i386
+	}
+	else
+	{
+		// x86-64
+	}
+#else
+#	warning sigprocess_entry: Missing code for current arch
+#endif
+
 	// TODO: Check and copy thread->pending_signal
-	// TODO: modify ucontext
+	if (copy_to_user(&in_args->signum, &thread->pending_signal, sizeof(in_args->signum)))
+		return -LINUX_EFAULT;
 
 	thread->in_sigprocess = FALSE;
+	return 0;
+}
+
+int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* in_args)
+{
+	copyargs(args, in_args);
+
+	thread_t target_thread;
+
+	rcu_read_lock();
+	target_thread = darling_thread_get(args.tid);
+	if (target_thread != NULL)
+		target_thread->pending_signal = args.signum;
+	rcu_read_unlock();
+
 	return 0;
 }
 

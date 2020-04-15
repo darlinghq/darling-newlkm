@@ -105,6 +105,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_fileport_makeport,
 	NR_fileport_makefd,
 	NR_sigprocess,
+	NR_ptrace_thupdate,
 };
 
 struct set_tracer_args
@@ -523,6 +524,12 @@ struct sigprocess_args
 #	undef siginfo
 #	undef ucontext
 #endif
+
+struct ptrace_thupdate_args
+{
+	int tid;
+	int signum;
+};
 
 #pragma pack (pop)
 

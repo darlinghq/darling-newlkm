@@ -1,6 +1,6 @@
 /*
  * Darling Mach Linux Kernel Module
- * Copyright (C) 2015-2018 Lubos Dolezel
+ * Copyright (C) 2015-2020 Lubos Dolezel
  * 
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -111,5 +111,6 @@ int fileport_makeport_entry(task_t, struct fileport_makeport_args* args);
 int fileport_makefd_entry(task_t, void* port_in);
 
 int sigprocess_entry(task_t task, struct sigprocess_args* args);
+int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* args);
 
 #endif
