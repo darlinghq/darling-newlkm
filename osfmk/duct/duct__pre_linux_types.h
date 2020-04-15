@@ -54,7 +54,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // include/linux/time.h
 #define timeval                     linux_timeval
 #define timezone                    linux_timezone
-#define timespec                    linux_timespec
+#define timespec64                  linux_timespec
 
 
 // include/linux/semaphore.h
