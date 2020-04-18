@@ -56,7 +56,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // include/linux/time.h
 #define timeval                     linux_timeval
 #define timezone                    linux_timezone
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
 #define timespec64                  linux_timespec
 #else
 #define timespec                    linux_timespec

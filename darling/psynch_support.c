@@ -78,7 +78,7 @@ typedef task_t proc_t;
 #define pthhashhead list_head
 
 #define nanoseconds_to_absolutetime(ns, to) *to = ns
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
 #define microuptime(t) ktime_get_ts64(t)
 #else
 #define microuptime(t) ktime_get_ts(t)
