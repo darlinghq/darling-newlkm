@@ -246,6 +246,7 @@ struct inode *ovl_inode_lowerdata(struct inode *inode);
 struct inode *ovl_inode_real(struct inode *inode);
 struct inode *ovl_inode_realdata(struct inode *inode);
 struct ovl_dir_cache *ovl_dir_cache(struct inode *inode);
+int ovl_uid(struct inode *inode);
 void ovl_set_dir_cache(struct inode *inode, struct ovl_dir_cache *cache);
 void ovl_dentry_set_flag(unsigned long flag, struct dentry *dentry);
 void ovl_dentry_clear_flag(unsigned long flag, struct dentry *dentry);

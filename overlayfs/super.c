@@ -349,6 +349,8 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 		seq_show_option(m, "upperdir", ofs->config.upperdir);
 		seq_show_option(m, "workdir", ofs->config.workdir);
 	}
+	if (ofs->config.uid)
+		seq_printf(m, ",uid=%d", ofs->config.uid);
 	if (ofs->config.default_permissions)
 		seq_puts(m, ",default_permissions");
 	if (strcmp(ofs->config.redirect_mode, ovl_redirect_mode_def()) != 0)
@@ -404,6 +406,7 @@ enum {
 	OPT_METACOPY_ON,
 	OPT_METACOPY_OFF,
 	OPT_ERR,
+	OPT_UID,
 };
 
 static const match_table_t ovl_tokens = {
@@ -421,6 +424,7 @@ static const match_table_t ovl_tokens = {
 	{OPT_XINO_AUTO,			"xino=auto"},
 	{OPT_METACOPY_ON,		"metacopy=on"},
 	{OPT_METACOPY_OFF,		"metacopy=off"},
+	{OPT_UID,			"uid=%d"},
 	{OPT_ERR,			NULL}
 };
 
@@ -520,6 +524,10 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			if (!config->redirect_mode)
 				return -ENOMEM;
 			redirect_opt = true;
+			break;
+
+		case OPT_UID:
+			match_int(&args[0], &config->uid);
 			break;
 
 		case OPT_INDEX_ON:
@@ -1724,11 +1732,11 @@ static struct dentry *ovl_mount(struct file_system_type *fs_type, int flags,
 
 static struct file_system_type ovl_fs_type = {
 	.owner		= THIS_MODULE,
-	.name		= "overlay",
+	.name		= "darling-overlay",
 	.mount		= ovl_mount,
 	.kill_sb	= kill_anon_super,
 };
-MODULE_ALIAS_FS("overlay");
+MODULE_ALIAS_FS("darling-overlay");
 
 static void ovl_inode_init_once(void *foo)
 {
@@ -1737,11 +1745,17 @@ static void ovl_inode_init_once(void *foo)
 	inode_init_once(&oi->vfs_inode);
 }
 
-static int __init ovl_init(void)
+int ovl_uid(struct inode *inode)
+{
+	struct ovl_fs *ofs = inode->i_sb->s_fs_info;
+	return ofs->config.uid;
+}
+
+/*static*/ int /*__init*/ ovl_init(void)
 {
 	int err;
 
-	ovl_inode_cachep = kmem_cache_create("ovl_inode",
+	ovl_inode_cachep = kmem_cache_create("darling-ovl_inode",
 					     sizeof(struct ovl_inode), 0,
 					     (SLAB_RECLAIM_ACCOUNT|
 					      SLAB_MEM_SPREAD|SLAB_ACCOUNT),
@@ -1756,7 +1770,7 @@ static int __init ovl_init(void)
 	return err;
 }
 
-static void __exit ovl_exit(void)
+/*static*/ void /*__exit*/ ovl_exit(void)
 {
 	unregister_filesystem(&ovl_fs_type);
 
@@ -1769,5 +1783,5 @@ static void __exit ovl_exit(void)
 
 }
 
-module_init(ovl_init);
-module_exit(ovl_exit);
+//module_init(ovl_init);
+//module_exit(ovl_exit);
