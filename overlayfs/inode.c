@@ -274,8 +274,7 @@ int ovl_permission(struct inode *inode, int mask)
 {
 	struct inode *upperinode = ovl_inode_upper(inode);
 	struct inode *realinode = upperinode ?: ovl_inode_lower(inode);
-	const struct cred *old_cred = NULL;
-	struct cred *root_cred = NULL;
+	const struct cred *old_cred;
 	int err;
 
 	/* Careful in RCU walk mode */
@@ -285,12 +284,10 @@ int ovl_permission(struct inode *inode, int mask)
 	}
 
 	int priv_uid = ovl_uid(inode);
-
-	if (priv_uid && priv_uid == from_kuid(&init_user_ns, current_fsuid()))
+	if (priv_uid && priv_uid == from_kuid(&init_user_ns, current_fsuid()) && ovl_darling_fake_fsuid() == 0)
 	{
-		root_cred = prepare_creds();
-		root_cred->fsuid = make_kuid(&init_user_ns, ovl_darling_fake_fsuid());
-		old_cred = override_creds(root_cred);
+		if ((inode->i_mode & S_IWUSR) && !(inode->i_mode & S_ISUID))
+			return 0;
 	}
 
 	/*
@@ -299,10 +296,9 @@ int ovl_permission(struct inode *inode, int mask)
 	 */
 	err = generic_permission(inode, mask);
 	if (err)
-		goto out;
+		return err;
 
-	if (old_cred == NULL)
-		old_cred = ovl_override_creds(inode->i_sb);
+	old_cred = ovl_override_creds(inode->i_sb);
 	if (!upperinode &&
 	    !special_file(realinode->i_mode) && mask & MAY_WRITE) {
 		mask &= ~(MAY_WRITE | MAY_APPEND);
@@ -310,12 +306,8 @@ int ovl_permission(struct inode *inode, int mask)
 		mask |= MAY_READ;
 	}
 	err = inode_permission(realinode, mask);
-out:
-	if (old_cred != NULL)
-		revert_creds(old_cred);
 
-	if (root_cred != NULL)
-		put_cred(root_cred);
+	revert_creds(old_cred);
 
 	return err;
 }

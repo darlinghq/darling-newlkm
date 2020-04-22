@@ -184,6 +184,8 @@ static struct miscdevice mach_dev = {
 
 extern void darling_xnu_init(void);
 extern void darling_xnu_deinit(void);
+extern void ovl_init(void);
+extern void ovl_exit(void);
 
 static int mach_init(void)
 {
@@ -202,6 +204,8 @@ static int mach_init(void)
 	err = misc_register(&mach_dev);
 	if (err < 0)
 	 	goto fail;
+
+	ovl_init();
 
 	printk(KERN_INFO "Darling Mach: kernel emulation loaded, API version " DARLING_MACH_API_VERSION_STR "\n");
 	return 0;
@@ -226,6 +230,7 @@ static void mach_exit(void)
 
 	commpage_free(commpage32);
 	commpage_free(commpage64);
+	ovl_exit();
 }
 
 int mach_dev_open(struct inode* ino, struct file* file)
@@ -1289,6 +1294,14 @@ int setuidgid_entry(task_t task, struct uidgid* in_args)
 		task->audit_token.val[2] = args.gid;
 
 	return 0;
+}
+
+int ovl_darling_fake_fsuid(void)
+{
+	task_t task = darling_task_get_current();
+	if (task == NULL)
+		return from_kuid(&init_user_ns, current_fsuid());
+	return task->audit_token.val[1];
 }
 
 int get_tracer_entry(task_t self, void* pid_in)
