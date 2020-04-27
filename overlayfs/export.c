@@ -389,7 +389,7 @@ static struct dentry *ovl_lookup_real_one(struct dentry *connected,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
 	this = lookup_one_len(name.name.name, connected, name.name.len);
 #else
-	this = lookup_one_len(name.name, connected, name.len);
+	this = lookup_one_len(name.name, connected, strlen(name.name));
 #endif
 	err = PTR_ERR(this);
 	if (IS_ERR(this)) {

@@ -12,6 +12,7 @@
 #include <linux/ratelimit.h>
 #include <linux/mount.h>
 #include <linux/exportfs.h>
+#include <linux/version.h>
 #include "overlayfs.h"
 
 struct ovl_lookup_data {
@@ -200,7 +201,11 @@ static int ovl_lookup_single(struct dentry *base, struct ovl_lookup_data *d,
 	int err;
 	bool last_element = !post[0];
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
 	this = lookup_positive_unlocked(name, base, namelen);
+#else
+	this = lookup_one_len_unlocked(name, base, namelen);
+#endif
 	if (IS_ERR(this)) {
 		err = PTR_ERR(this);
 		this = NULL;
@@ -657,7 +662,11 @@ struct dentry *ovl_get_index_fh(struct ovl_fs *ofs, struct ovl_fh *fh)
 	if (err)
 		return ERR_PTR(err);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
 	index = lookup_positive_unlocked(name.name, ofs->indexdir, name.len);
+#else
+	index = lookup_one_len_unlocked(name.name, ofs->indexdir, name.len);
+#endif
 	kfree(name.name);
 	if (IS_ERR(index)) {
 		if (PTR_ERR(index) == -ENOENT)
@@ -689,7 +698,11 @@ struct dentry *ovl_lookup_index(struct ovl_fs *ofs, struct dentry *upper,
 	if (err)
 		return ERR_PTR(err);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
 	index = lookup_positive_unlocked(name.name, ofs->indexdir, name.len);
+#else
+	index = lookup_one_len_unlocked(name.name, ofs->indexdir, name.len);
+#endif
 	if (IS_ERR(index)) {
 		err = PTR_ERR(index);
 		if (err == -ENOENT) {
@@ -1133,8 +1146,13 @@ bool ovl_lower_positive(struct dentry *dentry)
 		struct dentry *this;
 		struct dentry *lowerdir = poe->lowerstack[i].dentry;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
 		this = lookup_positive_unlocked(name->name, lowerdir,
 					       name->len);
+#else
+		this = lookup_one_len_unlocked(name->name, lowerdir,
+					       name->len);
+#endif
 		if (IS_ERR(this)) {
 			switch (PTR_ERR(this)) {
 			case -ENOENT:
