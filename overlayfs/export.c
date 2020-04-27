@@ -14,6 +14,7 @@
 #include <linux/xattr.h>
 #include <linux/exportfs.h>
 #include <linux/ratelimit.h>
+#include <linux/version.h>
 #include "overlayfs.h"
 
 static int ovl_encode_maybe_copy_up(struct dentry *dentry)
@@ -385,7 +386,11 @@ static struct dentry *ovl_lookup_real_one(struct dentry *connected,
 	 * pointer because we hold no lock on the real dentry.
 	 */
 	take_dentry_name_snapshot(&name, real);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
 	this = lookup_one_len(name.name.name, connected, name.name.len);
+#else
+	this = lookup_one_len(name.name, connected, name.len);
+#endif
 	err = PTR_ERR(this);
 	if (IS_ERR(this)) {
 		goto fail;
