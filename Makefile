@@ -193,7 +193,7 @@ $(info Running kernel version is $(KERNELVERSION))
 # kernel build system and can use its language.
 ifneq ($(KERNELRELEASE),)
 $(info Invoked by kernel build system, building for $(KERNELRELEASE))
-	obj-m := darling-mach.o
+	obj-m := darling-mach.o darling-overlay.o
 	darling-mach-objs := osfmk/ipc/ipc_entry.o \
 		osfmk/ipc/ipc_hash.o \
 		osfmk/ipc/ipc_space.o \
@@ -314,6 +314,16 @@ $(info Invoked by kernel build system, building for $(KERNELRELEASE))
 		pexpert/duct/duct_pe_kprintf.o \
 		darling/binfmt.o \
 		darling/commpage.o
+	darling-overlay-objs := overlayfs/copy_up.o \
+		overlayfs/dir.o \
+		overlayfs/export.o \
+		overlayfs/file.o \
+		overlayfs/inode.o \
+		overlayfs/namei.o \
+		overlayfs/readdir.o \
+		overlayfs/super.o \
+		overlayfs/util.o
+
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.

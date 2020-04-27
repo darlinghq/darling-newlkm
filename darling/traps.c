@@ -184,8 +184,6 @@ static struct miscdevice mach_dev = {
 
 extern void darling_xnu_init(void);
 extern void darling_xnu_deinit(void);
-extern void ovl_init(void);
-extern void ovl_exit(void);
 
 static int mach_init(void)
 {
@@ -204,8 +202,6 @@ static int mach_init(void)
 	err = misc_register(&mach_dev);
 	if (err < 0)
 	 	goto fail;
-
-	ovl_init();
 
 	printk(KERN_INFO "Darling Mach: kernel emulation loaded, API version " DARLING_MACH_API_VERSION_STR "\n");
 	return 0;
@@ -227,10 +223,10 @@ static void mach_exit(void)
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 
 	macho_binfmt_exit();
+	foreignmm_exit();
 
 	commpage_free(commpage32);
 	commpage_free(commpage64);
-	ovl_exit();
 }
 
 int mach_dev_open(struct inode* ino, struct file* file)

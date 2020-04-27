@@ -1751,7 +1751,7 @@ int ovl_uid(struct inode *inode)
 	return ofs->config.uid;
 }
 
-/*static*/ int /*__init*/ ovl_init(void)
+static int __init ovl_init(void)
 {
 	int err;
 
@@ -1770,7 +1770,7 @@ int ovl_uid(struct inode *inode)
 	return err;
 }
 
-/*static*/ void /*__exit*/ ovl_exit(void)
+static void __exit ovl_exit(void)
 {
 	unregister_filesystem(&ovl_fs_type);
 
@@ -1783,5 +1783,5 @@ int ovl_uid(struct inode *inode)
 
 }
 
-//module_init(ovl_init);
-//module_exit(ovl_exit);
+module_init(ovl_init);
+module_exit(ovl_exit);

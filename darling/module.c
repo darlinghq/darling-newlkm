@@ -29,6 +29,9 @@ bool in_darling_group(void)
 	return false;
 }
 
+extern int ovl_darling_fake_fsuid(void);
+EXPORT_SYMBOL(ovl_darling_fake_fsuid);
+
 module_param(group, int, 0644);
 MODULE_PARM_DESC(group, "Restrict module functionality to given group ID");
 
