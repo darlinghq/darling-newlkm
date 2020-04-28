@@ -31,7 +31,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		16
+#define DARLING_MACH_API_VERSION		17
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -102,8 +102,13 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_vchroot_expand,
 	NR_vchroot_fdpath,
 	NR_handle_to_path,
+<<<<<<< HEAD
 	NR_sigprocess,
 	NR_ptrace_thupdate,
+=======
+	NR_fileport_makeport,
+	NR_fileport_makefd,
+>>>>>>> master
 };
 
 struct set_tracer_args
@@ -524,5 +529,11 @@ struct ptrace_thupdate_args
 };
 
 #pragma pack (pop)
+
+struct fileport_makeport_args
+{
+	int fd;
+	int port_out;
+};
 
 #endif

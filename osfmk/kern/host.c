@@ -362,6 +362,11 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 		bcopy((char *)avenrun, (char *)load_info->avenrun, sizeof avenrun);
 		bcopy((char *)mach_factor, (char *)load_info->mach_factor, sizeof mach_factor);
 #else
+
+#ifndef LOAD_INT // until Linux 4.20
+#define LOAD_INT(x) ((x) >> FSHIFT)
+#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
+#endif
 		
 		for (int i = 0; i < 3; i++)
 		{
