@@ -108,6 +108,7 @@ void duct_task_init (void)
 
 
 #if defined (__DARLING__)
+	kernel_task->map = kernel_map;
 #else
         duct_vm_map_deallocate(kernel_task->map);
         kernel_task->map = kernel_map;
