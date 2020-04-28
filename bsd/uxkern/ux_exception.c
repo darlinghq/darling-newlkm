@@ -246,6 +246,16 @@ static int ux_handler(void* unused_arg)
 }
 
 #ifdef __DARLING__
+extern kern_return_t
+host_set_exception_ports(
+	host_priv_t			host_priv,
+	exception_mask_t		exception_mask,
+	ipc_port_t			new_port,
+	exception_behavior_t		new_behavior,
+	thread_state_flavor_t		new_flavor);
+extern host_priv_t
+host_priv_self(void);
+
 static struct task_struct* ux_kthread = NULL;
 #endif
 void
@@ -270,6 +280,12 @@ ux_handler_init(void)
 
 	while (ux_exception_port == MACH_PORT_NULL)
 		msleep(100);
+
+	(void) host_set_exception_ports(host_priv_self(),
+				EXC_MASK_ALL & ~(EXC_MASK_RPC_ALERT),//pilotfish (shark) needs this port
+				(mach_port_t) ux_exception_port,
+				EXCEPTION_DEFAULT| MACH_EXCEPTION_CODES,
+				0);
 #endif
 }
 

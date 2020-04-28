@@ -170,6 +170,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_setuidgid, setuidgid_entry),
 	TRAP(NR_sigprocess, sigprocess_entry),
 	TRAP(NR_ptrace_thupdate, ptrace_thupdate_entry),
+	TRAP(NR_ptrace_sigexc, ptrace_sigexc_entry),
 	TRAP(NR_fileport_makeport, fileport_makeport_entry),
 	TRAP(NR_fileport_makefd, fileport_makefd_entry),
 
@@ -1912,14 +1913,112 @@ fail:
 	return err;
 }
 
+
+extern kern_return_t
+thread_set_state(
+    register thread_t       thread,
+    int                     flavor,
+    thread_state_t          state,
+    mach_msg_type_number_t  state_count);
+extern kern_return_t
+thread_get_state(
+	thread_t		thread,
+	int						flavor,
+	thread_state_t			state,
+	mach_msg_type_number_t	*state_count);
+
 static void mcontext_to_thread64(const struct sigcontext* sc, thread_t thread)
 {
+	x86_thread_state64_t s;
+	s.rax = sc->ax;
+	s.rbx = sc->bx;
+	s.rcx = sc->cx;
+	s.rdx = sc->dx;
+	s.rdi = sc->di;
+	s.rsi = sc->si;
+	s.rbp = sc->bp;
+	s.rsp = sc->sp;
+	s.r8 = sc->r8;
+	s.r9 = sc->r9;
+	s.r10 = sc->r10;
+	s.r11 = sc->r11;
+	s.r12 = sc->r12;
+	s.r13 = sc->r13;
+	s.r14 = sc->r14;
+	s.r15 = sc->r15;
+	s.rip = sc->ip;
+	s.rflags = sc->flags;
+	s.cs = sc->cs;
+	s.fs = sc->fs;
+	s.gs = sc->gs;
 
+	thread_set_state(thread, x86_THREAD_STATE64, (thread_state_t) &s, x86_THREAD_STATE64_COUNT);
 }
 
 static void mcontext_flt_to_thread64(const struct _fpstate* fp, thread_t thread)
 {
-	
+	x86_float_state64_t mfs;
+
+	memcpy(&mfs.fpu_ftw, &fp->twd, sizeof(fp->twd));
+	memcpy(&mfs.fpu_fcw, &fp->cwd, sizeof(fp->cwd));
+	memcpy(&mfs.fpu_fsw, &fp->swd, sizeof(fp->swd));
+	mfs.fpu_ip = fp->rip;
+	mfs.fpu_dp = fp->rdp;
+	mfs.fpu_mxcsr = fp->mxcsr;
+	mfs.fpu_mxcsrmask = fp->mxcsr_mask;
+
+	memcpy(&mfs.fpu_stmm0, fp->st_space, 128);
+	memcpy(&mfs.fpu_xmm0, fp->xmm_space, 256);
+
+	thread_set_state(thread, x86_FLOAT_STATE64, (thread_state_t) &mfs, x86_FLOAT_STATE64_COUNT);
+}
+
+static void mcontext_from_thread64(struct sigcontext* sc, thread_t thread)
+{
+	x86_thread_state64_t s;
+	mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
+	thread_get_state(thread, x86_THREAD_STATE64, (thread_state_t) &s, &count);
+
+	sc->ax = s.rax;
+	sc->bx = s.rbx;
+	sc->cx = s.rcx;
+	sc->dx = s.rdx;
+	sc->di = s.rdi;
+	sc->si = s.rsi;
+	sc->bp = s.rbp;
+	sc->sp = s.rsp;
+	sc->r8 = s.r8;
+	sc->r9 = s.r9;
+	sc->r10 = s.r10;
+	sc->r11 = s.r11;
+	sc->r12 = s.r12;
+	sc->r13 = s.r13;
+	sc->r14 = s.r14;
+	sc->r15 = s.r15;
+	sc->ip = s.rip;
+	sc->flags = s.rflags;
+	sc->cs = s.cs;
+	sc->fs = s.fs;
+	sc->gs = s.gs;
+}
+
+static void mcontext_flt_from_thread64(struct _fpstate* fp, thread_t thread)
+{
+	x86_float_state64_t mfs;
+	mach_msg_type_number_t count = x86_FLOAT_STATE64_COUNT;
+
+	thread_get_state(thread, x86_FLOAT_STATE64, (thread_state_t) &mfs, &count);
+
+	memcpy(&fp->twd, &mfs.fpu_ftw, sizeof(fp->twd));
+	memcpy(&fp->cwd, &mfs.fpu_fcw, sizeof(fp->cwd));
+	memcpy(&fp->swd, &mfs.fpu_fsw, sizeof(fp->swd));
+	fp->rip = mfs.fpu_ip;
+	fp->rdp = mfs.fpu_dp;
+	fp->mxcsr = mfs.fpu_mxcsr;
+	fp->mxcsr_mask = mfs.fpu_mxcsrmask;
+
+	memcpy(fp->st_space, &mfs.fpu_stmm0, 128);
+	memcpy(fp->xmm_space, &mfs.fpu_xmm0, 256);
 }
 
 #define LINUX_SI_USER 0
@@ -1933,12 +2032,9 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 	thread_t thread = current_thread();
 	copyargs(args, in_args);
 
-	struct siginfo si;
-	if (copy_from_user(&si, &args.siginfo, sizeof(si)))
-		return -LINUX_EFAULT;
+	printk(KERN_NOTICE "sigprocess_entry #1\n");
 
-	if (!task->sigexc && si.si_code == LINUX_SI_USER)
-		return 0;
+	printk(KERN_NOTICE "sigprocess_entry #2\n");
 
 	thread->pending_signal = 0;
 	thread->in_sigprocess = TRUE;
@@ -1962,22 +2058,34 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 #	warning sigprocess_entry: Missing code for current arch
 #endif
 
+	printk(KERN_NOTICE "sigprocess_entry #3\n");
+
 	mach_exception_data_type_t codes[EXCEPTION_CODE_MAX] = { 0, 0 };
-	if (si.si_code == LINUX_SI_USER)
+	if (args.siginfo.si_code == LINUX_SI_USER)
 	{
-		codes[0] = EXC_SOFT_SIGNAL;	
-		codes[1] = args.signum; // signum has the BSD signal number
-		bsd_exception(EXC_SOFTWARE, codes, 2);
+		if (task->sigexc)
+		{
+			printk(KERN_NOTICE "sigprocess_entry #4\n");
+			codes[0] = EXC_SOFT_SIGNAL;	
+			codes[1] = args.signum; // signum has the BSD signal number
+			bsd_exception(EXC_SOFTWARE, codes, 2);
+		}
+		else
+		{
+			thread->pending_signal = args.signum;
+		}
 
 		goto out;
 	}
 
+	printk(KERN_NOTICE "sigprocess_entry #5, linux_signal=%d\n", args.siginfo.si_signo);
+
 	int mach_exception = 0;
-	switch (si.si_signo) // signo has the Linux signal number
+	switch (args.siginfo.si_signo) // signo has the Linux signal number
 	{
-		case LINUX_SIGSEGV:
+		case LINUX_SIGSEGV: // KERN_INVALID_ADDRESS
 			mach_exception = EXC_BAD_ACCESS;
-			codes[0] = EXC_I386_GPFLT;
+			codes[0] = KERN_INVALID_ADDRESS;
 			break;
 		case LINUX_SIGBUS:
 			mach_exception = EXC_BAD_ACCESS;
@@ -1989,13 +2097,13 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 			break;
 		case LINUX_SIGFPE:
 			mach_exception = EXC_ARITHMETIC;
-			codes[0] = si.si_code;
+			codes[0] = args.siginfo.si_code;
 			break;
 		case LINUX_SIGTRAP:
 			mach_exception = EXC_BREAKPOINT;
-			codes[0] = (si.si_code == SI_KERNEL) ? EXC_I386_BPT : EXC_I386_SGL;
+			codes[0] = (args.siginfo.si_code == SI_KERNEL) ? EXC_I386_BPT : EXC_I386_SGL;
 
-			if (si.si_code == TRAP_HWBKPT)
+			if (args.siginfo.si_code == TRAP_HWBKPT)
 				codes[1] = thread->triggered_watchpoint_address;
 			break;
 		/*
@@ -2013,14 +2121,25 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 				codes[0] = EXC_UNIX_ABORT;
 		*/
 		default:
-			if (codes[0] == 0)
-				codes[0] = EXC_SOFT_SIGNAL;
-			codes[1] = args.signum;
-			bsd_exception(EXC_SOFTWARE, codes, 2);
+			if (task->sigexc)
+			{
+				if (codes[0] == 0)
+					codes[0] = EXC_SOFT_SIGNAL;
+				codes[1] = args.signum;
+				bsd_exception(EXC_SOFTWARE, codes, 2);
+			}
+			else
+			{
+				thread->pending_signal = args.signum;
+			}
 			goto out;
 	}
 
+	printk(KERN_NOTICE "calling exception_triage_thread(%d, [%d, %d])\n", mach_exception, codes[0], codes[1]);
+
 	exception_triage_thread(mach_exception, codes, EXCEPTION_CODE_MAX, thread);
+
+	printk(KERN_NOTICE "exception_triage_thread returned\n");
 
 out:
 #if defined(__x86_64__)
@@ -2032,12 +2151,18 @@ out:
 	else
 	{
 		// x86-64
+		mcontext_from_thread64(&args.ucontext.uc_mcontext, thread);
+
+		struct _fpstate fpstate;
+		mcontext_flt_from_thread64(&fpstate, thread);
+
+		copy_to_user(args.ucontext.uc_mcontext.fpstate, &fpstate, sizeof(fpstate));
 	}
 #else
 #	warning sigprocess_entry: Missing code for current arch
 #endif
 
-	// TODO: Check and copy thread->pending_signal
+	// Check and copy thread->pending_signal
 	if (copy_to_user(&in_args->signum, &thread->pending_signal, sizeof(in_args->signum)))
 		return -LINUX_EFAULT;
 
@@ -2058,6 +2183,32 @@ int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* in_args)
 	rcu_read_unlock();
 
 	return 0;
+}
+
+int ptrace_sigexc_entry(task_t task, struct ptrace_sigexc_args* in_args)
+{
+	copyargs(args, in_args);
+
+	unsigned int pid;
+	task_t that_task;
+	
+	// Convert virtual PID to global PID
+	pid = vpid_to_pid(args.pid);
+
+	if (pid == 0)
+		return KERN_FAILURE;
+	
+	// Lookup task in task registry
+	that_task = darling_task_get(pid);
+	if (that_task == NULL)
+		return KERN_FAILURE;
+
+	that_task->sigexc = args.sigexc;
+
+	task_deallocate(that_task);
+	return KERN_SUCCESS;
+}
+
 extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
 int fileport_makeport_entry(task_t task, struct fileport_makeport_args* in_args)
 {
