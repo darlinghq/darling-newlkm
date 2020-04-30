@@ -52,6 +52,9 @@
 #include <duct/duct_post_xnu.h>
 #include <uapi/linux/ptrace.h>
 #include <asm/signal.h>
+#ifdef __x86_64__
+#include <mach/i386/thread_status.h>
+#endif
 #include "task_registry.h"
 #include "pthread_kill.h"
 #include "debug_print.h"
@@ -110,6 +113,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_task_64bit, task_64bit_entry),
 	TRAP(NR_last_triggered_watchpoint, last_triggered_watchpoint_entry),
 	TRAP(NR_handle_to_path, handle_to_path_entry),
+	TRAP(NR_thread_suspended, thread_suspended_entry),
 
 	// KQUEUE
 	TRAP(NR_evproc_create, evproc_create_entry),
@@ -619,6 +623,8 @@ static struct file* mach_dev_afterfork(struct file* oldfile)
 	return newfile;
 }
 
+extern kern_return_t task_resume(task_t);
+extern void thread_save_regs(thread_t);
 long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioctl_paramv)
 {
 	const unsigned int num_traps = sizeof(mach_traps) / sizeof(mach_traps[0]);
@@ -677,6 +683,7 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 	rv = entry->handler(task, ioctl_paramv);
 
 	debug_msg("...%s returned %ld\n", entry->name, rv);
+
 out:
 	if (need_fput)
 	{
@@ -1952,6 +1959,8 @@ static void mcontext_to_thread64(const struct sigcontext* sc, thread_t thread)
 	s.fs = sc->fs;
 	s.gs = sc->gs;
 
+	printf("sigexc kern: received RIP: 0x%x\n", sc->ip);
+
 	thread_set_state(thread, x86_THREAD_STATE64, (thread_state_t) &s, x86_THREAD_STATE64_COUNT);
 }
 
@@ -2027,45 +2036,140 @@ extern kern_return_t bsd_exception(
 	mach_exception_data_t	code,
 	mach_msg_type_number_t  codeCnt);
 
+extern kern_return_t
+thread_set_state(
+    register thread_t       thread,
+    int                     flavor,
+    thread_state_t          state,
+    mach_msg_type_number_t  state_count);
+extern kern_return_t
+thread_get_state(
+    register thread_t       thread,
+    int                     flavor,
+    thread_state_t          state,          /* pointer to OUT array */
+    mach_msg_type_number_t  *state_count);
+
+static int state_to_kernel(const struct thread_state* state)
+{
+#ifdef __x86_64__
+	if (!test_thread_flag(TIF_IA32))
+	{
+		x86_thread_state64_t tstate;
+		x86_float_state64_t fstate;
+
+		if (copy_from_user(&tstate, state->tstate, sizeof(tstate))
+			|| copy_from_user(&fstate, state->fstate, sizeof(fstate)))
+		{
+			return -LINUX_EFAULT;
+		}
+
+		thread_set_state(current_thread(), x86_THREAD_STATE64, (thread_state_t) &tstate, x86_THREAD_STATE64_COUNT);
+		thread_set_state(current_thread(), x86_FLOAT_STATE64, (thread_state_t) &fstate, x86_FLOAT_STATE64_COUNT);
+	}
+	else
+	{
+		x86_thread_state32_t tstate;
+		x86_float_state32_t fstate;
+
+		if (copy_from_user(&tstate, state->tstate, sizeof(tstate))
+			|| copy_from_user(&fstate, state->fstate, sizeof(fstate)))
+		{
+			return -LINUX_EFAULT;
+		}
+
+		thread_set_state(current_thread(), x86_THREAD_STATE32, (thread_state_t) &tstate, x86_THREAD_STATE32_COUNT);
+		thread_set_state(current_thread(), x86_FLOAT_STATE32, (thread_state_t) &fstate, x86_FLOAT_STATE32_COUNT);
+	}
+#else
+#	warning Missing code for this arch!
+#endif
+	return 0;
+}
+
+static int state_from_kernel(struct thread_state* state)
+{
+#ifdef __x86_64__
+	if (!test_thread_flag(TIF_IA32))
+	{
+		x86_thread_state64_t tstate;
+		x86_float_state64_t fstate;
+		mach_msg_type_number_t count;
+
+		count = x86_THREAD_STATE64_COUNT;
+		thread_get_state(current_thread(), x86_THREAD_STATE64, (thread_state_t) &tstate, &count);
+
+		count = x86_FLOAT_STATE64_COUNT;
+		thread_get_state(current_thread(), x86_FLOAT_STATE64, (thread_state_t) &fstate, &count);
+
+		if (copy_to_user(state->tstate, &tstate, sizeof(tstate))
+			|| copy_to_user(state->fstate, &fstate, sizeof(fstate)))
+		{
+			return -LINUX_EFAULT;
+		}
+	}
+	else
+	{
+		x86_thread_state32_t tstate;
+		x86_float_state32_t fstate;
+		mach_msg_type_number_t count;
+
+		count = x86_THREAD_STATE32_COUNT;
+		thread_get_state(current_thread(), x86_THREAD_STATE32, (thread_state_t) &tstate, &count);
+
+		count = x86_FLOAT_STATE32_COUNT;
+		thread_get_state(current_thread(), x86_FLOAT_STATE32, (thread_state_t) &fstate, &count);
+
+		if (copy_to_user(state->tstate, &tstate, sizeof(tstate))
+			|| copy_to_user(state->fstate, &fstate, sizeof(fstate)))
+		{
+			return -LINUX_EFAULT;
+		}
+	}
+#else
+#	warning Missing code for this arch!
+#endif
+	return 0;
+}
+
+static void thread_suspended_logic(task_t task)
+{
+	while (current_thread()->suspend_count > 0 && !fatal_signal_pending(linux_current))
+	{
+		debug_msg("sigexc - thread(%p) susp: %d, task susp: %d\n",
+			current_thread(),
+			current_thread()->suspend_count, task->suspend_count);
+
+		// Cannot use TASK_STOPPED, because Linux doesn't export wake_up_state()
+		// and TASK_STOPPED isn't TASK_NORMAL.
+		set_current_state(TASK_KILLABLE);
+		schedule();
+		set_current_state(TASK_RUNNING);
+		debug_msg("sigexc - woken up\n");
+	}
+
+	if (signal_pending(linux_current) && task->suspend_count)
+		task_resume(task);
+}
+
 int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 {
 	thread_t thread = current_thread();
 	copyargs(args, in_args);
 
-	printk(KERN_NOTICE "sigprocess_entry #1\n");
+	int err = state_to_kernel(&args.state);
+	if (err != 0)
+		return err;
 
-	printk(KERN_NOTICE "sigprocess_entry #2\n");
+	debug_msg("sigprocess_entry, linux_signal=%d\n", args.siginfo.si_signo);
 
 	thread->pending_signal = 0;
 	thread->in_sigprocess = TRUE;
-
-#if defined(__x86_64__)
-	// TODO: Copy ucontext to thread state
-	if (test_thread_flag(TIF_IA32))
-	{
-		// i386
-	}
-	else
-	{
-		// x86-64
-		mcontext_to_thread64(&args.ucontext.uc_mcontext, thread);
-
-		struct _fpstate fpstate;
-		if (copy_from_user(&fpstate, args.ucontext.uc_mcontext.fpstate, sizeof(fpstate)) == 0)
-			mcontext_flt_to_thread64(&fpstate, thread);
-	}
-#else
-#	warning sigprocess_entry: Missing code for current arch
-#endif
-
-	printk(KERN_NOTICE "sigprocess_entry #3\n");
 
 	mach_exception_data_type_t codes[EXCEPTION_CODE_MAX] = { 0, 0 };
 	if (args.siginfo.si_code == LINUX_SI_USER)
 	{
 		if (task->sigexc)
 		{
-			printk(KERN_NOTICE "sigprocess_entry #4\n");
 			codes[0] = EXC_SOFT_SIGNAL;	
 			codes[1] = args.signum; // signum has the BSD signal number
 			bsd_exception(EXC_SOFTWARE, codes, 2);
@@ -2077,8 +2181,6 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 
 		goto out;
 	}
-
-	printk(KERN_NOTICE "sigprocess_entry #5, linux_signal=%d\n", args.siginfo.si_signo);
 
 	int mach_exception = 0;
 	switch (args.siginfo.si_signo) // signo has the Linux signal number
@@ -2135,32 +2237,21 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 			goto out;
 	}
 
-	printk(KERN_NOTICE "calling exception_triage_thread(%d, [%d, %d])\n", mach_exception, codes[0], codes[1]);
+	debug_msg("calling exception_triage_thread(%d, [%d, %d])\n", mach_exception, codes[0], codes[1]);
 
 	exception_triage_thread(mach_exception, codes, EXCEPTION_CODE_MAX, thread);
 
-	printk(KERN_NOTICE "exception_triage_thread returned\n");
+	debug_msg("exception_triage_thread returned\n");
 
 out:
-#if defined(__x86_64__)
-	// TODO: Copy thread state to ucontext
-	if (test_thread_flag(TIF_IA32))
-	{
-		// i386
-	}
-	else
-	{
-		// x86-64
-		mcontext_from_thread64(&args.ucontext.uc_mcontext, thread);
+	// LLDB commonly suspends the thread upon reception of an exception and assumes
+	// that the thread will stay suspended after replying to the exception message,
+	// until thread_resume() is called.
+	thread_suspended_logic(task);
 
-		struct _fpstate fpstate;
-		mcontext_flt_from_thread64(&fpstate, thread);
-
-		copy_to_user(args.ucontext.uc_mcontext.fpstate, &fpstate, sizeof(fpstate));
-	}
-#else
-#	warning sigprocess_entry: Missing code for current arch
-#endif
+	err = state_from_kernel(&args.state);
+	if (err != 0)
+		return err;
 
 	// Check and copy thread->pending_signal
 	if (copy_to_user(&in_args->signum, &thread->pending_signal, sizeof(in_args->signum)))
@@ -2204,6 +2295,12 @@ int ptrace_sigexc_entry(task_t task, struct ptrace_sigexc_args* in_args)
 		return KERN_FAILURE;
 
 	that_task->sigexc = args.sigexc;
+
+	if (that_task->user_stop_count)
+	{
+		debug_msg("sigexc target task is stopped (%d), resuming\n", that_task->user_stop_count);
+		task_resume(that_task);
+	}
 
 	task_deallocate(that_task);
 	return KERN_SUCCESS;
@@ -2286,6 +2383,23 @@ out:
 		ipc_port_release_send(port);
 
 	return err;
+}
+
+int thread_suspended_entry(task_t task, struct thread_suspended_args* in_args)
+{
+	copyargs(args, in_args);
+
+	int err = state_to_kernel(&args.state);
+	if (err != 0)
+		return err;
+
+	thread_suspended_logic(task);
+
+	err = state_from_kernel(&args.state);
+	if (err != 0)
+		return err;
+
+	return 0;
 }
 
 module_init(mach_init);

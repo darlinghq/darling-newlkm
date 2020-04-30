@@ -53,12 +53,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define current linux_current
 #include <linux/mm.h>
 #include <linux/sched.h>
+#include <linux/freezer.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/perf_event.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #include <linux/sched/mm.h>
 #include <linux/sched/cputime.h>
 #endif
+#include <rtsig.h>
 
 extern wait_queue_head_t global_wait_queue_head;
 
@@ -164,12 +166,10 @@ thread_info(
 			if (thread->linux_task->state & TASK_UNINTERRUPTIBLE)
 				out->run_state = TH_STATE_UNINTERRUPTIBLE;
 			else if (task_is_stopped(thread->linux_task))
-			{
 				out->run_state = TH_STATE_STOPPED;
-				out->suspend_count = thread->suspend_count;
-			}
 			else
 				out->run_state = TH_STATE_RUNNING;
+			out->suspend_count = thread->user_stop_count;
 
 			return KERN_SUCCESS;
 		}
@@ -756,78 +756,16 @@ static void watchpoint_callback(struct perf_event* pevent, struct perf_sample_da
 	}
 }
 
-static void load_regs64(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
-{
-	x86_thread_state64_t ms;
-	x86_float_state64_t mfs;
-
-	mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
-	thread_get_state(thread, x86_THREAD_STATE64, (thread_state_t) &ms, &count);
-
-	count = x86_FLOAT_STATE64_COUNT;
-	thread_get_state(thread, x86_FLOAT_STATE64, (thread_state_t) &mfs, &count);
-
-	regs->ax = ms.rax;
-	regs->bx = ms.rbx;
-	regs->cx = ms.rcx;
-	regs->dx = ms.rdx;
-	regs->di = ms.rdi;
-	regs->si = ms.rsi;
-	regs->bp = ms.rbp;
-	regs->sp = ms.rsp;
-	regs->r8 = ms.r8;
-	regs->r9 = ms.r9;
-	regs->r10 = ms.r10;
-	regs->r11 = ms.r11;
-	regs->r12 = ms.r12;
-	regs->r13 = ms.r13;
-	regs->r14 = ms.r14;
-	regs->r15 = ms.r15;
-	regs->ip = ms.rip;
-	regs->flags = ms.rflags;
-	regs->cs = ms.cs;
-
-	memcpy(&xsave->i387.twd, &mfs.fpu_ftw, sizeof(xsave->i387.twd));
-	memcpy(&xsave->i387.cwd, &mfs.fpu_fcw, sizeof(xsave->i387.cwd));
-	memcpy(&xsave->i387.swd, &mfs.fpu_fsw, sizeof(xsave->i387.swd));
-	xsave->i387.rip = mfs.fpu_ip;
-	xsave->i387.rdp = mfs.fpu_dp;
-	xsave->i387.mxcsr = mfs.fpu_mxcsr;
-	xsave->i387.mxcsr_mask = mfs.fpu_mxcsrmask;
-
-	memcpy(xsave->i387.st_space, &mfs.fpu_stmm0, 128);
-	memcpy(xsave->i387.xmm_space, &mfs.fpu_xmm0, 256);
-}
-
-static void load_regs32(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
-{
-	// TODO
-}
-
 void
 thread_release(
     register thread_t   thread)
 {
+	printf("sigexc: thread_release(%p)\n", thread);
+	thread->suspend_count--;
 	if (thread->linux_task)
 	{
-		if (!thread->in_sigprocess)
-		{
-			// copy thread state from thread_t into task_pt_regs(thread->linux_task)
-			const boolean_t is_task_64bit = thread->task->map->max_offset > VM_MAX_ADDRESS;
-			struct fpu* fpu = &thread->linux_task->thread.fpu;
-			struct xregs_state* xsave = &fpu->state.xsave;
 
-			if (is_task_64bit)
-			{
-				load_regs64(thread, task_pt_regs(thread->linux_task), xsave);
-			}
-			else
-			{
-				load_regs32(thread, task_pt_regs(thread->linux_task), xsave);
-			}
-		}
-
-		smp_store_mb(thread->linux_task->state, TASK_INTERRUPTIBLE);
+		printf("sigexc: thread_release()\n");
 		wake_up_process(thread->linux_task);
 	}
 }
@@ -836,62 +774,14 @@ void
 thread_hold(
     register thread_t   thread)
 {
+	printf("sigexc: thread_hold(%p)\n", thread);
+	thread->suspend_count++;
 	if (thread->linux_task)
 	{
-    	smp_store_mb(thread->linux_task->state, TASK_STOPPED);
-		kick_process(thread->linux_task);
+		// This signal leads to sigexc.c which will end up calling LKM
+		// LKM will hold the caller so long as the suspend_count > 0.
+		send_sig_info(LINUX_SIGRTMIN, SEND_SIG_NOINFO, thread->linux_task);
 	}
-}
-
-static void save_regs64(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
-{
-	x86_thread_state64_t ms;
-	x86_float_state64_t mfs;
-
-	ms.rax = regs->ax;
-	ms.rbx = regs->bx;
-	ms.rcx = regs->cx;
-	ms.rdx = regs->dx;
-	ms.rdi = regs->di;
-	ms.rsi = regs->si;
-	ms.rbp = regs->bp;
-	ms.rsp = regs->sp;
-	ms.r8 = regs->r8;
-	ms.r9 = regs->r9;
-	ms.r10 = regs->r10;
-	ms.r11 = regs->r11;
-	ms.r12 = regs->r12;
-	ms.r13 = regs->r13;
-	ms.r14 = regs->r14;
-	ms.r15 = regs->r15;
-	ms.rip = regs->ip;
-	ms.rflags = regs->flags;
-	ms.cs = regs->cs;
-	ms.fs = 0;
-	ms.gs = 0;
-
-	memcpy(&mfs.fpu_ftw, &xsave->i387.twd, sizeof(xsave->i387.twd));
-	memcpy(&mfs.fpu_fcw, &xsave->i387.cwd, sizeof(xsave->i387.cwd));
-	memcpy(&mfs.fpu_fsw, &xsave->i387.swd, sizeof(xsave->i387.swd));
-	mfs.fpu_ip = xsave->i387.rip;
-	mfs.fpu_dp = xsave->i387.rdp;
-	mfs.fpu_mxcsr = xsave->i387.mxcsr;
-	mfs.fpu_mxcsrmask = xsave->i387.mxcsr_mask;
-
-	memcpy(&mfs.fpu_stmm0, xsave->i387.st_space, 128);
-	memcpy(&mfs.fpu_xmm0, xsave->i387.xmm_space, 256);
-
-	thread_set_state(thread, x86_THREAD_STATE64, (thread_state_t) &ms, x86_THREAD_STATE64_COUNT);
-	thread_set_state(thread, x86_FLOAT_STATE64, (thread_state_t) &mfs, x86_FLOAT_STATE64_COUNT);
-}
-
-static void save_regs32(thread_t thread, struct pt_regs* regs, struct xregs_state* xsave)
-{
-	x86_thread_state32_t ms;
-	x86_float_state32_t mfs;
-
-	thread_set_state(thread, x86_THREAD_STATE32, (thread_state_t) &ms, x86_THREAD_STATE32_COUNT);
-	thread_set_state(thread, x86_FLOAT_STATE32, (thread_state_t) &mfs, x86_FLOAT_STATE32_COUNT);
 }
 
 static void wait_cb(void* info)
@@ -900,18 +790,7 @@ static void wait_cb(void* info)
 	if (!thread->in_sigprocess)
 	{
 		// copy task_pt_regs(thread->linux_task) into thread_t
-		const boolean_t is_task_64bit = thread->task->map->max_offset > VM_MAX_ADDRESS;
-		struct fpu* fpu = &thread->linux_task->thread.fpu;
-		struct xregs_state* xsave = &fpu->state.xsave;
-
-		if (is_task_64bit)
-		{
-			save_regs64(thread, task_pt_regs(thread->linux_task), xsave);
-		}
-		else
-		{
-			save_regs32(thread, task_pt_regs(thread->linux_task), xsave);
-		}
+		//thread_save_regs(thread);
 	}
 }
 
