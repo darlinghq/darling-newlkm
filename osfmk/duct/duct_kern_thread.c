@@ -668,7 +668,7 @@ kern_return_t thread_unblock(thread_t thread, wait_result_t wresult)
 
 wait_result_t thread_mark_wait_locked(thread_t thread, wait_interrupt_t interruptible)
 {
-    if (interruptible == THREAD_UNINT || !signal_pending(linux_current))
+    if (/*interruptible == THREAD_UNINT || !signal_pending(linux_current)*/ 1)
     {
         thread->state &= TH_RUN;
         thread->state |= TH_WAIT;
@@ -701,12 +701,15 @@ thread_block_parameter(
     thread_lock(thread);
     thread->parameter = parameter;
     
-    while ((thread->state & TH_WAIT) && !signal_pending(linux_current) && linux_current->state != TASK_RUNNING)
+    while ((thread->state & TH_WAIT) && linux_current->state != TASK_RUNNING)
     {
         thread_unlock(thread);
 	printf("about to schedule - my state: %d\n", thread->linux_task->state);
         schedule();
         thread_lock(thread);
+
+        if (signal_pending(linux_current))
+            break;
     }
 
     if (thread->wait_result == THREAD_WAITING)
