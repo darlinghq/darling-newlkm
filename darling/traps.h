@@ -113,5 +113,6 @@ int fileport_makefd_entry(task_t, void* port_in);
 int sigprocess_entry(task_t task, struct sigprocess_args* args);
 int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* args);
 int ptrace_sigexc_entry(task_t task, struct ptrace_sigexc_args* args);
+int thread_suspended_entry(task_t t, struct thread_suspended_args* args);
 
 #endif

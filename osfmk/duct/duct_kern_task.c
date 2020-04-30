@@ -254,7 +254,7 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
     //     new_task->t_chud = 0U;
     // #endif
     //
-    //     new_task->pidsuspended = FALSE;
+         new_task->pidsuspended = FALSE;
     //     new_task->frozen = FALSE;
     //     new_task->rusage_cpu_flags = 0;
     //     new_task->rusage_cpu_percentage = 0;
@@ -591,10 +591,7 @@ task_info(
 
 			struct task_basic_info_64* info = (struct task_basic_info_64*) task_info_out;
 
-            if (task->tracer == 0)
-			    info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
-            else
-                info->suspend_count = task->suspend_count;
+			info->suspend_count = task->user_stop_count;
 			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;
@@ -615,10 +612,7 @@ task_info(
 
 			struct task_basic_info_32* info = (struct task_basic_info_32*) task_info_out;
 
-            if (task->tracer == 0)
-			    info->suspend_count = task_is_stopped(ltask) ? 1 : 0;
-            else
-                info->suspend_count = task->suspend_count;
+			info->suspend_count = task->user_stop_count;
 			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
 			info->resident_size = PAGE_SIZE * total_rss;
 			info->user_time.seconds = utimeus / USEC_PER_SEC;

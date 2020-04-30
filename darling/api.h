@@ -31,7 +31,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		17
+#define DARLING_MACH_API_VERSION		18
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -107,6 +107,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_sigprocess,
 	NR_ptrace_thupdate,
 	NR_ptrace_sigexc,
+	NR_thread_suspended,
 };
 
 struct set_tracer_args
@@ -507,6 +508,14 @@ struct fileport_makeport_args
 	int port_out;
 };
 
+struct thread_state
+{
+	// x86_THREAD_STATE64, x86_THREAD_STATE32
+	void* tstate;
+	// x86_FLOAT_STATE64, x86_FLOAT_STATE32
+	void* fstate;
+};
+
 #ifdef LINUX_SIGACTION_H
 #	define siginfo linux_siginfo
 #	define ucontext linux_ucontext
@@ -516,8 +525,10 @@ struct fileport_makeport_args
 struct sigprocess_args
 {
 	int signum;
+	// in/out
+	struct thread_state state;
+
 	struct siginfo siginfo;
-	struct ucontext ucontext;
 };
 #endif
 
@@ -525,6 +536,12 @@ struct sigprocess_args
 #	undef siginfo
 #	undef ucontext
 #endif
+
+struct thread_suspended_args
+{
+	// in/out
+	struct thread_state state;
+};
 
 struct ptrace_thupdate_args
 {

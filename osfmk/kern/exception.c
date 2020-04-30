@@ -458,15 +458,18 @@ exception_triage_thread(
 	
 	if (KERN_SUCCESS == check_exc_receiver_dependency(exception, host_priv->exc_actions, mutex))
 	{
+		printf("exception_deliver - host level\n");
 		kr = exception_deliver(thread, exception, code, codeCnt, host_priv->exc_actions, mutex);
 		if (kr == KERN_SUCCESS || kr == MACH_RCV_PORT_DIED)
 			goto out;
 	}
 
 out:
+#ifndef __DARLING__
 	if ((exception != EXC_CRASH) && (exception != EXC_RESOURCE) &&
 	    (exception != EXC_GUARD) && (exception != EXC_CORPSE_NOTIFY))
 		thread_exception_return();
+#endif
 	return kr;
 }
 
