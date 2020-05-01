@@ -26,6 +26,19 @@ struct ovl_lookup_data {
 	bool metacopy;
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
+	#define ovl_lookup_positive_unlocked lookup_positive_unlocked
+#else
+	static struct dentry* ovl_lookup_positive_unlocked(const char* name, struct dentry* base, int namelen) {
+		struct dentry* ret = lookup_one_len_unlocked(name, base, namelen);
+		if (!IS_ERR(ret) && d_is_negative(ret)) {
+			dput(ret);
+			ret = ERR_PTR(-ENOENT);
+		}
+		return ret;
+	};
+#endif
+
 static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
 			      size_t prelen, const char *post)
 {
@@ -201,11 +214,7 @@ static int ovl_lookup_single(struct dentry *base, struct ovl_lookup_data *d,
 	int err;
 	bool last_element = !post[0];
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
-	this = lookup_positive_unlocked(name, base, namelen);
-#else
-	this = lookup_one_len_unlocked(name, base, namelen);
-#endif
+	this = ovl_lookup_positive_unlocked(name, base, namelen);
 	if (IS_ERR(this)) {
 		err = PTR_ERR(this);
 		this = NULL;
@@ -662,11 +671,7 @@ struct dentry *ovl_get_index_fh(struct ovl_fs *ofs, struct ovl_fh *fh)
 	if (err)
 		return ERR_PTR(err);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
-	index = lookup_positive_unlocked(name.name, ofs->indexdir, name.len);
-#else
-	index = lookup_one_len_unlocked(name.name, ofs->indexdir, name.len);
-#endif
+	index = ovl_lookup_positive_unlocked(name.name, ofs->indexdir, name.len);
 	kfree(name.name);
 	if (IS_ERR(index)) {
 		if (PTR_ERR(index) == -ENOENT)
@@ -698,11 +703,7 @@ struct dentry *ovl_lookup_index(struct ovl_fs *ofs, struct dentry *upper,
 	if (err)
 		return ERR_PTR(err);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
-	index = lookup_positive_unlocked(name.name, ofs->indexdir, name.len);
-#else
-	index = lookup_one_len_unlocked(name.name, ofs->indexdir, name.len);
-#endif
+	index = ovl_lookup_positive_unlocked(name.name, ofs->indexdir, name.len);
 	if (IS_ERR(index)) {
 		err = PTR_ERR(index);
 		if (err == -ENOENT) {
@@ -1146,13 +1147,8 @@ bool ovl_lower_positive(struct dentry *dentry)
 		struct dentry *this;
 		struct dentry *lowerdir = poe->lowerstack[i].dentry;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
-		this = lookup_positive_unlocked(name->name, lowerdir,
+		this = ovl_lookup_positive_unlocked(name->name, lowerdir,
 					       name->len);
-#else
-		this = lookup_one_len_unlocked(name->name, lowerdir,
-					       name->len);
-#endif
 		if (IS_ERR(this)) {
 			switch (PTR_ERR(this)) {
 			case -ENOENT:
