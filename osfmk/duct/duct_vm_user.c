@@ -495,8 +495,6 @@ mach_vm_remap(
 	if (target_map != current_task()->map)
 		return KERN_NOT_SUPPORTED;
 
-	// NOTE: This should only be requested if target pages are really writable in src_map,
-	// but since we implement this to serve LLDB and LLDB only want writable pages...
 	unsigned int gup_flags = FOLL_WRITE | FOLL_POPULATE;
 	unsigned int map_prot = PROT_READ | PROT_WRITE;
 
