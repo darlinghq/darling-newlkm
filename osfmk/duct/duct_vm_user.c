@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2014-2017, Wenqi Chen
+Copyright (c) 2017-2020, Lubos Dolezel
 
 Shanghai Mifu Infotech Co., Ltd
 B112-113, IF Industrial Park, 508 Chunking Road, Shanghai 201103, China
@@ -54,6 +55,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #undef vmalloc
 #undef vfree
+#undef kfree
 
 kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach_vm_size_t size, int flags)
 {
@@ -452,5 +454,195 @@ out:
 	mmput(mm);
 
 	return rv;
+}
+
+static int remap_release(struct inode* inode, struct file* file);
+static int remap_mmap(struct file *filp, struct vm_area_struct *vma);
+static const struct file_operations remap_ops =
+{
+	.owner = THIS_MODULE,
+	.release = remap_release,
+	.mmap = remap_mmap,
+};
+
+struct remap_data
+{
+	struct page** pages;
+	unsigned long page_count;
+};
+
+// This symbol is not exported from Linux
+void mm_trace_rss_stat(struct mm_struct *mm, int member, long count) {}
+
+kern_return_t
+mach_vm_remap(
+	vm_map_t		target_map,
+	mach_vm_offset_t	*address,
+	mach_vm_size_t	size,
+	mach_vm_offset_t	mask,
+	int			flags,
+	vm_map_t		src_map,
+	mach_vm_offset_t	memory_address,
+	boolean_t		copy,
+	vm_prot_t		*cur_protection,
+	vm_prot_t		*max_protection,
+	vm_inherit_t		inheritance)
+{
+	kern_return_t ret = KERN_SUCCESS;
+
+	if (src_map->linux_task == NULL || target_map->linux_task == NULL)
+		return KERN_FAILURE;
+	if (target_map != current_task()->map)
+		return KERN_NOT_SUPPORTED;
+
+	// NOTE: This should only be requested if target pages are really writable in src_map,
+	// but since we implement this to serve LLDB and LLDB only want writable pages...
+	unsigned int gup_flags = FOLL_WRITE | FOLL_POPULATE;
+	unsigned int map_prot = PROT_READ | PROT_WRITE;
+
+	down_read(&src_map->linux_task->mm->mmap_sem);
+
+	unsigned long page_start = memory_address & LINUX_PAGE_MASK;
+	unsigned long nr_pages = ((memory_address + size + PAGE_SIZE - page_start - 1) >> PAGE_SHIFT);
+
+	printk(KERN_NOTICE "mach_vm_remap(): addr 0x%lx, page_start: 0x%lx, nr_pages: %d\n", memory_address, page_start, nr_pages);
+
+	struct page** pages = (struct page**) kmalloc(sizeof(struct page*) * nr_pages, GFP_KERNEL);
+	long got_pages;
+
+	got_pages = get_user_pages_remote(NULL, src_map->linux_task->mm, page_start, nr_pages, gup_flags,
+		pages, NULL, NULL);
+
+	if (got_pages == -LINUX_EFAULT)
+	{
+		// retry R/O
+		gup_flags &= ~FOLL_WRITE;
+		map_prot &= ~PROT_WRITE;
+
+		got_pages = get_user_pages_remote(NULL, src_map->linux_task->mm, page_start, nr_pages, gup_flags,
+			pages, NULL, NULL);
+	}
+
+	up_read(&src_map->linux_task->mm->mmap_sem);
+
+	if (got_pages != nr_pages)
+	{
+		if (got_pages >= 0)
+			printk(KERN_WARNING "mach_vm_remap(): wanted %d pages, got %d pages\n", nr_pages, got_pages);
+		else
+			printk(KERN_WARNING "mach_vm_remap(): get_user_pages_remote() failed with %ld\n", got_pages);
+
+		ret = KERN_MEMORY_ERROR;
+		goto err;
+	}
+	
+	unsigned int map_flags = 0;
+
+     if (!(flags & VM_FLAGS_ANYWHERE))
+	 	map_flags |= MAP_FIXED;
+
+	unsigned long map_size = nr_pages * PAGE_SIZE;
+	unsigned long map_addr = *address;
+	
+	if (copy)
+	{
+		map_flags |= MAP_PRIVATE;
+		for (long i = 0; i < got_pages; i++)
+		{
+			struct page* copied = alloc_page(GFP_USER);
+			copy_page(page_address(copied), page_address(pages[i]));
+			put_page(pages[i]);
+			pages[i] = copied;
+		}
+	}
+	else
+		map_flags |= MAP_SHARED;
+
+	struct remap_data* remap = kmalloc(sizeof(struct remap_data), GFP_KERNEL);
+	remap->pages = pages;
+	remap->page_count = nr_pages;
+
+	struct file* f = anon_inode_getfile("mach_vm_remap", &remap_ops, remap, O_RDWR);
+	if (IS_ERR(f))
+	{
+		kfree(remap);
+		printk(KERN_WARNING "mach_vm_remap(): anon_inode_getfile() failed: %d\n", PTR_ERR(f));
+		ret = KERN_FAILURE;
+		goto err;
+	}
+	pages = NULL;
+
+	map_addr = vm_mmap(f, map_addr, map_size, map_prot, map_flags, 0);
+	fput(f);
+
+	if (BAD_ADDR(map_addr))
+	{
+		printk(KERN_WARNING "mach_vm_remap(): vm_mmap() failed: %ld\n", map_addr);
+		ret = KERN_NO_SPACE;
+		goto err;
+	}
+
+	if (!copy)
+	{
+		// Fixup page accounting to avoid warnings
+		for (long i = 0; i < got_pages; i++)
+		{
+			dec_mm_counter(linux_current->mm, MM_SHMEMPAGES);
+			inc_mm_counter(linux_current->mm, mm_counter(remap->pages[i]));
+		}
+	}
+
+	*cur_protection = VM_PROT_READ;
+	if (map_prot & PROT_WRITE)
+		*cur_protection |= VM_PROT_WRITE;
+
+	*max_protection = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
+
+	*address = map_addr;
+	if (flags & VM_FLAGS_RETURN_DATA_ADDR)
+		*address += memory_address & (PAGE_SIZE - 1);
+	
+err:
+	if (pages != NULL)
+	{
+		for (long i = 0; i < got_pages; i++)
+			put_page(pages[i]);
+
+		kfree(pages);
+	}
+	return ret;
+}
+
+static int remap_release(struct inode* inode, struct file* file)
+{
+	struct remap_data* data = (struct remap_data*) file->private_data;
+	for (long i = 0; i < data->page_count; i++)
+		put_page(data->pages[i]);
+
+	kfree(data->pages);
+	kfree(data);
+
+	return 0;
+}
+
+static vm_fault_t remap_vm_fault(struct vm_fault* vmf)
+{
+	struct remap_data* data = (struct remap_data*) vmf->vma->vm_private_data;
+	vmf->page = data->pages[vmf->pgoff];
+	get_page(vmf->page);
+	return 0;
+}
+
+static struct vm_operations_struct remap_vm_ops = {
+	.fault = remap_vm_fault,
+};
+
+static int remap_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	vma->vm_ops = &remap_vm_ops;
+	vma->vm_private_data = filp->private_data;
+	vma->vm_flags |= VM_DONTEXPAND;
+	
+	return 0;
 }
 

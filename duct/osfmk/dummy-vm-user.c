@@ -724,6 +724,7 @@ vm_map(
  * as an in-place copy of itself).
  */
 
+/*
 kern_return_t
 mach_vm_remap(
 	vm_map_t		target_map,
@@ -741,6 +742,7 @@ mach_vm_remap(
         kprintf("not implemented: mach_vm_remap()\n");
         return 0;
 }
+*/
 /*
  * vm_remap -
  * Remap a range of memory from one task into another,
