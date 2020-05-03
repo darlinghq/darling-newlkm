@@ -556,18 +556,12 @@ struct ptrace_sigexc_args
 	int sigexc;
 };
 
-#pragma pack (pop)
-
-struct fileport_makeport_args
-{
-	int fd;
-	int port_out;
-};
-
 struct set_thread_handles_args
 {
 	unsigned long long pthread_handle;
 	unsigned long long dispatch_qaddr;
 };
+
+#pragma pack (pop)
 
 #endif

@@ -2223,7 +2223,7 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 			goto out;
 	}
 
-	debug_msg("calling exception_triage_thread(%d, [%d, %d])\n", mach_exception, codes[0], codes[1]);
+	debug_msg("calling exception_triage_thread(%d, [%ld, %ld])\n", mach_exception, codes[0], codes[1]);
 
 	exception_triage_thread(mach_exception, codes, EXCEPTION_CODE_MAX, thread);
 
@@ -2290,85 +2290,6 @@ int ptrace_sigexc_entry(task_t task, struct ptrace_sigexc_args* in_args)
 
 	task_deallocate(that_task);
 	return KERN_SUCCESS;
-}
-
-extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
-int fileport_makeport_entry(task_t task, struct fileport_makeport_args* in_args)
-{
-	copyargs(args, in_args);
-
-	int err;
-
-	struct file* f = fget(args.fd);
-	if (f == NULL)
-		return -LINUX_EBADF;
-	
-	ipc_port_t fileport = fileport_alloc((struct fileglob*) f);
-	if (fileport == IPC_PORT_NULL)
-	{
-		fput(f);
-		return -LINUX_EAGAIN;
-	}
-
-	mach_port_name_t name = ipc_port_copyout_send(fileport, task->itk_space);
-	if (!MACH_PORT_VALID(name))
-	{
-		err = -LINUX_EINVAL;
-		goto out;
-	}
-
-	if (copy_to_user(&in_args->port_out, &name, sizeof(name)))
-	{
-		err = -LINUX_EFAULT;
-		goto out;
-	}
-
-	return 0;
-out:
-	if (MACH_PORT_VALID(name))
-		mach_port_deallocate(task->itk_space, name);
-	return err;
-}
-
-void fileport_releasefg(struct fileglob* fg)
-{
-	struct file* f = (struct file*) fg;
-	fput(f);
-}
-
-int fileport_makefd_entry(task_t task, void* port_in)
-{
-	mach_port_name_t send = (mach_port_name_t)(uintptr_t) port_in;
-
- 	struct file* f;
-	ipc_port_t port = IPC_PORT_NULL;
-	kern_return_t kr;
-	int err;
-
-	kr = ipc_object_copyin(task->itk_space, send, MACH_MSG_TYPE_COPY_SEND, (ipc_object_t*) &port);
-
-	if (kr != KERN_SUCCESS)
-	{
-		err = -LINUX_EINVAL;
-		goto out;
-	}
-
-	f = (struct file*) fileport_port_to_fileglob(port);
-	if (f == NULL)
-	{
-		err = -LINUX_EINVAL;
-		goto out;
-	}
-
-	int fd = get_unused_fd_flags(O_CLOEXEC);
-	fd_install(fd, f);
-	err = fd;
-
-out:
-	if (port != IPC_PORT_NULL)
-		ipc_port_release_send(port);
-
-	return err;
 }
 
 int thread_suspended_entry(task_t task, struct thread_suspended_args* in_args)
