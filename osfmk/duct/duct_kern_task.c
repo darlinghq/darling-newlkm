@@ -548,6 +548,7 @@ task_info(
 	}
 	case TASK_BASIC_INFO_64:
 	case TASK_BASIC_INFO_32:
+	case MACH_TASK_BASIC_INFO:
 	{
 		struct task_struct* ltask = task->map->linux_task;
 
@@ -600,7 +601,7 @@ task_info(
 			info->system_time.microseconds = stimeus % USEC_PER_SEC;
 			info->policy = 0;
 		}
-		else
+		else if (flavor == TASK_BASIC_INFO_32)
 		{
 			if (*task_info_count < TASK_BASIC_INFO_32_COUNT)
 			{
@@ -611,6 +612,26 @@ task_info(
 			*task_info_count = TASK_BASIC_INFO_32_COUNT;
 
 			struct task_basic_info_32* info = (struct task_basic_info_32*) task_info_out;
+
+			info->suspend_count = task->user_stop_count;
+			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
+			info->resident_size = PAGE_SIZE * total_rss;
+			info->user_time.seconds = utimeus / USEC_PER_SEC;
+			info->user_time.microseconds = utimeus % USEC_PER_SEC;
+			info->system_time.seconds = stimeus / USEC_PER_SEC;
+			info->system_time.microseconds = stimeus % USEC_PER_SEC;
+			info->policy = 0;
+		}
+		else
+		{
+			if (*task_info_count < MACH_TASK_BASIC_INFO_COUNT)
+			{
+				error = KERN_INVALID_ARGUMENT;
+				break;
+			}
+
+			*task_info_count = MACH_TASK_BASIC_INFO_COUNT;
+			struct mach_task_basic_info* info = (struct mach_task_basic_info*) task_info_out;
 
 			info->suspend_count = task->user_stop_count;
 			info->virtual_size = mm ? (PAGE_SIZE * mm->total_vm) : 0;
