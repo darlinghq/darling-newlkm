@@ -108,6 +108,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_ptrace_thupdate,
 	NR_ptrace_sigexc,
 	NR_thread_suspended,
+	NR_set_thread_handles,
 };
 
 struct set_tracer_args
@@ -555,6 +556,12 @@ struct fileport_makeport_args
 {
 	int fd;
 	int port_out;
+};
+
+struct set_thread_handles_args
+{
+	unsigned long long pthread_handle;
+	unsigned long long dispatch_qaddr;
 };
 
 #endif

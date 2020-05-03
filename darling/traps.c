@@ -177,6 +177,7 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_ptrace_sigexc, ptrace_sigexc_entry),
 	TRAP(NR_fileport_makeport, fileport_makeport_entry),
 	TRAP(NR_fileport_makefd, fileport_makefd_entry),
+	TRAP(NR_set_thread_handles, set_thread_handles_entry),
 
 	// VIRTUAL CHROOT
 	TRAP(NR_vchroot, vchroot_entry),
@@ -2302,6 +2303,18 @@ int thread_suspended_entry(task_t task, struct thread_suspended_args* in_args)
 	err = state_from_kernel(&args.state);
 	if (err != 0)
 		return err;
+
+	return 0;
+}
+
+int set_thread_handles_entry(task_t t, struct set_thread_handles_args* in_args)
+{
+	copyargs(args, in_args);
+
+	thread_t thread = current_thread();
+
+	thread->pthread_handle = args.pthread_handle;
+	thread->dispatch_qaddr = args.dispatch_qaddr;
 
 	return 0;
 }

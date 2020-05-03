@@ -542,6 +542,7 @@ thread_get_tag(thread_t th)
         return 0;
 }
 
+/*
 uint64_t
 thread_dispatchqaddr(
     thread_t        thread)
@@ -549,6 +550,7 @@ thread_dispatchqaddr(
         kprintf("not implemented: thread_dispatchqaddr()\n");
         return 0;
 }
+*/
 
 /*
  * Export routines to other components for things that are done as macros

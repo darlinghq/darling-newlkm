@@ -528,6 +528,7 @@ struct thread {
 		int pending_signal;
         // linux_wait_queue_t          lwait;
 		uint32_t uu_rval[1];
+		unsigned long dispatch_qaddr, pthread_handle;
 #ifdef __x86_64__
 	unsigned long cont_jmpbuf[8];
 #endif
