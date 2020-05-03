@@ -2173,6 +2173,7 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 		case LINUX_SIGSEGV: // KERN_INVALID_ADDRESS
 			mach_exception = EXC_BAD_ACCESS;
 			codes[0] = KERN_INVALID_ADDRESS;
+			codes[1] = args.siginfo._sifields._sigfault._addr;
 			break;
 		case LINUX_SIGBUS:
 			mach_exception = EXC_BAD_ACCESS;
