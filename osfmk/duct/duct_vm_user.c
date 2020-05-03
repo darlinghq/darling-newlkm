@@ -564,7 +564,7 @@ mach_vm_remap(
 	if (IS_ERR(f))
 	{
 		kfree(remap);
-		printk(KERN_WARNING "mach_vm_remap(): anon_inode_getfile() failed: %d\n", PTR_ERR(f));
+		printk(KERN_WARNING "mach_vm_remap(): anon_inode_getfile() failed: %ld\n", PTR_ERR(f));
 		ret = KERN_FAILURE;
 		goto err;
 	}

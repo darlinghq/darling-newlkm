@@ -324,6 +324,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
         new_thread->ref_count = 2;
         new_thread->waitq = NULL;
         new_thread->thread_magic = THREAD_MAGIC;
+        new_thread->dispatch_qaddr = 0;
 
         thread_lock_init(new_thread);
         // wake_lock_init(new_thread);
@@ -928,6 +929,13 @@ thread_swap_mach_voucher(
 {
     printf("NOT IMPLEMENTED: thread_swap_mach_voucher\n");
 	return KERN_NOT_SUPPORTED;
+}
+
+uint64_t
+thread_dispatchqaddr(
+    thread_t        thread)
+{
+    return thread->dispatch_qaddr;
 }
 
 #if 0
