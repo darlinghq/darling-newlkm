@@ -11,3 +11,4 @@ modules.order
 *.o.ur-safe
 
 darling-mach.mod
+darling-overlay.mod
