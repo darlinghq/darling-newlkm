@@ -1903,6 +1903,7 @@ int handle_to_path_entry(task_t t, struct handle_to_path_args* in_args)
 	if (IS_ERR(path.dentry))
 	{
 		err = PTR_ERR(path.dentry);
+		path.dentry = NULL;
 		goto fail;
 	}
 
