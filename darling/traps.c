@@ -1651,7 +1651,7 @@ int vchroot_expand_entry(task_t task, struct vchroot_expand_args __user* in_args
 		char* strpath = d_path(&path, str, PAGE_SIZE);
 		// This would return the path within the filesystem where the file resides
 		//char* strpath = dentry_path_raw(path.dentry, str, PAGE_SIZE);
-		mntput(path.mnt);
+		path_put(&path);
 
 		if (IS_ERR(strpath))
 		{
@@ -1866,6 +1866,8 @@ int handle_to_path_entry(task_t t, struct handle_to_path_args* in_args)
 	}
 
 	path.mnt = mntget(f.file->f_path.mnt);
+	path.dentry = NULL;
+
 	fdput(f);
 	spin_unlock(&linux_current->fs->lock);
 
@@ -1924,6 +1926,9 @@ fail:
 		free_page((unsigned long) str);
 
 	mntput(path.mnt);
+	if (path.dentry)
+		dput(path.dentry);
+		
 	return err;
 }
 
