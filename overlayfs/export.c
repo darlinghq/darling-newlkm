@@ -234,10 +234,14 @@ static int ovl_dentry_to_fid(struct dentry *dentry, u32 *fid, int buflen)
 
 	err = -EOVERFLOW;
 	len = OVL_FH_LEN(fh);
-	if (len > buflen)
-		goto fail;
 
-	memcpy(fid, fh, len);
+	if (fid != NULL)
+	{
+		if (len > buflen)
+			goto fail;
+
+		memcpy(fid, fh, len);
+	}
 	err = len;
 
 out:
