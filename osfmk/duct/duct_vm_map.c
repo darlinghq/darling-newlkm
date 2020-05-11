@@ -72,7 +72,7 @@ void duct_vm_map_init (void)
     zone_change(vm_map_zone, Z_NOENCRYPT, TRUE);
 
     vm_map_copy_zone = duct_zinit ((vm_map_size_t) sizeof(struct vm_map_copy),
-                 16 * 1024, PAGE_SIZE, "VM map copies");
+                 16 * 1024, PAGE_SIZE, "VM_map_copies");
     duct_zone_change (vm_map_copy_zone, Z_NOENCRYPT, TRUE);
 
     kernel_map = duct_vm_map_create(NULL);
