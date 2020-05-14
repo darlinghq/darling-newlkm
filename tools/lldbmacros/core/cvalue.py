@@ -43,14 +43,17 @@ class value(object):
         return self._sbval19k84obscure747.__str__()
     
     def __cmp__(self, other):
-        if type(other) is int:
+        if type(other) is int or type(other) is long:
             me = int(self)
             if type(me) is long:
                 other = long(other)
             return me.__cmp__(other)
         if type(other) is value:
-            return int(self).__cmp__(int(other))
-        raise TypeError("Cannot compare value with this type")
+            try:
+                return int(self).__cmp__(int(other))
+            except TypeError: # Try promoting to long
+                return long(self).__cmp__(long(other))
+        raise TypeError("Cannot compare value with type {}".format(type(other)))
     
     def __str__(self):
         global _cstring_rex
@@ -295,15 +298,29 @@ class value(object):
         return content
 
     def _GetValueAsSigned(self):
+        if self._sbval19k84obscure747_is_ptr:
+            print "ERROR: You cannot get 'int' from pointer type %s, please use unsigned(obj) for such purposes." % str(self._sbval19k84obscure747_type)
+            raise ValueError("Cannot get signed int for pointer data.")
         serr = lldb.SBError()
         retval = self._sbval19k84obscure747.GetValueAsSigned(serr)
         if serr.success:
             return retval
         raise ValueError("Failed to read signed data. "+ str(self._sbval19k84obscure747) +"(type =" + str(self._sbval19k84obscure747_type) + ") Error description: " + serr.GetCString())
-    
+
+    def _GetValueAsCast(self, dest_type):
+        if type(dest_type) is not lldb.SBType:
+            raise ValueError("Invalid type for dest_type: {}".format(type(dest_type)))
+        addr = self._GetValueAsUnsigned()
+        sbval = self._sbval19k84obscure747.target.CreateValueFromExpression("newname", "(void *)"+str(addr))
+        val = value(sbval.Cast(dest_type))
+        return val
+
     def _GetValueAsUnsigned(self):
         serr = lldb.SBError()
-        retval = self._sbval19k84obscure747.GetValueAsUnsigned(serr)
+        if self._sbval19k84obscure747_is_ptr:
+            retval = self._sbval19k84obscure747.GetValueAsAddress()
+        else:
+            retval = self._sbval19k84obscure747.GetValueAsUnsigned(serr)
         if serr.success:
             return retval
         raise ValueError("Failed to read unsigned data. "+ str(self._sbval19k84obscure747) +"(type =" + str(self._sbval19k84obscure747_type) + ") Error description: " + serr.GetCString())
@@ -311,7 +328,7 @@ class value(object):
     def _GetValueAsString(self, offset = 0, maxlen = 1024):
         serr = lldb.SBError()
         sbdata = None
-        if self._sbval19k84obscure747.TypeIsPointerType():
+        if self._sbval19k84obscure747_is_ptr:
             sbdata = self._sbval19k84obscure747.GetPointeeData(offset, maxlen)
         else:
             sbdata = self._sbval19k84obscure747.GetData()
@@ -381,7 +398,7 @@ def dereference(val):
             obj_ptr = (int *)0x1234  #C
             val = *obj_ptr           #C
     """
-    if type(val) is value and val.GetSBValue().TypeIsPointerType():
+    if type(val) is value and val._sbval19k84obscure747_is_ptr:
         return value(val.GetSBValue().Dereference())
     raise TypeError('Cannot dereference this type.')
         
@@ -410,11 +427,24 @@ def cast(obj, target_type):
     elif type(target_type) is value:
         dest_type = target_type.GetSBValue().GetType()
 
-    if type(obj) is value :
-        return value(obj.GetSBValue().Cast(dest_type))
+    if type(obj) is value:
+        return obj._GetValueAsCast(dest_type)
     elif type(obj) is int:
         print "ERROR: You cannot cast an 'int' to %s, please use kern.GetValueFromAddress() for such purposes." % str(target_type) 
     raise TypeError("object of type %s cannot be casted to %s" % (str(type(obj)), str(target_type)))
+
+def containerof(obj, target_type, field_name):
+    """ Type cast an object to another C type from a pointer to a field.
+        params:
+            obj - core.value  object representing some C construct in lldb
+            target_type - str : ex 'struct thread'
+                        - lldb.SBType :
+            field_name - the field name within the target_type obj is a pointer to
+    """
+    addr = int(obj) - getfieldoffset(target_type, field_name)
+    obj = value(obj.GetSBValue().CreateValueFromExpression(None,'(void *)'+str(addr)))
+    return cast(obj, target_type + " *")
+
 
 _value_types_cache={}
 
@@ -429,22 +459,50 @@ def gettype(target_type):
     """
     global _value_types_cache
     target_type = str(target_type).strip()
-    if target_type not in _value_types_cache:
-        tmp_type = None
-        if target_type.endswith('*') :
-            tmp_type = LazyTarget.GetTarget().FindFirstType(target_type.rstrip('*').strip())
-            if not tmp_type.IsValid():
-                raise NameError('Unable to Cast to type '+target_type)
-            tmp_type = tmp_type.GetPointerType()
-        else :
-            tmp_type = LazyTarget.GetTarget().FindFirstType(target_type)
-            if not tmp_type.IsValid():
-                raise NameError('Unable to Cast to type '+target_type)
-        _value_types_cache[target_type] = tmp_type
+    if target_type in _value_types_cache:
+        return _value_types_cache[target_type]
+
+    target_type = target_type.strip()
+
+    requested_type_is_struct = False
+    m = re.match(r'\s*struct\s*(.*)$', target_type)
+    if m:
+        requested_type_is_struct = True
+        target_type = m.group(1)
+
+    tmp_type = None
+    requested_type_is_pointer = False
+    if target_type.endswith('*') :
+        requested_type_is_pointer = True
+
+    # tmp_type = LazyTarget.GetTarget().FindFirstType(target_type.rstrip('*').strip())
+    search_type = target_type.rstrip('*').strip()
+    type_arr = [t for t in LazyTarget.GetTarget().FindTypes(search_type)]
+
+    if requested_type_is_struct:
+        type_arr = [t for t in type_arr if t.type == lldb.eTypeClassStruct]
+
+    # After the sort, the struct type with more fields will be at index [0].
+    # This hueristic helps selecting struct type with more fields compared to ones with "opaque" members
+    type_arr.sort(reverse=True, key=lambda x: x.GetNumberOfFields())
+    if len(type_arr) > 0:
+        tmp_type = type_arr[0]
+    else:
+        raise NameError('Unable to find type '+target_type)
+
+    if not tmp_type.IsValid():
+        raise NameError('Unable to Cast to type '+target_type)
+
+    if requested_type_is_pointer:
+        tmp_type = tmp_type.GetPointerType()
+    _value_types_cache[target_type] = tmp_type
+
     return _value_types_cache[target_type]
+
 
 def getfieldoffset(struct_type, field_name):
     """ Returns the byte offset of a field inside a given struct
+        Understands anonymous unions and field names in sub-structs
         params:
             struct_type - str or lldb.SBType, ex. 'struct ipc_port *' or port.gettype()
             field_name  - str, name of the field inside the struct ex. 'ip_messages'
@@ -453,13 +511,23 @@ def getfieldoffset(struct_type, field_name):
         raises:
             TypeError  - - In case the struct_type has no field with the name field_name
     """
+
     if type(struct_type) == str:
         struct_type = gettype(struct_type)
+
+    if '.' in field_name :
+        # Handle recursive fields in sub-structs
+        components = field_name.split('.', 1)
+        for field in struct_type.get_fields_array():
+            if str(field.GetName()) == components[0]:
+                return getfieldoffset(struct_type, components[0]) + getfieldoffset(field.GetType(), components[1])
+        raise TypeError('Field name "%s" not found in type "%s"' % (components[0], str(struct_type)))
+
     offset = 0
     for field in struct_type.get_fields_array():
         if str(field.GetName()) == field_name:
             return field.GetOffsetInBytes()
-        
+
         # Hack for anonymous unions - the compiler does this, so cvalue should too
         if field.GetName() is None and field.GetType().GetTypeClass() == lldb.eTypeClassUnion :
             for union_field in field.GetType().get_fields_array():

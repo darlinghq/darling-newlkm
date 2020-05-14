@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2005-2018 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  * 
@@ -26,7 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#define MACH__POSIX_C_SOURCE_PRIVATE 1 /* pulls in suitable savearea from mach/ppc/thread_status.h */
 #include <kern/thread.h>
 #include <mach/thread_status.h>
 
@@ -182,6 +181,11 @@ dtrace_getreg(struct regs *savearea, uint_t reg)
 {
 	boolean_t is64Bit = proc_is64bit(current_proc());
 	x86_saved_state_t *regs = (x86_saved_state_t *)savearea;
+
+	if (regs == NULL) {
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
+		return (0);
+	}
 
 	if (is64Bit) {
 	    if (reg <= SS) {
@@ -734,9 +738,9 @@ struct frame {
 };
 
 uint64_t
-dtrace_getarg(int arg, int aframes)
+dtrace_getarg(int arg, int aframes, dtrace_mstate_t *mstate, dtrace_vstate_t *vstate)
 {
-	uint64_t val;
+	uint64_t val = 0;
 	struct frame *fp = (struct frame *)__builtin_frame_address(0);
 	uintptr_t *stack;
 	uintptr_t pc;
@@ -778,7 +782,7 @@ dtrace_getarg(int arg, int aframes)
 			x86_saved_state64_t *saved_state = saved_state64(tagged_regs);
 
 			if (arg <= inreg) {
-				stack = (uintptr_t *)&saved_state->rdi;
+				stack = (uintptr_t *)(void*)&saved_state->rdi;
 			} else {
 				fp = (struct frame *)(saved_state->isf.rsp);
 				stack = (uintptr_t *)&fp[1]; /* Find marshalled
@@ -812,10 +816,11 @@ dtrace_getarg(int arg, int aframes)
 	stack = (uintptr_t *)&fp[1]; /* Find marshalled arguments */
 
 load:
-	DTRACE_CPUFLAG_SET(CPU_DTRACE_NOFAULT);
-	/* dtrace_probe arguments arg0 ... arg4 are 64bits wide */
-	val = (uint64_t)(*(((uintptr_t *)stack) + arg));
-	DTRACE_CPUFLAG_CLEAR(CPU_DTRACE_NOFAULT);
+	if (dtrace_canload((uint64_t)(stack + arg), sizeof(uint64_t),
+		mstate, vstate)) {
+		/* dtrace_probe arguments arg0 ... arg4 are 64bits wide */
+		val = dtrace_load64((uint64_t)(stack + arg));
+	}
 
 	return (val);
 }

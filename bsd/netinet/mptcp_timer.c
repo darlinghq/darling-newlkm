@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -51,20 +51,22 @@
  */
 static u_int32_t mptcp_rto = 3;
 SYSCTL_INT(_net_inet_mptcp, OID_AUTO, rto, CTLFLAG_RW | CTLFLAG_LOCKED,
-	&mptcp_rto, 0, "MPTCP Retransmission Timeout");
+    &mptcp_rto, 0, "MPTCP Retransmission Timeout");
 
 static int mptcp_nrtos = 3;
 SYSCTL_INT(_net_inet_mptcp, OID_AUTO, nrto, CTLFLAG_RW | CTLFLAG_LOCKED,
-	&mptcp_rto, 0, "MPTCP Retransmissions");
+    &mptcp_rto, 0, "MPTCP Retransmissions");
 
 /*
  * MPTCP connections timewait interval in seconds.
  */
 static u_int32_t mptcp_tw = 60;
 SYSCTL_INT(_net_inet_mptcp, OID_AUTO, tw, CTLFLAG_RW | CTLFLAG_LOCKED,
-	&mptcp_tw, 0, "MPTCP Timewait Period");
+    &mptcp_tw, 0, "MPTCP Timewait Period");
 
-#define	TIMEVAL_TO_HZ(_tv_)	((_tv_).tv_sec * hz + (_tv_).tv_usec / hz)
+#define TIMEVAL_TO_HZ(_tv_)     ((_tv_).tv_sec * hz + (_tv_).tv_usec / hz)
+
+static int mptcp_cancel_urgency_timer(struct mptses *mpte);
 
 static int
 mptcp_timer_demux(struct mptses *mpte, uint32_t now_msecs)
@@ -75,16 +77,14 @@ mptcp_timer_demux(struct mptses *mpte, uint32_t now_msecs)
 
 	DTRACE_MPTCP2(timer, struct mptses *, mpte, struct mptcb *, mp_tp);
 
-	MPTE_LOCK_ASSERT_HELD(mpte);
-	MPT_LOCK(mp_tp);
 	switch (mp_tp->mpt_timer_vals) {
 	case MPTT_REXMT:
-		if (mp_tp->mpt_rxtstart == 0)
+		if (mp_tp->mpt_rxtstart == 0) {
 			break;
+		}
 		if ((now_msecs - mp_tp->mpt_rxtstart) >
-		    (mptcp_rto*hz)) {
-			if (MPTCP_SEQ_GT(mp_tp->mpt_snduna,
-			    mp_tp->mpt_rtseq)) {
+		    (mptcp_rto * hz)) {
+			if (MPTCP_SEQ_GT(mp_tp->mpt_snduna, mp_tp->mpt_rtseq)) {
 				mp_tp->mpt_timer_vals = 0;
 				mp_tp->mpt_rtseq = 0;
 				break;
@@ -95,13 +95,11 @@ mptcp_timer_demux(struct mptses *mpte, uint32_t now_msecs)
 				DTRACE_MPTCP1(error, struct mptcb *, mp_tp);
 			} else {
 				mp_tp->mpt_sndnxt = mp_tp->mpt_rtseq;
-				MPT_UNLOCK(mp_tp);
-				mptcplog((LOG_DEBUG, "MPTCP Socket: "
-				   "%s: REXMT %d times.\n",
-				    __func__, mp_tp->mpt_rxtshift),
-				    MPTCP_SOCKET_DBG, MPTCP_LOGLVL_LOG);
+				os_log_info(mptcp_log_handle,
+				    "%s: REXMT %d sndnxt %u\n",
+				    __func__, mp_tp->mpt_rxtshift,
+				    (uint32_t)mp_tp->mpt_sndnxt);
 				mptcp_output(mpte);
-				MPT_LOCK(mp_tp);
 			}
 		} else {
 			resched_timer = 1;
@@ -109,8 +107,9 @@ mptcp_timer_demux(struct mptses *mpte, uint32_t now_msecs)
 		break;
 	case MPTT_TW:
 		/* Allows for break before make XXX */
-		if (mp_tp->mpt_timewait == 0)
+		if (mp_tp->mpt_timewait == 0) {
 			VERIFY(0);
+		}
 		if ((now_msecs - mp_tp->mpt_timewait) >
 		    (mptcp_tw * hz)) {
 			mp_tp->mpt_softerror = ETIMEDOUT;
@@ -125,9 +124,8 @@ mptcp_timer_demux(struct mptses *mpte, uint32_t now_msecs)
 	default:
 		break;
 	}
-	MPT_UNLOCK(mp_tp);
 
-	return (resched_timer);
+	return resched_timer;
 }
 
 uint32_t
@@ -138,7 +136,7 @@ mptcp_timer(struct mppcbinfo *mppi)
 	u_int32_t now_msecs;
 	uint32_t resched_timer = 0;
 
-	lck_mtx_assert(&mppi->mppi_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&mppi->mppi_lock, LCK_MTX_ASSERT_OWNED);
 
 	microuptime(&now);
 	now_msecs = TIMEVAL_TO_HZ(now);
@@ -147,23 +145,18 @@ mptcp_timer(struct mppcbinfo *mppi)
 		struct mptses *mpte;
 
 		mp_so = mpp->mpp_socket;
-		VERIFY(mp_so != NULL);
 		mpte = mptompte(mpp);
-		VERIFY(mpte != NULL);
-		MPTE_LOCK(mpte);
+		socket_lock(mp_so, 1);
+
 		VERIFY(mpp->mpp_flags & MPP_ATTACHED);
 
-		if (mpp->mpp_flags & MPP_DEFUNCT) {
-			MPTE_UNLOCK(mpte);
-			continue;
-		}
-
-		if (mptcp_timer_demux(mpte, now_msecs))
+		if (mptcp_timer_demux(mpte, now_msecs)) {
 			resched_timer = 1;
-		MPTE_UNLOCK(mpte);
+		}
+		socket_unlock(mp_so, 1);
 	}
 
-	return (resched_timer);
+	return resched_timer;
 }
 
 void
@@ -178,21 +171,19 @@ mptcp_start_timer(struct mptses *mpte, int timer_type)
 	mptcplog((LOG_DEBUG, "MPTCP Socket: %s: %d\n", __func__, timer_type),
 	    MPTCP_SOCKET_DBG, MPTCP_LOGLVL_VERBOSE);
 
+	socket_lock_assert_owned(mptetoso(mpte));
+
 	switch (timer_type) {
 	case MPTT_REXMT:
-		MPT_LOCK(mp_tp);
 		mp_tp->mpt_timer_vals |= MPTT_REXMT;
 		mp_tp->mpt_rxtstart = TIMEVAL_TO_HZ(now);
 		mp_tp->mpt_rxtshift = 0;
 		mp_tp->mpt_rtseq = mp_tp->mpt_sndnxt;
-		MPT_UNLOCK(mp_tp);
 		break;
 	case MPTT_TW:
 		/* XXX: Not implemented yet */
-		MPT_LOCK(mp_tp);
 		mp_tp->mpt_timer_vals |= MPTT_TW;
 		mp_tp->mpt_timewait = TIMEVAL_TO_HZ(now);
-		MPT_UNLOCK(mp_tp);
 		break;
 	case MPTT_FASTCLOSE:
 		/* NO-OP */
@@ -207,8 +198,7 @@ mptcp_start_timer(struct mptses *mpte, int timer_type)
 void
 mptcp_cancel_timer(struct mptcb *mp_tp, int timer_type)
 {
-	MPT_LOCK_ASSERT_HELD(mp_tp);
-	DTRACE_MPTCP2(cancel__timer, struct mptcb *, mp_tp, int, timer_type);
+	socket_lock_assert_owned(mptetoso(mp_tp->mpt_mpte));
 
 	switch (timer_type) {
 	case MPTT_REXMT:
@@ -230,7 +220,113 @@ mptcp_cancel_timer(struct mptcb *mp_tp, int timer_type)
 void
 mptcp_cancel_all_timers(struct mptcb *mp_tp)
 {
+	struct mptses *mpte = mp_tp->mpt_mpte;
+
+	if (mpte->mpte_time_target) {
+		mptcp_cancel_urgency_timer(mpte);
+	}
+
 	mptcp_cancel_timer(mp_tp, MPTT_REXMT);
 	mptcp_cancel_timer(mp_tp, MPTT_TW);
 	mptcp_cancel_timer(mp_tp, MPTT_FASTCLOSE);
+}
+
+static void
+mptcp_urgency_timer_locked(struct mptses *mpte)
+{
+	uint64_t time_now = mach_continuous_time();
+	struct socket *mp_so = mptetoso(mpte);
+
+	VERIFY(mp_so->so_usecount >= 0);
+
+	os_log(mptcp_log_handle, "%s - %lx: timer at %llu now %llu usecount %u\n",
+	    __func__, (unsigned long)VM_KERNEL_ADDRPERM(mpte), mpte->mpte_time_target, time_now, mp_so->so_usecount);
+
+	mptcp_check_subflows_and_add(mpte);
+
+	mp_so->so_usecount--;
+}
+
+static void
+mptcp_urgency_timer(void *param0, __unused void *param1)
+{
+	struct mptses *mpte = (struct mptses *)param0;
+	struct socket *mp_so = mptetoso(mpte);
+
+	socket_lock(mp_so, 1);
+
+	mptcp_urgency_timer_locked(mpte);
+
+	socket_unlock(mp_so, 1);
+}
+
+void
+mptcp_init_urgency_timer(struct mptses *mpte)
+{
+	/* thread_call_allocate never fails */
+	mpte->mpte_time_thread = thread_call_allocate(mptcp_urgency_timer, mpte);
+}
+
+void
+mptcp_set_urgency_timer(struct mptses *mpte)
+{
+	struct socket *mp_so = mptetoso(mpte);
+	uint64_t time_now = 0;
+	boolean_t ret = FALSE;
+
+	socket_lock_assert_owned(mp_so);
+
+	VERIFY(mp_so->so_usecount >= 0);
+	if (mp_so->so_usecount == 0) {
+		goto exit_log;
+	}
+
+	if (mpte->mpte_time_target == 0) {
+		mptcp_cancel_urgency_timer(mpte);
+
+		goto exit_log;
+	}
+
+	time_now = mach_continuous_time();
+
+	if ((int64_t)(mpte->mpte_time_target - time_now) > 0) {
+		mptcp_check_subflows_and_remove(mpte);
+
+		ret = thread_call_enter_delayed_with_leeway(mpte->mpte_time_thread, NULL,
+		    mpte->mpte_time_target, 0, THREAD_CALL_CONTINUOUS);
+
+		if (!ret) {
+			mp_so->so_usecount++;
+		}
+	} else if ((int64_t)(mpte->mpte_time_target - time_now) <= 0) {
+		mp_so->so_usecount++;
+
+		/* Already passed the deadline, trigger subflows now */
+		mptcp_urgency_timer_locked(mpte);
+	}
+
+exit_log:
+	os_log(mptcp_log_handle, "%s - %lx: timer at %llu now %llu usecount %u ret %u\n",
+	    __func__, (unsigned long)VM_KERNEL_ADDRPERM(mpte), mpte->mpte_time_target, time_now,
+	    mp_so->so_usecount, ret);
+}
+
+static int
+mptcp_cancel_urgency_timer(struct mptses *mpte)
+{
+	struct socket *mp_so = mptetoso(mpte);
+	boolean_t ret;
+
+	ret = thread_call_cancel(mpte->mpte_time_thread);
+
+	os_log(mptcp_log_handle, "%s - %lx: Canceled timer thread usecount %u ret %u\n",
+	    __func__, (unsigned long)VM_KERNEL_ADDRPERM(mpte), mp_so->so_usecount, ret);
+
+	mptcp_check_subflows_and_remove(mpte);
+
+	if (ret) {
+		mp_so->so_usecount--;
+	}
+
+	return 0;
 }

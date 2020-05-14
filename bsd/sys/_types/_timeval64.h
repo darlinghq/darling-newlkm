@@ -28,9 +28,11 @@
 
 #ifndef _STRUCT_TIMEVAL64
 #define _STRUCT_TIMEVAL64
-struct timeval64
-{
-	__int64_t		tv_sec;		/* seconds */
-	__int64_t		tv_usec;	/* and microseconds */
+
+#include <machine/types.h> /* __int64_t */
+
+struct timeval64 {
+	__int64_t               tv_sec;         /* seconds */
+	__int64_t               tv_usec;        /* and microseconds */
 };
 #endif /* _STRUCT_TIMEVAL32 */

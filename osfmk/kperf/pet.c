@@ -120,7 +120,8 @@ static kern_return_t pet_threads_prepare(task_t task);
 
 static void pet_sample_all_tasks(uint32_t idle_rate);
 static void pet_sample_task(task_t task, uint32_t idle_rate);
-static void pet_sample_thread(int pid, thread_t thread, uint32_t idle_rate);
+static void pet_sample_thread(int pid, task_t task, thread_t thread,
+    uint32_t idle_rate);
 
 /* functions called by other areas of kperf */
 
@@ -153,17 +154,24 @@ kperf_pet_fire_after(void)
 
 void
 kperf_pet_on_cpu(thread_t thread, thread_continue_t continuation,
-                 uintptr_t *starting_fp)
+    uintptr_t *starting_fp)
 {
 	assert(thread != NULL);
 	assert(ml_get_interrupts_enabled() == FALSE);
 
+	uint32_t actionid = pet_action_id;
+	if (actionid == 0) {
+		return;
+	}
+
 	if (thread->kperf_pet_gen != kperf_pet_gen) {
 		BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_START, kperf_pet_gen, thread->kperf_pet_gen);
 
+		task_t task = get_threadtask(thread);
 		struct kperf_context ctx = {
 			.cur_thread = thread,
-			.cur_pid = task_pid(get_threadtask(thread)),
+			.cur_task = task,
+			.cur_pid = task_pid(task),
 			.starting_fp = starting_fp,
 		};
 		/*
@@ -180,7 +188,7 @@ kperf_pet_on_cpu(thread_t thread, thread_continue_t continuation,
 		if (continuation != NULL) {
 			flags |= SAMPLE_FLAG_CONTINUATION;
 		}
-		kperf_sample(sample, &ctx, pet_action_id, flags);
+		kperf_sample(sample, &ctx, actionid, flags);
 
 		BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_END);
 	} else {
@@ -191,6 +199,10 @@ kperf_pet_on_cpu(thread_t thread, thread_continue_t continuation,
 void
 kperf_pet_config(unsigned int action_id)
 {
+	if (action_id == 0 && !pet_initted) {
+		return;
+	}
+
 	kern_return_t kr = pet_init();
 	if (kr != KERN_SUCCESS) {
 		return;
@@ -278,7 +290,7 @@ pet_init(void)
 
 	/* make the sync point */
 	pet_lock = lck_mtx_alloc_init(&kperf_lck_grp, NULL);
-	assert(pet_lock);
+	assert(pet_lock != NULL);
 
 	/* create the thread */
 
@@ -312,8 +324,10 @@ pet_thread_idle(void)
 {
 	lck_mtx_assert(pet_lock, LCK_MTX_ASSERT_OWNED);
 
-	(void)lck_mtx_sleep(pet_lock, LCK_SLEEP_DEFAULT, &pet_action_id,
-	                    THREAD_UNINT);
+	do {
+		(void)lck_mtx_sleep(pet_lock, LCK_SLEEP_DEFAULT, &pet_action_id,
+		    THREAD_UNINT);
+	} while (pet_action_id == 0);
 }
 
 __attribute__((noreturn))
@@ -345,17 +359,19 @@ pet_thread_loop(void *param, wait_result_t wr)
 /* sampling */
 
 static void
-pet_sample_thread(int pid, thread_t thread, uint32_t idle_rate)
+pet_sample_thread(int pid, task_t task, thread_t thread, uint32_t idle_rate)
 {
 	lck_mtx_assert(pet_lock, LCK_MTX_ASSERT_OWNED);
 
-	uint32_t sample_flags = SAMPLE_FLAG_IDLE_THREADS;
+	uint32_t sample_flags = SAMPLE_FLAG_IDLE_THREADS |
+	    SAMPLE_FLAG_THREAD_ONLY;
 
 	BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_START);
 
 	/* work out the context */
 	struct kperf_context ctx = {
 		.cur_thread = thread,
+		.cur_task = task,
 		.cur_pid = pid,
 	};
 
@@ -373,6 +389,8 @@ pet_sample_thread(int pid, thread_t thread, uint32_t idle_rate)
 	thread->kperf_pet_cnt++;
 
 	kperf_sample(pet_sample, &ctx, pet_action_id, sample_flags);
+	kperf_sample_user(&pet_sample->usample, &ctx, pet_action_id,
+	    sample_flags);
 
 	BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_END);
 }
@@ -441,34 +459,68 @@ pet_sample_task(task_t task, uint32_t idle_rate)
 
 	BUF_VERB(PERF_PET_SAMPLE_TASK | DBG_FUNC_START);
 
-	kern_return_t kr = pet_threads_prepare(task);
-	if (kr != KERN_SUCCESS) {
-		BUF_INFO(PERF_PET_ERROR, ERR_THREAD, kr);
-		BUF_VERB(PERF_PET_SAMPLE_TASK | DBG_FUNC_END, 1);
+	int pid = task_pid(task);
+	if (kperf_action_has_task(pet_action_id)) {
+		struct kperf_context ctx = {
+			.cur_task = task,
+			.cur_pid = pid,
+		};
+
+		kperf_sample(pet_sample, &ctx, pet_action_id, SAMPLE_FLAG_TASK_ONLY);
+	}
+
+	if (!kperf_action_has_thread(pet_action_id)) {
+		BUF_VERB(PERF_PET_SAMPLE_TASK | DBG_FUNC_END);
 		return;
 	}
 
-	int pid = task_pid(task);
+	kern_return_t kr = KERN_SUCCESS;
+
+	/*
+	 * Suspend the task to see an atomic snapshot of all its threads.  This
+	 * is expensive, and disruptive.
+	 */
+	bool needs_suspend = task != kernel_task;
+	if (needs_suspend) {
+		kr = task_suspend_internal(task);
+		if (kr != KERN_SUCCESS) {
+			BUF_VERB(PERF_PET_SAMPLE_TASK | DBG_FUNC_END, 1);
+			return;
+		}
+		needs_suspend = true;
+	}
+
+	kr = pet_threads_prepare(task);
+	if (kr != KERN_SUCCESS) {
+		BUF_INFO(PERF_PET_ERROR, ERR_THREAD, kr);
+		goto out;
+	}
 
 	for (unsigned int i = 0; i < pet_threads_count; i++) {
 		thread_t thread = pet_threads[i];
-		int cpu;
-		assert(thread);
+		assert(thread != THREAD_NULL);
 
-		/* do not sample the thread if it was on a CPU during the IPI. */
+		/*
+		 * Do not sample the thread if it was on a CPU when the timer fired.
+		 */
+		int cpu = 0;
 		for (cpu = 0; cpu < machine_info.logical_cpu_max; cpu++) {
-			thread_t candidate = kperf_thread_on_cpus[cpu];
-			if (candidate && (thread_tid(candidate) == thread_tid(thread))) {
+			if (kperf_tid_on_cpus[cpu] == thread_tid(thread)) {
 				break;
 			}
 		}
 
 		/* the thread was not on a CPU */
 		if (cpu == machine_info.logical_cpu_max) {
-			pet_sample_thread(pid, thread, idle_rate);
+			pet_sample_thread(pid, task, thread, idle_rate);
 		}
 
 		thread_deallocate(pet_threads[i]);
+	}
+
+out:
+	if (needs_suspend) {
+		task_resume_internal(task);
 	}
 
 	BUF_VERB(PERF_PET_SAMPLE_TASK | DBG_FUNC_END, pet_threads_count);
@@ -544,6 +596,7 @@ static void
 pet_sample_all_tasks(uint32_t idle_rate)
 {
 	lck_mtx_assert(pet_lock, LCK_MTX_ASSERT_OWNED);
+	assert(pet_action_id > 0);
 
 	BUF_INFO(PERF_PET_SAMPLE | DBG_FUNC_START);
 
@@ -557,21 +610,10 @@ pet_sample_all_tasks(uint32_t idle_rate)
 	for (unsigned int i = 0; i < pet_tasks_count; i++) {
 		task_t task = pet_tasks[i];
 
-		if (task != kernel_task) {
-			kr = task_suspend_internal(task);
-			if (kr != KERN_SUCCESS) {
-				continue;
-			}
-		}
-
 		pet_sample_task(task, idle_rate);
-
-		if (task != kernel_task) {
-			task_resume_internal(task);
-		}
 	}
 
-	for(unsigned int i = 0; i < pet_tasks_count; i++) {
+	for (unsigned int i = 0; i < pet_tasks_count; i++) {
 		task_deallocate(pet_tasks[i]);
 	}
 

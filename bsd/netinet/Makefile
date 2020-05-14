@@ -32,13 +32,15 @@ PRIVATE_DATAFILES = \
 	ip_fw2.h \
 	mptcp_var.h \
 	tcp.h \
+	tcp_cc.h \
 	tcp_debug.h \
 	tcp_var.h \
 	tcp_cache.h \
-	udp.h
+	udp.h \
+	in_stat.h
 
 PRIVATE_KERNELFILES = ${KERNELFILES} \
-	ip_ecn.h ip_encap.h
+	ip_ecn.h ip_encap.h tcp_log.h
 
 INSTALL_MI_LIST	= ${DATAFILES}
 

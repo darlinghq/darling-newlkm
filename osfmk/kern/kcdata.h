@@ -305,7 +305,7 @@ kcs_get_elem_size(kcdata_subtype_descriptor_t d)
 {
 	if (d->kcs_flags & KCS_SUBTYPE_FLAGS_ARRAY) {
 		/* size is composed as ((count &0xffff)<<16 | (elem_size & 0xffff)) */
-		return (uint32_t)((d->kcs_elem_size & 0xffff) * ((d->kcs_elem_size & 0xffff0000)>>16));
+		return (uint32_t)((d->kcs_elem_size & 0xffff) * ((d->kcs_elem_size & 0xffff0000) >> 16));
 	}
 	return d->kcs_elem_size;
 }
@@ -313,8 +313,9 @@ kcs_get_elem_size(kcdata_subtype_descriptor_t d)
 static inline uint32_t
 kcs_get_elem_count(kcdata_subtype_descriptor_t d)
 {
-	if (d->kcs_flags & KCS_SUBTYPE_FLAGS_ARRAY)
+	if (d->kcs_flags & KCS_SUBTYPE_FLAGS_ARRAY) {
 		return (d->kcs_elem_size >> 16) & 0xffff;
+	}
 	return 1;
 }
 
@@ -323,12 +324,11 @@ kcs_set_elem_size(kcdata_subtype_descriptor_t d, uint32_t size, uint32_t count)
 {
 	if (count > 1) {
 		/* means we are setting up an array */
-		if (size > 0xffff || count > 0xffff)
+		if (size > 0xffff || count > 0xffff) {
 			return -1; //invalid argument
+		}
 		d->kcs_elem_size = ((count & 0xffff) << 16 | (size & 0xffff));
-	}
-	else
-	{
+	} else {
 		d->kcs_elem_size = size;
 	}
 	return 0;
@@ -367,9 +367,9 @@ struct kcdata_type_definition {
 #define KCDATA_TYPE_TYPEDEFINTION 0x12u /* Meta type that describes a type on the fly. */
 #define KCDATA_TYPE_CONTAINER_BEGIN                                       \
 	0x13u /* Container type which has corresponding CONTAINER_END header. \
-	      * KCDATA_TYPE_CONTAINER_BEGIN has type in the data segment.     \
-	      * Both headers have (uint64_t) ID for matching up nested data.  \
-	      */
+	       * KCDATA_TYPE_CONTAINER_BEGIN has type in the data segment. \
+	       * Both headers have (uint64_t) ID for matching up nested data. \
+	       */
 #define KCDATA_TYPE_CONTAINER_END 0x14u
 
 #define KCDATA_TYPE_ARRAY_PAD0 0x20u /* Array of data with 0 byte of padding*/
@@ -423,51 +423,63 @@ struct kcdata_type_definition {
 
 /* next type range number available 0x1060 */
 /**************** definitions for XNUPOST *********************/
-#define XNUPOST_KCTYPE_TESTCONFIG		0x1040
+#define XNUPOST_KCTYPE_TESTCONFIG               0x1040
 
 /**************** definitions for stackshot *********************/
 
 /* This value must always match IO_NUM_PRIORITIES defined in thread_info.h */
-#define STACKSHOT_IO_NUM_PRIORITIES 	4
+#define STACKSHOT_IO_NUM_PRIORITIES     4
 /* This value must always match MAXTHREADNAMESIZE used in bsd */
-#define STACKSHOT_MAX_THREAD_NAME_SIZE	64
+#define STACKSHOT_MAX_THREAD_NAME_SIZE  64
 
 /*
  * NOTE: Please update kcdata/libkdd/kcdtypes.c if you make any changes
  * in STACKSHOT_KCTYPE_* types.
  */
-#define STACKSHOT_KCTYPE_IOSTATS 0x901u          /* io_stats_snapshot */
-#define STACKSHOT_KCTYPE_GLOBAL_MEM_STATS 0x902u /* struct mem_and_io_snapshot */
-#define STACKSHOT_KCCONTAINER_TASK 0x903u
-#define STACKSHOT_KCCONTAINER_THREAD 0x904u
-#define STACKSHOT_KCTYPE_TASK_SNAPSHOT 0x905u         /* task_snapshot_v2 */
-#define STACKSHOT_KCTYPE_THREAD_SNAPSHOT 0x906u       /* thread_snapshot_v2, thread_snapshot_v3 */
-#define STACKSHOT_KCTYPE_DONATING_PIDS 0x907u         /* int[] */
-#define STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO 0x908u  /* same as KCDATA_TYPE_LIBRARY_LOADINFO64 */
-#define STACKSHOT_KCTYPE_THREAD_NAME 0x909u           /* char[] */
-#define STACKSHOT_KCTYPE_KERN_STACKFRAME 0x90Au       /* struct stack_snapshot_frame32 */
-#define STACKSHOT_KCTYPE_KERN_STACKFRAME64 0x90Bu     /* struct stack_snapshot_frame64 */
-#define STACKSHOT_KCTYPE_USER_STACKFRAME 0x90Cu       /* struct stack_snapshot_frame32 */
-#define STACKSHOT_KCTYPE_USER_STACKFRAME64 0x90Du     /* struct stack_snapshot_frame64 */
-#define STACKSHOT_KCTYPE_BOOTARGS 0x90Eu              /* boot args string */
-#define STACKSHOT_KCTYPE_OSVERSION 0x90Fu             /* os version string */
-#define STACKSHOT_KCTYPE_KERN_PAGE_SIZE 0x910u        /* kernel page size in uint32_t */
-#define STACKSHOT_KCTYPE_JETSAM_LEVEL 0x911u          /* jetsam level in uint32_t */
-#define STACKSHOT_KCTYPE_DELTA_SINCE_TIMESTAMP 0x912u /* timestamp used for the delta stackshot */
+#define STACKSHOT_KCTYPE_IOSTATS                     0x901u /* io_stats_snapshot */
+#define STACKSHOT_KCTYPE_GLOBAL_MEM_STATS            0x902u /* struct mem_and_io_snapshot */
+#define STACKSHOT_KCCONTAINER_TASK                   0x903u
+#define STACKSHOT_KCCONTAINER_THREAD                 0x904u
+#define STACKSHOT_KCTYPE_TASK_SNAPSHOT               0x905u /* task_snapshot_v2 */
+#define STACKSHOT_KCTYPE_THREAD_SNAPSHOT             0x906u /* thread_snapshot_v2, thread_snapshot_v3 */
+#define STACKSHOT_KCTYPE_DONATING_PIDS               0x907u /* int[] */
+#define STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO        0x908u /* same as KCDATA_TYPE_LIBRARY_LOADINFO64 */
+#define STACKSHOT_KCTYPE_THREAD_NAME                 0x909u /* char[] */
+#define STACKSHOT_KCTYPE_KERN_STACKFRAME             0x90Au /* struct stack_snapshot_frame32 */
+#define STACKSHOT_KCTYPE_KERN_STACKFRAME64           0x90Bu /* struct stack_snapshot_frame64 */
+#define STACKSHOT_KCTYPE_USER_STACKFRAME             0x90Cu /* struct stack_snapshot_frame32 */
+#define STACKSHOT_KCTYPE_USER_STACKFRAME64           0x90Du /* struct stack_snapshot_frame64 */
+#define STACKSHOT_KCTYPE_BOOTARGS                    0x90Eu /* boot args string */
+#define STACKSHOT_KCTYPE_OSVERSION                   0x90Fu /* os version string */
+#define STACKSHOT_KCTYPE_KERN_PAGE_SIZE              0x910u /* kernel page size in uint32_t */
+#define STACKSHOT_KCTYPE_JETSAM_LEVEL                0x911u /* jetsam level in uint32_t */
+#define STACKSHOT_KCTYPE_DELTA_SINCE_TIMESTAMP       0x912u /* timestamp used for the delta stackshot */
+#define STACKSHOT_KCTYPE_KERN_STACKLR                0x913u /* uint32_t */
+#define STACKSHOT_KCTYPE_KERN_STACKLR64              0x914u /* uint64_t */
+#define STACKSHOT_KCTYPE_USER_STACKLR                0x915u /* uint32_t */
+#define STACKSHOT_KCTYPE_USER_STACKLR64              0x916u /* uint64_t */
+#define STACKSHOT_KCTYPE_NONRUNNABLE_TIDS            0x917u /* uint64_t */
+#define STACKSHOT_KCTYPE_NONRUNNABLE_TASKS           0x918u /* uint64_t */
+#define STACKSHOT_KCTYPE_CPU_TIMES                   0x919u /* struct stackshot_cpu_times or stackshot_cpu_times_v2 */
+#define STACKSHOT_KCTYPE_STACKSHOT_DURATION          0x91au /* struct stackshot_duration */
+#define STACKSHOT_KCTYPE_STACKSHOT_FAULT_STATS       0x91bu /* struct stackshot_fault_stats */
+#define STACKSHOT_KCTYPE_KERNELCACHE_LOADINFO        0x91cu /* kernelcache UUID -- same as KCDATA_TYPE_LIBRARY_LOADINFO64 */
+#define STACKSHOT_KCTYPE_THREAD_WAITINFO             0x91du /* struct stackshot_thread_waitinfo */
+#define STACKSHOT_KCTYPE_THREAD_GROUP_SNAPSHOT       0x91eu /* struct thread_group_snapshot or thread_group_snapshot_v2 */
+#define STACKSHOT_KCTYPE_THREAD_GROUP                0x91fu /* uint64_t */
+#define STACKSHOT_KCTYPE_JETSAM_COALITION_SNAPSHOT   0x920u /* struct jetsam_coalition_snapshot */
+#define STACKSHOT_KCTYPE_JETSAM_COALITION            0x921u /* uint64_t */
+#define STACKSHOT_KCTYPE_THREAD_POLICY_VERSION       0x922u /* THREAD_POLICY_INTERNAL_STRUCT_VERSION in uint32 */
+#define STACKSHOT_KCTYPE_INSTRS_CYCLES               0x923u /* struct instrs_cycles_snapshot */
+#define STACKSHOT_KCTYPE_USER_STACKTOP               0x924u /* struct stack_snapshot_stacktop */
+#define STACKSHOT_KCTYPE_ASID                        0x925u /* uint32_t */
+#define STACKSHOT_KCTYPE_PAGE_TABLES                 0x926u /* uint64_t */
+#define STACKSHOT_KCTYPE_SYS_SHAREDCACHE_LAYOUT      0x927u /* same as KCDATA_TYPE_LIBRARY_LOADINFO64 */
+#define STACKSHOT_KCTYPE_THREAD_DISPATCH_QUEUE_LABEL 0x928u /* dispatch queue label */
+#define STACKSHOT_KCTYPE_THREAD_TURNSTILEINFO        0x929u /* struct stackshot_thread_turnstileinfo */
 
 #define STACKSHOT_KCTYPE_TASK_DELTA_SNAPSHOT 0x940u   /* task_delta_snapshot_v2 */
-#define STACKSHOT_KCTYPE_THREAD_DELTA_SNAPSHOT 0x941u /* thread_delta_snapshot_v2 */
-
-#define STACKSHOT_KCTYPE_KERN_STACKLR 0x913u          /* uint32_t */
-#define STACKSHOT_KCTYPE_KERN_STACKLR64 0x914u        /* uint64_t */
-#define STACKSHOT_KCTYPE_USER_STACKLR 0x915u          /* uint32_t */
-#define STACKSHOT_KCTYPE_USER_STACKLR64 0x916u        /* uint64_t */
-#define STACKSHOT_KCTYPE_NONRUNNABLE_TIDS 0x917u      /* uint64_t */
-#define STACKSHOT_KCTYPE_NONRUNNABLE_TASKS 0x918u     /* uint64_t */
-#define STACKSHOT_KCTYPE_CPU_TIMES 0x919u             /* struct stackshot_cpu_times */
-#define STACKSHOT_KCTYPE_STACKSHOT_DURATION 0x91au    /* struct stackshot_duration */
-#define STACKSHOT_KCTYPE_STACKSHOT_FAULT_STATS 0x91bu /* struct stackshot_fault_stats */
-#define STACKSHOT_KCTYPE_KERNELCACHE_LOADINFO  0x91cu /* kernelcache UUID -- same as KCDATA_TYPE_LIBRARY_LOADINFO64 */
+#define STACKSHOT_KCTYPE_THREAD_DELTA_SNAPSHOT 0x941u /* thread_delta_snapshot_v* */
 
 struct stack_snapshot_frame32 {
 	uint32_t lr;
@@ -475,38 +487,39 @@ struct stack_snapshot_frame32 {
 };
 
 struct stack_snapshot_frame64 {
-    uint64_t lr;
-    uint64_t sp;
+	uint64_t lr;
+	uint64_t sp;
 };
 
 struct dyld_uuid_info_32 {
-    uint32_t imageLoadAddress; /* base address image is mapped at */
-    uuid_t   imageUUID;
+	uint32_t imageLoadAddress; /* base address image is mapped at */
+	uuid_t   imageUUID;
 };
 
 struct dyld_uuid_info_64 {
-    uint64_t imageLoadAddress; /* XXX image slide */
-    uuid_t   imageUUID;
+	uint64_t imageLoadAddress; /* XXX image slide */
+	uuid_t   imageUUID;
 };
 
 struct dyld_uuid_info_64_v2 {
-    uint64_t imageLoadAddress; /* XXX image slide */
-    uuid_t   imageUUID;
-    /* end of version 1 of dyld_uuid_info_64. sizeof v1 was 24 */
-    uint64_t imageSlidBaseAddress; /* slid base address of image */
+	uint64_t imageLoadAddress; /* XXX image slide */
+	uuid_t   imageUUID;
+	/* end of version 1 of dyld_uuid_info_64. sizeof v1 was 24 */
+	uint64_t imageSlidBaseAddress; /* slid base address of image */
 };
 
 struct user32_dyld_uuid_info {
-	uint32_t	imageLoadAddress;	/* base address image is mapped into */
-	uuid_t			imageUUID;			/* UUID of image */
+	uint32_t        imageLoadAddress;       /* base address image is mapped into */
+	uuid_t                  imageUUID;                      /* UUID of image */
 };
 
 struct user64_dyld_uuid_info {
-	uint64_t	imageLoadAddress;	/* base address image is mapped into */
-	uuid_t			imageUUID;			/* UUID of image */
+	uint64_t        imageLoadAddress;       /* base address image is mapped into */
+	uuid_t                  imageUUID;                      /* UUID of image */
 };
 
 enum task_snapshot_flags {
+	/* k{User,Kernel}64_p (values 0x1 and 0x2) are defined in generic_snapshot_flags */
 	kTaskRsrcFlagged                      = 0x4, // In the EXC_RESOURCE danger zone?
 	kTerminatedSnapshot                   = 0x8,
 	kPidSuspended                         = 0x10, // true for suspended task
@@ -529,9 +542,14 @@ enum task_snapshot_flags {
 	kTaskUUIDInfoMissing                  = 0x200000, /* some UUID info was paged out */
 	kTaskUUIDInfoTriedFault               = 0x400000, /* tried to fault in UUID info */
 	kTaskSharedRegionInfoUnavailable      = 0x800000,  /* shared region info unavailable */
+	kTaskTALEngaged                       = 0x1000000,
+	/* 0x2000000 unused */
+	kTaskIsDirtyTracked                   = 0x4000000,
+	kTaskAllowIdleExit                    = 0x8000000,
 };
 
 enum thread_snapshot_flags {
+	/* k{User,Kernel}64_p (values 0x1 and 0x2) are defined in generic_snapshot_flags */
 	kHasDispatchSerial    = 0x4,
 	kStacksPCOnly         = 0x8,    /* Stack traces have no frame pointers. */
 	kThreadDarwinBG       = 0x10,   /* Thread is darwinbg */
@@ -543,25 +561,26 @@ enum thread_snapshot_flags {
 	kThreadTriedFaultBT   = 0x400,  /* We tried to fault in thread stack pages as part of BT */
 	kThreadOnCore         = 0x800,  /* Thread was on-core when we entered debugger context */
 	kThreadIdleWorker     = 0x1000, /* Thread is an idle libpthread worker thread */
+	kThreadMain           = 0x2000, /* Thread is the main thread */
 };
 
 struct mem_and_io_snapshot {
-	uint32_t	snapshot_magic;
-	uint32_t	free_pages;
-	uint32_t	active_pages;
-	uint32_t	inactive_pages;
-	uint32_t	purgeable_pages;
-	uint32_t	wired_pages;
-	uint32_t	speculative_pages;
-	uint32_t	throttled_pages;
-	uint32_t	filebacked_pages;
-	uint32_t 	compressions;
-	uint32_t	decompressions;
-	uint32_t	compressor_size;
-	int32_t 	busy_buffer_count;
-	uint32_t	pages_wanted;
-	uint32_t	pages_reclaimed;
-	uint8_t		pages_wanted_reclaimed_valid; // did mach_vm_pressure_monitor succeed?
+	uint32_t        snapshot_magic;
+	uint32_t        free_pages;
+	uint32_t        active_pages;
+	uint32_t        inactive_pages;
+	uint32_t        purgeable_pages;
+	uint32_t        wired_pages;
+	uint32_t        speculative_pages;
+	uint32_t        throttled_pages;
+	uint32_t        filebacked_pages;
+	uint32_t        compressions;
+	uint32_t        decompressions;
+	uint32_t        compressor_size;
+	int32_t         busy_buffer_count;
+	uint32_t        pages_wanted;
+	uint32_t        pages_reclaimed;
+	uint8_t         pages_wanted_reclaimed_valid; // did mach_vm_pressure_monitor succeed?
 } __attribute__((packed));
 
 /* SS_TH_* macros are for ths_state */
@@ -618,6 +637,68 @@ struct thread_snapshot_v3 {
 	uint64_t ths_thread_t;
 } __attribute__((packed));
 
+
+struct thread_snapshot_v4 {
+	uint64_t ths_thread_id;
+	uint64_t ths_wait_event;
+	uint64_t ths_continuation;
+	uint64_t ths_total_syscalls;
+	uint64_t ths_voucher_identifier;
+	uint64_t ths_dqserialnum;
+	uint64_t ths_user_time;
+	uint64_t ths_sys_time;
+	uint64_t ths_ss_flags;
+	uint64_t ths_last_run_time;
+	uint64_t ths_last_made_runnable_time;
+	uint32_t ths_state;
+	uint32_t ths_sched_flags;
+	int16_t ths_base_priority;
+	int16_t ths_sched_priority;
+	uint8_t ths_eqos;
+	uint8_t ths_rqos;
+	uint8_t ths_rqos_override;
+	uint8_t ths_io_tier;
+	uint64_t ths_thread_t;
+	uint64_t ths_requested_policy;
+	uint64_t ths_effective_policy;
+} __attribute__((packed));
+
+
+struct thread_group_snapshot {
+	uint64_t tgs_id;
+	char tgs_name[16];
+} __attribute__((packed));
+
+enum thread_group_flags {
+	kThreadGroupEfficient = 0x1,
+	kThreadGroupUIApp = 0x2
+};
+
+struct thread_group_snapshot_v2 {
+	uint64_t tgs_id;
+	char tgs_name[16];
+	uint64_t tgs_flags;
+} __attribute__((packed));
+
+enum coalition_flags {
+	kCoalitionTermRequested = 0x1,
+	kCoalitionTerminated    = 0x2,
+	kCoalitionReaped        = 0x4,
+	kCoalitionPrivileged    = 0x8,
+};
+
+struct jetsam_coalition_snapshot {
+	uint64_t jcs_id;
+	uint64_t jcs_flags;
+	uint64_t jcs_thread_group;
+	uint64_t jcs_leader_task_uniqueid;
+} __attribute__((packed));
+
+struct instrs_cycles_snapshot {
+	uint64_t ics_instructions;
+	uint64_t ics_cycles;
+} __attribute__((packed));
+
 struct thread_delta_snapshot_v2 {
 	uint64_t  tds_thread_id;
 	uint64_t  tds_voucher_identifier;
@@ -633,8 +714,24 @@ struct thread_delta_snapshot_v2 {
 	uint8_t   tds_io_tier;
 } __attribute__ ((packed));
 
-struct io_stats_snapshot
-{
+struct thread_delta_snapshot_v3 {
+	uint64_t  tds_thread_id;
+	uint64_t  tds_voucher_identifier;
+	uint64_t  tds_ss_flags;
+	uint64_t  tds_last_made_runnable_time;
+	uint32_t  tds_state;
+	uint32_t  tds_sched_flags;
+	int16_t   tds_base_priority;
+	int16_t   tds_sched_priority;
+	uint8_t   tds_eqos;
+	uint8_t   tds_rqos;
+	uint8_t   tds_rqos_override;
+	uint8_t   tds_io_tier;
+	uint64_t  tds_requested_policy;
+	uint64_t  tds_effective_policy;
+} __attribute__ ((packed));
+
+struct io_stats_snapshot {
 	/*
 	 * I/O Statistics
 	 * XXX: These fields must be together.
@@ -654,7 +751,6 @@ struct io_stats_snapshot
 	uint64_t         ss_metadata_count;
 	uint64_t         ss_metadata_size;
 	/* XXX: I/O Statistics end */
-
 } __attribute__ ((packed));
 
 struct task_snapshot_v2 {
@@ -697,6 +793,12 @@ struct stackshot_cpu_times {
 	uint64_t system_usec;
 } __attribute__((packed));
 
+struct stackshot_cpu_times_v2 {
+	uint64_t user_usec;
+	uint64_t system_usec;
+	uint64_t runnable_usec;
+} __attribute__((packed));
+
 struct stackshot_duration {
 	uint64_t stackshot_duration;
 	uint64_t stackshot_duration_outer;
@@ -709,6 +811,40 @@ struct stackshot_fault_stats {
 	uint8_t  sfs_stopped_faulting;      /* we stopped decompressing because we hit the limit */
 } __attribute__((packed));
 
+typedef struct stackshot_thread_waitinfo {
+	uint64_t owner;         /* The thread that owns the object */
+	uint64_t waiter;        /* The thread that's waiting on the object */
+	uint64_t context;       /* A context uniquely identifying the object */
+	uint8_t wait_type;      /* The type of object that the thread is waiting on */
+} __attribute__((packed)) thread_waitinfo_t;
+
+typedef struct stackshot_thread_turnstileinfo {
+	uint64_t waiter;        /* The thread that's waiting on the object */
+	uint64_t turnstile_context; /* Associated data (either thread id, or workq addr) */
+	uint8_t turnstile_priority;
+	uint8_t number_of_hops;
+#define STACKSHOT_TURNSTILE_STATUS_UNKNOWN      (1 << 0) /* The final inheritor is unknown (bug?) */
+#define STACKSHOT_TURNSTILE_STATUS_LOCKED_WAITQ (1 << 1) /* A waitq was found to be locked */
+#define STACKSHOT_TURNSTILE_STATUS_WORKQUEUE    (1 << 2) /* The final inheritor is a workqueue */
+#define STACKSHOT_TURNSTILE_STATUS_THREAD       (1 << 3) /* The final inheritor is a thread */
+	uint64_t turnstile_flags;
+} __attribute__((packed)) thread_turnstileinfo_t;
+
+#define STACKSHOT_WAITOWNER_KERNEL         (UINT64_MAX - 1)
+#define STACKSHOT_WAITOWNER_PORT_LOCKED    (UINT64_MAX - 2)
+#define STACKSHOT_WAITOWNER_PSET_LOCKED    (UINT64_MAX - 3)
+#define STACKSHOT_WAITOWNER_INTRANSIT      (UINT64_MAX - 4)
+#define STACKSHOT_WAITOWNER_MTXSPIN        (UINT64_MAX - 5)
+#define STACKSHOT_WAITOWNER_THREQUESTED    (UINT64_MAX - 6) /* workloop waiting for a new worker thread */
+#define STACKSHOT_WAITOWNER_SUSPENDED      (UINT64_MAX - 7) /* workloop is suspended */
+
+
+struct stack_snapshot_stacktop {
+	uint64_t sp;
+	uint8_t stack_contents[8];
+};
+
+
 /**************** definitions for crashinfo *********************/
 
 /*
@@ -718,19 +854,28 @@ struct stackshot_fault_stats {
 
 /* FIXME some of these types aren't clean (fixed width,  packed, and defined *here*) */
 
+struct crashinfo_proc_uniqidentifierinfo {
+	uint8_t                 p_uuid[16];             /* UUID of the main executable */
+	uint64_t                p_uniqueid;             /* 64 bit unique identifier for process */
+	uint64_t                p_puniqueid;            /* unique identifier for process's parent */
+	uint64_t                p_reserve2;             /* reserved for future use */
+	uint64_t                p_reserve3;             /* reserved for future use */
+	uint64_t                p_reserve4;             /* reserved for future use */
+} __attribute__((packed));
+
 #define TASK_CRASHINFO_BEGIN                KCDATA_BUFFER_BEGIN_CRASHINFO
 #define TASK_CRASHINFO_STRING_DESC          KCDATA_TYPE_STRING_DESC
 #define TASK_CRASHINFO_UINT32_DESC          KCDATA_TYPE_UINT32_DESC
 #define TASK_CRASHINFO_UINT64_DESC          KCDATA_TYPE_UINT64_DESC
 
 #define TASK_CRASHINFO_EXTMODINFO           0x801
-#define TASK_CRASHINFO_BSDINFOWITHUNIQID    0x802 /* struct proc_uniqidentifierinfo */
+#define TASK_CRASHINFO_BSDINFOWITHUNIQID    0x802 /* struct crashinfo_proc_uniqidentifierinfo */
 #define TASK_CRASHINFO_TASKDYLD_INFO        0x803
 #define TASK_CRASHINFO_UUID                 0x804
 #define TASK_CRASHINFO_PID                  0x805
 #define TASK_CRASHINFO_PPID                 0x806
 #define TASK_CRASHINFO_RUSAGE               0x807  /* struct rusage DEPRECATED do not use.
-													  This struct has longs in it */
+	                                            *                                                      This struct has longs in it */
 #define TASK_CRASHINFO_RUSAGE_INFO          0x808  /* struct rusage_info_v3 from resource.h */
 #define TASK_CRASHINFO_PROC_NAME            0x809  /* char * */
 #define TASK_CRASHINFO_PROC_STARTTIME       0x80B  /* struct timeval64 */
@@ -753,6 +898,24 @@ struct stackshot_fault_stats {
 #define TASK_CRASHINFO_UDATA_PTRS           0x81C  /* uint64_t */
 #define TASK_CRASHINFO_MEMORY_LIMIT         0x81D  /* uint64_t */
 
+#define TASK_CRASHINFO_LEDGER_INTERNAL                          0x81E /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_INTERNAL_COMPRESSED               0x81F /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_IOKIT_MAPPED                      0x820 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_ALTERNATE_ACCOUNTING              0x821 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_ALTERNATE_ACCOUNTING_COMPRESSED   0x822 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_PURGEABLE_NONVOLATILE             0x823 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_PURGEABLE_NONVOLATILE_COMPRESSED  0x824 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_PAGE_TABLE                        0x825 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_PHYS_FOOTPRINT                    0x826 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_PHYS_FOOTPRINT_LIFETIME_MAX       0x827 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_NETWORK_NONVOLATILE               0x828 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_NETWORK_NONVOLATILE_COMPRESSED    0x829 /* uint64_t */
+#define TASK_CRASHINFO_LEDGER_WIRED_MEM                         0x82A /* uint64_t */
+#define TASK_CRASHINFO_PROC_PERSONA_ID                          0x82B /* uid_t */
+#define TASK_CRASHINFO_MEMORY_LIMIT_INCREASE                    0x82C /* uint32_t */
+
+
+
 #define TASK_CRASHINFO_END                  KCDATA_TYPE_BUFFER_END
 
 /**************** definitions for os reasons *********************/
@@ -761,12 +924,14 @@ struct stackshot_fault_stats {
 #define EXIT_REASON_USER_DESC           0x1002 /* string description of reason */
 #define EXIT_REASON_USER_PAYLOAD        0x1003 /* user payload data */
 #define EXIT_REASON_CODESIGNING_INFO    0x1004
+#define EXIT_REASON_WORKLOOP_ID         0x1005
+#define EXIT_REASON_DISPATCH_QUEUE_NO   0x1006
 
 struct exit_reason_snapshot {
-        uint32_t ers_namespace;
-        uint64_t ers_code;
-        /* end of version 1 of exit_reason_snapshot. sizeof v1 was 12 */
-        uint64_t ers_flags;
+	uint32_t ers_namespace;
+	uint64_t ers_code;
+	/* end of version 1 of exit_reason_snapshot. sizeof v1 was 12 */
+	uint64_t ers_flags;
 } __attribute__((packed));
 
 #define EXIT_REASON_CODESIG_PATH_MAX    1024
@@ -802,7 +967,9 @@ typedef struct kcdata_iter {
 
 
 static inline
-kcdata_iter_t kcdata_iter(void *buffer, unsigned long size) {
+kcdata_iter_t
+kcdata_iter(void *buffer, unsigned long size)
+{
 	kcdata_iter_t iter;
 	iter.item = (kcdata_item_t) buffer;
 	iter.end = (void*) (((uintptr_t)buffer) + size);
@@ -813,25 +980,31 @@ static inline
 kcdata_iter_t kcdata_iter_unsafe(void *buffer) __attribute__((deprecated));
 
 static inline
-kcdata_iter_t kcdata_iter_unsafe(void *buffer) {
+kcdata_iter_t
+kcdata_iter_unsafe(void *buffer)
+{
 	kcdata_iter_t iter;
 	iter.item = (kcdata_item_t) buffer;
 	iter.end = (void*) (uintptr_t) ~0;
 	return iter;
 }
 
-static const kcdata_iter_t kcdata_invalid_iter = { .item = 0, .end = 0 };
+static const kcdata_iter_t kcdata_invalid_iter = { .item = NULL, .end = NULL };
 
 static inline
-int kcdata_iter_valid(kcdata_iter_t iter) {
+int
+kcdata_iter_valid(kcdata_iter_t iter)
+{
 	return
-		( (uintptr_t)iter.item + sizeof(struct kcdata_item) <= (uintptr_t)iter.end ) &&
-		( (uintptr_t)iter.item + sizeof(struct kcdata_item) + iter.item->size  <= (uintptr_t)iter.end);
+	        ((uintptr_t)iter.item + sizeof(struct kcdata_item) <= (uintptr_t)iter.end) &&
+	        ((uintptr_t)iter.item + sizeof(struct kcdata_item) + iter.item->size <= (uintptr_t)iter.end);
 }
 
 
 static inline
-kcdata_iter_t kcdata_iter_next(kcdata_iter_t iter) {
+kcdata_iter_t
+kcdata_iter_next(kcdata_iter_t iter)
+{
 	iter.item = (kcdata_item_t) (((uintptr_t)iter.item) + sizeof(struct kcdata_item) + (iter.item->size));
 	return iter;
 }
@@ -839,16 +1012,17 @@ kcdata_iter_t kcdata_iter_next(kcdata_iter_t iter) {
 static inline uint32_t
 kcdata_iter_type(kcdata_iter_t iter)
 {
-	if ((iter.item->type & ~0xfu) == KCDATA_TYPE_ARRAY_PAD0)
+	if ((iter.item->type & ~0xfu) == KCDATA_TYPE_ARRAY_PAD0) {
 		return KCDATA_TYPE_ARRAY;
-	else
+	} else {
 		return iter.item->type;
+	}
 }
 
 static inline uint32_t
 kcdata_calc_padding(uint32_t size)
 {
-	/* calculate number of bits to add to size to get something divisible by 16 */
+	/* calculate number of bytes to add to size to get something divisible by 16 */
 	return (-size) & 0xf;
 }
 
@@ -863,9 +1037,8 @@ static inline int
 kcdata_iter_is_legacy_item(kcdata_iter_t iter, uint32_t legacy_size)
 {
 	uint32_t legacy_size_padded = legacy_size + kcdata_calc_padding(legacy_size);
-	return (iter.item->size == legacy_size_padded &&
-		(iter.item->flags & (KCDATA_FLAGS_STRUCT_PADDING_MASK | KCDATA_FLAGS_STRUCT_HAS_PADDING)) == 0);
-
+	return iter.item->size == legacy_size_padded &&
+	       (iter.item->flags & (KCDATA_FLAGS_STRUCT_PADDING_MASK | KCDATA_FLAGS_STRUCT_HAS_PADDING)) == 0;
 }
 
 static inline uint32_t
@@ -895,10 +1068,11 @@ kcdata_iter_size(kcdata_iter_t iter)
 	}
 not_legacy:
 	default:
-		if (iter.item->size < kcdata_flags_get_padding(iter.item->flags))
+		if (iter.item->size < kcdata_flags_get_padding(iter.item->flags)) {
 			return 0;
-		else
+		} else {
 			return iter.item->size - kcdata_flags_get_padding(iter.item->flags);
+		}
 	}
 }
 
@@ -909,18 +1083,24 @@ kcdata_iter_flags(kcdata_iter_t iter)
 }
 
 static inline
-void * kcdata_iter_payload(kcdata_iter_t iter) {
+void *
+kcdata_iter_payload(kcdata_iter_t iter)
+{
 	return &iter.item->data;
 }
 
 
 static inline
-uint32_t kcdata_iter_array_elem_type(kcdata_iter_t iter) {
+uint32_t
+kcdata_iter_array_elem_type(kcdata_iter_t iter)
+{
 	return (iter.item->flags >> 32) & UINT32_MAX;
 }
 
 static inline
-uint32_t kcdata_iter_array_elem_count(kcdata_iter_t iter) {
+uint32_t
+kcdata_iter_array_elem_count(kcdata_iter_t iter)
+{
 	return (iter.item->flags) & UINT32_MAX;
 }
 
@@ -934,8 +1114,9 @@ uint32_t kcdata_iter_array_elem_count(kcdata_iter_t iter) {
 
 static inline
 uint32_t
-kcdata_iter_array_size_switch(kcdata_iter_t iter) {
-	switch(kcdata_iter_array_elem_type(iter)) {
+kcdata_iter_array_size_switch(kcdata_iter_t iter)
+{
+	switch (kcdata_iter_array_elem_type(iter)) {
 	case KCDATA_TYPE_LIBRARY_LOADINFO:
 		return sizeof(struct dyld_uuid_info_32);
 	case KCDATA_TYPE_LIBRARY_LOADINFO64:
@@ -950,8 +1131,8 @@ kcdata_iter_array_size_switch(kcdata_iter_t iter) {
 		return sizeof(int32_t);
 	case STACKSHOT_KCTYPE_THREAD_DELTA_SNAPSHOT:
 		return sizeof(struct thread_delta_snapshot_v2);
-    // This one is only here to make some unit tests work. It should be OK to
-    // remove.
+	// This one is only here to make some unit tests work. It should be OK to
+	// remove.
 	case TASK_CRASHINFO_CRASHED_THREADID:
 		return sizeof(uint64_t);
 	default:
@@ -960,54 +1141,70 @@ kcdata_iter_array_size_switch(kcdata_iter_t iter) {
 }
 
 static inline
-int kcdata_iter_array_valid(kcdata_iter_t iter) {
-	if (!kcdata_iter_valid(iter))
+int
+kcdata_iter_array_valid(kcdata_iter_t iter)
+{
+	if (!kcdata_iter_valid(iter)) {
 		return 0;
-	if (kcdata_iter_type(iter) != KCDATA_TYPE_ARRAY)
+	}
+	if (kcdata_iter_type(iter) != KCDATA_TYPE_ARRAY) {
 		return 0;
-    if (kcdata_iter_array_elem_count(iter) == 0)
+	}
+	if (kcdata_iter_array_elem_count(iter) == 0) {
 		return iter.item->size == 0;
+	}
 	if (iter.item->type == KCDATA_TYPE_ARRAY) {
 		uint32_t elem_size = kcdata_iter_array_size_switch(iter);
-		if (elem_size == 0)
+		if (elem_size == 0) {
 			return 0;
+		}
 		/* sizes get aligned to the nearest 16. */
 		return
-			kcdata_iter_array_elem_count(iter) <= iter.item->size / elem_size &&
-			iter.item->size % kcdata_iter_array_elem_count(iter) < 16;
+		        kcdata_iter_array_elem_count(iter) <= iter.item->size / elem_size &&
+		        iter.item->size % kcdata_iter_array_elem_count(iter) < 16;
 	} else {
 		return
-			(iter.item->type & 0xf) <= iter.item->size &&
-			kcdata_iter_array_elem_count(iter) <= iter.item->size - (iter.item->type & 0xf) &&
-			(iter.item->size - (iter.item->type & 0xf)) % kcdata_iter_array_elem_count(iter) == 0;
+		        (iter.item->type & 0xf) <= iter.item->size &&
+		        kcdata_iter_array_elem_count(iter) <= iter.item->size - (iter.item->type & 0xf) &&
+		        (iter.item->size - (iter.item->type & 0xf)) % kcdata_iter_array_elem_count(iter) == 0;
 	}
 }
 
 
 static inline
-uint32_t kcdata_iter_array_elem_size(kcdata_iter_t iter) {
-	if (iter.item->type == KCDATA_TYPE_ARRAY)
+uint32_t
+kcdata_iter_array_elem_size(kcdata_iter_t iter)
+{
+	if (iter.item->type == KCDATA_TYPE_ARRAY) {
 		return kcdata_iter_array_size_switch(iter);
-	if (kcdata_iter_array_elem_count(iter) == 0)
+	}
+	if (kcdata_iter_array_elem_count(iter) == 0) {
 		return 0;
+	}
 	return (iter.item->size - (iter.item->type & 0xf)) / kcdata_iter_array_elem_count(iter);
 }
 
 static inline
-int kcdata_iter_container_valid(kcdata_iter_t iter) {
+int
+kcdata_iter_container_valid(kcdata_iter_t iter)
+{
 	return
-		kcdata_iter_valid(iter) &&
-		kcdata_iter_type(iter) == KCDATA_TYPE_CONTAINER_BEGIN &&
-		iter.item->size >= sizeof(uint32_t);
+	        kcdata_iter_valid(iter) &&
+	        kcdata_iter_type(iter) == KCDATA_TYPE_CONTAINER_BEGIN &&
+	        iter.item->size >= sizeof(uint32_t);
 }
 
 static inline
-uint32_t kcdata_iter_container_type(kcdata_iter_t iter) {
-	return * (uint32_t *) kcdata_iter_payload(iter);
+uint32_t
+kcdata_iter_container_type(kcdata_iter_t iter)
+{
+	return *(uint32_t *) kcdata_iter_payload(iter);
 }
 
 static inline
-uint64_t kcdata_iter_container_id(kcdata_iter_t iter) {
+uint64_t
+kcdata_iter_container_id(kcdata_iter_t iter)
+{
 	return iter.item->flags;
 }
 
@@ -1021,22 +1218,27 @@ kcdata_iter_find_type(kcdata_iter_t iter, uint32_t type)
 {
 	KCDATA_ITER_FOREACH(iter)
 	{
-		if (kcdata_iter_type(iter) == type)
+		if (kcdata_iter_type(iter) == type) {
 			return iter;
+		}
 	}
 	return kcdata_invalid_iter;
 }
 
 static inline
-int kcdata_iter_data_with_desc_valid(kcdata_iter_t iter, uint32_t minsize) {
+int
+kcdata_iter_data_with_desc_valid(kcdata_iter_t iter, uint32_t minsize)
+{
 	return
-		kcdata_iter_valid(iter) &&
-		kcdata_iter_size(iter) >= KCDATA_DESC_MAXLEN + minsize &&
-		((char*)kcdata_iter_payload(iter))[KCDATA_DESC_MAXLEN-1] == 0;
+	        kcdata_iter_valid(iter) &&
+	        kcdata_iter_size(iter) >= KCDATA_DESC_MAXLEN + minsize &&
+	        ((char*)kcdata_iter_payload(iter))[KCDATA_DESC_MAXLEN - 1] == 0;
 }
 
 static inline
-char *kcdata_iter_string(kcdata_iter_t iter, uint32_t offset) {
+char *
+kcdata_iter_string(kcdata_iter_t iter, uint32_t offset)
+{
 	if (offset > kcdata_iter_size(iter)) {
 		return NULL;
 	}
@@ -1049,13 +1251,18 @@ char *kcdata_iter_string(kcdata_iter_t iter, uint32_t offset) {
 	}
 }
 
-static inline void kcdata_iter_get_data_with_desc(kcdata_iter_t iter, char **desc_ptr, void **data_ptr, uint32_t *size_ptr) {
-	if (desc_ptr)
+static inline void
+kcdata_iter_get_data_with_desc(kcdata_iter_t iter, char **desc_ptr, void **data_ptr, uint32_t *size_ptr)
+{
+	if (desc_ptr) {
 		*desc_ptr = (char *)kcdata_iter_payload(iter);
-	if (data_ptr)
+	}
+	if (data_ptr) {
 		*data_ptr = (void *)((uintptr_t)kcdata_iter_payload(iter) + KCDATA_DESC_MAXLEN);
-	if (size_ptr)
+	}
+	if (size_ptr) {
 		*size_ptr = kcdata_iter_size(iter) - KCDATA_DESC_MAXLEN;
+	}
 }
 
 #endif

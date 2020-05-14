@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2018 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,34 +22,34 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
  * @OSF_COPYRIGHT@
  */
-/* 
+/*
  * Mach Operating System
  * Copyright (c) 1991,1990,1989,1988 Carnegie Mellon University
  * All Rights Reserved.
- * 
+ *
  * Permission to use, copy, modify and distribute this software and its
  * documentation is hereby granted, provided that both the copyright
  * notice and this permission notice appear in all copies of the
  * software, derivative works or modified versions, and any portions
  * thereof, and that both notices appear in supporting documentation.
- * 
+ *
  * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
  * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
  * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
- * 
+ *
  * Carnegie Mellon requests users of this software to return to
- * 
+ *
  *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
  *  School of Computer Science
  *  Carnegie Mellon University
  *  Pittsburgh PA 15213-3890
- * 
+ *
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
@@ -67,7 +67,6 @@
  */
 
 #include <debug.h>
-#include <xpr_debug.h>
 #include <mach_kdp.h>
 
 #include <mach/boolean.h>
@@ -82,10 +81,13 @@
 #include <kern/clock.h>
 #include <kern/coalition.h>
 #include <kern/cpu_number.h>
+#include <kern/cpu_quiesce.h>
 #include <kern/ledger.h>
 #include <kern/machine.h>
 #include <kern/processor.h>
+#include <kern/restartable.h>
 #include <kern/sched_prim.h>
+#include <kern/turnstile.h>
 #if CONFIG_SCHED_SFI
 #include <kern/sfi.h>
 #endif
@@ -96,7 +98,6 @@
 #if CONFIG_TELEMETRY
 #include <kern/telemetry.h>
 #endif
-#include <kern/xpr.h>
 #include <kern/zalloc.h>
 #include <kern/locks.h>
 #include <kern/debug.h>
@@ -117,12 +118,19 @@
 #include <sys/kdebug.h>
 #include <sys/random.h>
 #include <sys/ktrace.h>
+#include <libkern/section_keywords.h>
 
 #include <kern/ltable.h>
 #include <kern/waitq.h>
 #include <ipc/ipc_voucher.h>
 #include <voucher/ipc_pthread_priority_internal.h>
+#include <mach/host_info.h>
+#include <pthread/workqueue_internal.h>
 
+#if CONFIG_XNUPOST
+#include <tests/ktest.h>
+#include <tests/xnupost.h>
+#endif
 
 #if CONFIG_ATM
 #include <atm/atm_internal.h>
@@ -132,9 +140,7 @@
 #include <sys/csr.h>
 #endif
 
-#if CONFIG_BANK
 #include <bank/bank_internal.h>
-#endif
 
 #if ALTERNATE_DEBUGGER
 #include <arm64/alternate_debugger.h>
@@ -146,6 +152,9 @@
 
 #if CONFIG_MACF
 #include <security/mac_mach_internal.h>
+#if CONFIG_VNGUARD
+extern void vnguard_policy_init(void);
+#endif
 #endif
 
 #if KPC
@@ -156,12 +165,17 @@
 #include <kern/hv_support.h>
 #endif
 
+#include <san/kasan.h>
+
+#if defined(__arm__) || defined(__arm64__)
+#include <arm/misc_protos.h> // for arm_vm_prot_finalize
+#endif
 
 #include <i386/pmCPU.h>
-static void		kernel_bootstrap_thread(void);
+static void             kernel_bootstrap_thread(void);
 
-static void		load_context(
-					thread_t	thread);
+static void             load_context(
+	thread_t        thread);
 #if (defined(__i386__) || defined(__x86_64__)) && NCOPY_WINDOWS > 0
 extern void cpu_userwindow_init(int);
 extern void cpu_physwindow_init(int);
@@ -169,14 +183,19 @@ extern void cpu_physwindow_init(int);
 
 #if CONFIG_ECC_LOGGING
 #include <kern/ecc.h>
-#endif 
+#endif
 
 #if (defined(__i386__) || defined(__x86_64__)) && CONFIG_VMX
 #include <i386/vmx/vmx_cpu.h>
 #endif
 
+#if CONFIG_DTRACE
+extern void dtrace_early_init(void);
+extern void sdt_early_init(void);
+#endif
+
 // libkern/OSKextLib.cpp
-extern void	OSKextRemoveKextBootstrap(void);
+extern void OSKextRemoveKextBootstrap(void);
 
 void scale_setup(void);
 extern void bsd_scale_setup(int);
@@ -195,9 +214,9 @@ extern int serverperfmode;
 unsigned int new_nkdbufs = 0;
 unsigned int wake_nkdbufs = 0;
 unsigned int write_trace_on_panic = 0;
-static char trace_typefilter[64] = { 0 };
+unsigned int trace_wrap = 0;
 boolean_t trace_serial = FALSE;
-boolean_t oslog_early_boot_complete = FALSE;
+boolean_t early_boot_complete = FALSE;
 
 /* mach leak logging */
 int log_leaks = 0;
@@ -220,16 +239,9 @@ void
 kernel_early_bootstrap(void)
 {
 	/* serverperfmode is needed by timer setup */
-        if (PE_parse_boot_argn("serverperfmode", &serverperfmode, sizeof (serverperfmode))) {
-                serverperfmode = 1;
-        }
-
-	lck_mod_init();
-
-	/*
-	 * Initialize the timer callout world
-	 */
-	timer_call_init();
+	if (PE_parse_boot_argn("serverperfmode", &serverperfmode, sizeof(serverperfmode))) {
+		serverperfmode = 1;
+	}
 
 #if CONFIG_SCHED_SFI
 	/*
@@ -239,25 +251,24 @@ kernel_early_bootstrap(void)
 #endif
 }
 
-extern boolean_t IORamDiskBSDRoot(void);
-extern kern_return_t cpm_preallocate_early(void);
 
 void
 kernel_bootstrap(void)
 {
-	kern_return_t	result;
-	thread_t	thread;
-	char		namep[16];
+	kern_return_t   result;
+	thread_t        thread;
+	char            namep[16];
 
 	printf("%s\n", version); /* log kernel version */
 
-	if (PE_parse_boot_argn("-l", namep, sizeof (namep))) /* leaks logging */
+	if (PE_parse_boot_argn("-l", namep, sizeof(namep))) { /* leaks logging */
 		log_leaks = 1;
+	}
 
-	PE_parse_boot_argn("trace", &new_nkdbufs, sizeof (new_nkdbufs));
-	PE_parse_boot_argn("trace_wake", &wake_nkdbufs, sizeof (wake_nkdbufs));
+	PE_parse_boot_argn("trace", &new_nkdbufs, sizeof(new_nkdbufs));
+	PE_parse_boot_argn("trace_wake", &wake_nkdbufs, sizeof(wake_nkdbufs));
 	PE_parse_boot_argn("trace_panic", &write_trace_on_panic, sizeof(write_trace_on_panic));
-	PE_parse_boot_arg_str("trace_typefilter", trace_typefilter, sizeof(trace_typefilter));
+	PE_parse_boot_argn("trace_wrap", &trace_wrap, sizeof(trace_wrap));
 
 	scale_setup();
 
@@ -277,6 +288,11 @@ kernel_bootstrap(void)
 
 	oslog_init();
 
+#if KASAN
+	kernel_bootstrap_log("kasan_late_init");
+	kasan_late_init();
+#endif
+
 #if CONFIG_TELEMETRY
 	kernel_bootstrap_log("telemetry_init");
 	telemetry_init();
@@ -287,9 +303,14 @@ kernel_bootstrap(void)
 	csr_init();
 #endif
 
-	if (PE_i_can_has_debugger(NULL) &&
-	    PE_parse_boot_argn("-show_pointers", &namep, sizeof (namep))) {
-		doprnt_hide_pointers = FALSE;
+	if (PE_i_can_has_debugger(NULL)) {
+		if (PE_parse_boot_argn("-show_pointers", &namep, sizeof(namep))) {
+			doprnt_hide_pointers = FALSE;
+		}
+		if (PE_parse_boot_argn("-no_slto_panic", &namep, sizeof(namep))) {
+			extern boolean_t spinlock_timeout_panic;
+			spinlock_timeout_panic = FALSE;
+		}
 	}
 
 	kernel_bootstrap_log("console_init");
@@ -326,7 +347,7 @@ kernel_bootstrap(void)
 	PMAP_ACTIVATE_KERNEL(master_cpu);
 
 	kernel_bootstrap_log("mapping_free_prime");
-	mapping_free_prime();						/* Load up with temporary mapping blocks */
+	mapping_free_prime();                                           /* Load up with temporary mapping blocks */
 
 	kernel_bootstrap_log("machine_init");
 	machine_init();
@@ -339,6 +360,7 @@ kernel_bootstrap(void)
 	/*
 	 *	Initialize the IPC, task, and thread subsystems.
 	 */
+
 #if CONFIG_COALITIONS
 	kernel_bootstrap_log("coalitions_init");
 	coalitions_init();
@@ -350,6 +372,15 @@ kernel_bootstrap(void)
 	kernel_bootstrap_log("thread_init");
 	thread_init();
 
+	kernel_bootstrap_log("restartable_init");
+	restartable_init();
+
+	kernel_bootstrap_log("workq_init");
+	workq_init();
+
+	kernel_bootstrap_log("turnstiles_init");
+	turnstiles_init();
+
 #if CONFIG_ATM
 	/* Initialize the Activity Trace Resource Manager. */
 	kernel_bootstrap_log("atm_init");
@@ -358,11 +389,9 @@ kernel_bootstrap(void)
 	kernel_bootstrap_log("mach_init_activity_id");
 	mach_init_activity_id();
 
-#if CONFIG_BANK
 	/* Initialize the BANK Manager. */
 	kernel_bootstrap_log("bank_init");
 	bank_init();
-#endif
 
 	kernel_bootstrap_log("ipc_pthread_priority_init");
 	ipc_pthread_priority_init();
@@ -370,18 +399,36 @@ kernel_bootstrap(void)
 	/* initialize the corpse config based on boot-args */
 	corpses_init();
 
-	vm_user_init();
+	/* initialize host_statistics */
+	host_statistics_init();
+
+	/* initialize exceptions */
+	exception_init();
+
+#if CONFIG_SCHED_SFI
+	kernel_bootstrap_log("sfi_init");
+	sfi_init();
+#endif
 
 	/*
 	 *	Create a kernel thread to execute the kernel bootstrap.
 	 */
+
 	kernel_bootstrap_log("kernel_thread_create");
 	result = kernel_thread_create((thread_continue_t)kernel_bootstrap_thread, NULL, MAXPRI_KERNEL, &thread);
 
-	if (result != KERN_SUCCESS) panic("kernel_bootstrap: result = %08X\n", result);
+	if (result != KERN_SUCCESS) {
+		panic("kernel_bootstrap: result = %08X\n", result);
+	}
 
+	/* The static init_thread is re-used as the bootstrap thread */
+	assert(thread == current_thread());
+
+	/* TODO: do a proper thread_start() (without the thread_setrun()) */
 	thread->state = TH_RUN;
 	thread->last_made_runnable_time = mach_absolute_time();
+	thread_set_thread_name(thread, "kernel_bootstrap_thread");
+
 	thread_deallocate(thread);
 
 	kernel_bootstrap_log("load_context - done");
@@ -394,6 +441,8 @@ int kth_started = 0;
 vm_offset_t vm_kernel_addrperm;
 vm_offset_t buf_kernel_addrperm;
 vm_offset_t vm_kernel_addrperm_ext;
+uint64_t vm_kernel_addrhash_salt;
+uint64_t vm_kernel_addrhash_salt_ext;
 
 /*
  * Now running in a thread.  Kick off other services,
@@ -402,7 +451,7 @@ vm_offset_t vm_kernel_addrperm_ext;
 static void
 kernel_bootstrap_thread(void)
 {
-	processor_t		processor = current_processor();
+	processor_t             processor = current_processor();
 
 #define kernel_bootstrap_thread_kprintf(x...) /* kprintf("kernel_bootstrap_thread: " x) */
 	kernel_bootstrap_thread_log("idle_thread_create");
@@ -442,7 +491,6 @@ kernel_bootstrap_thread(void)
 	kernel_bootstrap_thread_log("thread_bind");
 	thread_bind(processor);
 
-
 	/*
 	 * Initialize ipc thread call support.
 	 */
@@ -471,14 +519,14 @@ kernel_bootstrap_thread(void)
 #if (defined(__i386__) || defined(__x86_64__)) && NCOPY_WINDOWS > 0
 	/*
 	 * Create and initialize the physical copy window for processor 0
-	 * This is required before starting kicking off  IOKit.
+	 * This is required before starting kicking off IOKit.
 	 */
 	cpu_physwindow_init(0);
 #endif
 
+	phys_carveout_init();
 
-	
-#if MACH_KDP 
+#if MACH_KDP
 	kernel_bootstrap_log("kdp_init");
 	kdp_init();
 #endif
@@ -493,7 +541,7 @@ kernel_bootstrap_thread(void)
 
 #if CONFIG_ECC_LOGGING
 	ecc_log_init();
-#endif 
+#endif
 
 #if HYPERVISOR
 	hv_support_init();
@@ -511,30 +559,38 @@ kernel_bootstrap_thread(void)
 	kernel_bootstrap_thread_log("ktrace_init");
 	ktrace_init();
 
-	if (new_nkdbufs > 0 || kdebug_serial || log_leaks) {
-		kdebug_boot_trace(new_nkdbufs, trace_typefilter);
-	}
+	char trace_typefilter[256] = {};
+	PE_parse_boot_arg_str("trace_typefilter", trace_typefilter,
+	    sizeof(trace_typefilter));
+	kdebug_init(new_nkdbufs, trace_typefilter, trace_wrap);
 
-	kernel_bootstrap_log("prng_init");
-	prng_cpu_init(master_cpu);
-
-#ifdef	MACH_BSD
+#ifdef  MACH_BSD
 	kernel_bootstrap_log("bsd_early_init");
 	bsd_early_init();
 #endif
 
-#ifdef	IOKIT
+#if defined(__arm64__)
+	ml_lockdown_init();
+#endif
+
+#ifdef  IOKIT
 	kernel_bootstrap_log("PE_init_iokit");
 	PE_init_iokit();
 #endif
 
 	assert(ml_get_interrupts_enabled() == FALSE);
 
-	// Set this flag to indicate that it is now okay to start testing
-	// for interrupts / preemeption disabled while logging
-	oslog_early_boot_complete = TRUE;
+	/*
+	 * Past this point, kernel subsystems that expect to operate with
+	 * interrupts or preemption enabled may begin enforcement.
+	 */
+	early_boot_complete = TRUE;
 
-	(void) spllo();		/* Allow interruptions */
+#if INTERRUPT_MASKED_DEBUG
+	// Reset interrupts masked timeout before we enable interrupts
+	ml_spin_debug_clear_self();
+#endif
+	(void) spllo();         /* Allow interruptions */
 
 #if (defined(__i386__) || defined(__x86_64__)) && NCOPY_WINDOWS > 0
 	/*
@@ -557,12 +613,32 @@ kernel_bootstrap_thread(void)
 #if CONFIG_MACF
 	kernel_bootstrap_log("mac_policy_initmach");
 	mac_policy_initmach();
+#if CONFIG_VNGUARD
+	vnguard_policy_init();
+#endif
+#endif
+
+#if CONFIG_DTRACE
+	dtrace_early_init();
+	sdt_early_init();
 #endif
 
 
-#if CONFIG_SCHED_SFI
-	kernel_bootstrap_log("sfi_init");
-	sfi_init();
+	/*
+	 * Get rid of segments used to bootstrap kext loading. This removes
+	 * the KLD, PRELINK symtab, LINKEDIT, and symtab segments/load commands.
+	 * Must be done prior to lockdown so that we can free (and possibly relocate)
+	 * the static KVA mappings used for the jettisoned bootstrap segments.
+	 */
+	OSKextRemoveKextBootstrap();
+#if defined(__arm__) || defined(__arm64__)
+#if CONFIG_KERNEL_INTEGRITY
+	machine_lockdown_preflight();
+#endif
+	/*
+	 *  Finalize protections on statically mapped pages now that comm page mapping is established.
+	 */
+	arm_vm_prot_finalize(PE_state.bootArgs);
 #endif
 
 	/*
@@ -580,29 +656,51 @@ kernel_bootstrap_thread(void)
 	buf_kernel_addrperm |= 1;
 	read_random(&vm_kernel_addrperm_ext, sizeof(vm_kernel_addrperm_ext));
 	vm_kernel_addrperm_ext |= 1;
+	read_random(&vm_kernel_addrhash_salt, sizeof(vm_kernel_addrhash_salt));
+	read_random(&vm_kernel_addrhash_salt_ext, sizeof(vm_kernel_addrhash_salt_ext));
 
 	vm_set_restrictions();
 
+
+#ifdef CONFIG_XNUPOST
+	kern_return_t result = kernel_list_tests();
+	result = kernel_do_post();
+	if (result != KERN_SUCCESS) {
+		panic("kernel_do_post: Tests failed with result = 0x%08x\n", result);
+	}
+	kernel_bootstrap_log("kernel_do_post - done");
+#endif /* CONFIG_XNUPOST */
 
 
 	/*
 	 *	Start the user bootstrap.
 	 */
-#ifdef	MACH_BSD
+#ifdef  MACH_BSD
 	bsd_init();
 #endif
 
-    /*
-     * Get rid of segments used to bootstrap kext loading. This removes
-     * the KLD, PRELINK symtab, LINKEDIT, and symtab segments/load commands.
-     */
-	OSKextRemoveKextBootstrap();
+#if defined (__x86_64__)
+	x86_64_protect_data_const();
+#endif
 
-	serial_keyboard_init();		/* Start serial keyboard if wanted */
+
+	/*
+	 * Get rid of pages used for early boot tracing.
+	 */
+	kdebug_free_early_buf();
+
+	serial_keyboard_init();         /* Start serial keyboard if wanted */
 
 	vm_page_init_local_q();
 
 	thread_bind(PROCESSOR_NULL);
+
+	/*
+	 * Now that all CPUs are available to run threads, this is essentially
+	 * a background thread. Take this opportunity to initialize and free
+	 * any remaining vm_pages that were delayed earlier by pmap_startup().
+	 */
+	vm_free_delayed_pages();
 
 	/*
 	 *	Become the pageout daemon.
@@ -615,25 +713,32 @@ kernel_bootstrap_thread(void)
  *	slave_main:
  *
  *	Load the first thread to start a processor.
+ *	This path will also be used by the master processor
+ *	after being offlined.
  */
 void
 slave_main(void *machine_param)
 {
-	processor_t		processor = current_processor();
-	thread_t		thread;
+	processor_t             processor = current_processor();
+	thread_t                thread;
 
 	/*
 	 *	Use the idle processor thread if there
 	 *	is no dedicated start up thread.
 	 */
-	if (processor->next_thread == THREAD_NULL) {
+	if (processor->processor_offlined == true) {
+		/* Return to the saved processor_offline context */
+		assert(processor->startup_thread == THREAD_NULL);
+
 		thread = processor->idle_thread;
-		thread->continuation = (thread_continue_t)processor_start_thread;
 		thread->parameter = machine_param;
-	}
-	else {
-		thread = processor->next_thread;
-		processor->next_thread = THREAD_NULL;
+	} else if (processor->startup_thread) {
+		thread = processor->startup_thread;
+		processor->startup_thread = THREAD_NULL;
+	} else {
+		thread = processor->idle_thread;
+		thread->continuation = processor_start_thread;
+		thread->parameter = machine_param;
 	}
 
 	load_context(thread);
@@ -648,10 +753,11 @@ slave_main(void *machine_param)
  *	Called at splsched.
  */
 void
-processor_start_thread(void *machine_param)
+processor_start_thread(void *machine_param,
+    __unused wait_result_t result)
 {
-	processor_t		processor = current_processor();
-	thread_t		self = current_thread();
+	processor_t             processor = current_processor();
+	thread_t                self = current_thread();
 
 	slave_machine_init(machine_param);
 
@@ -659,8 +765,9 @@ processor_start_thread(void *machine_param)
 	 *	If running the idle processor thread,
 	 *	reenter the idle loop, else terminate.
 	 */
-	if (self == processor->idle_thread)
-		thread_block((thread_continue_t)idle_thread);
+	if (self == processor->idle_thread) {
+		thread_block(idle_thread);
+	}
 
 	thread_terminate(self);
 	/*NOTREACHED*/
@@ -670,12 +777,14 @@ processor_start_thread(void *machine_param)
  *	load_context:
  *
  *	Start the first thread on a processor.
+ *	This may be the first thread ever run on a processor, or
+ *	it could be a processor that was previously offlined.
  */
-static void
+static void __attribute__((noreturn))
 load_context(
-	thread_t		thread)
+	thread_t                thread)
 {
-	processor_t		processor = current_processor();
+	processor_t             processor = current_processor();
 
 
 #define load_context_kprintf(x...) /* kprintf("load_context: " x) */
@@ -684,7 +793,6 @@ load_context(
 	machine_set_current_thread(thread);
 
 	load_context_kprintf("processor_up\n");
-	processor_up(processor);
 
 	PMAP_ACTIVATE_KERNEL(processor->cpu_id);
 
@@ -694,28 +802,32 @@ load_context(
 	 * to have reserved stack.
 	 */
 	load_context_kprintf("thread %p, stack %lx, stackptr %lx\n", thread,
-			     thread->kernel_stack, thread->machine.kstackptr);
+	    thread->kernel_stack, thread->machine.kstackptr);
 	if (!thread->kernel_stack) {
 		load_context_kprintf("stack_alloc_try\n");
-		if (!stack_alloc_try(thread))
+		if (!stack_alloc_try(thread)) {
 			panic("load_context");
+		}
 	}
 
 	/*
 	 * The idle processor threads are not counted as
 	 * running for load calculations.
 	 */
-	if (!(thread->state & TH_IDLE))
-		sched_run_incr(thread);
+	if (!(thread->state & TH_IDLE)) {
+		SCHED(run_count_incr)(thread);
+	}
 
 	processor->active_thread = thread;
-	processor->current_pri = thread->sched_pri;
-	processor->current_thmode = thread->sched_mode;
-	processor->current_sfi_class = SFI_CLASS_KERNEL;
+	processor_state_update_explicit(processor, thread->sched_pri,
+	    SFI_CLASS_KERNEL, PSET_SMP, thread_get_perfcontrol_class(thread), THREAD_URGENCY_NONE);
+	processor->current_is_bound = thread->bound_processor != PROCESSOR_NULL;
+	processor->current_is_NO_SMT = false;
 	processor->starting_pri = thread->sched_pri;
-
 	processor->deadline = UINT64_MAX;
 	thread->last_processor = processor;
+
+	processor_up(processor);
 
 	processor->last_dispatch = mach_absolute_time();
 	timer_start(&thread->system_timer, processor->last_dispatch);
@@ -724,9 +836,20 @@ load_context(
 	timer_start(&PROCESSOR_DATA(processor, system_state), processor->last_dispatch);
 	PROCESSOR_DATA(processor, current_state) = &PROCESSOR_DATA(processor, system_state);
 
+
+	cpu_quiescent_counter_join(processor->last_dispatch);
+
 	PMAP_ACTIVATE_USER(thread, processor->cpu_id);
 
 	load_context_kprintf("machine_load_context\n");
+
+#if __arm__ || __arm64__
+#if __SMP__
+	/* TODO: Should this be ordered? */
+	thread->machine.machine_thread_flags |= MACHINE_THREAD_FLAGS_ON_CPU;
+#endif /* __SMP__ */
+#endif /* __arm__ || __arm64__ */
+
 	machine_load_context(thread);
 	/*NOTREACHED*/
 }
@@ -739,29 +862,36 @@ scale_setup()
 	typeof(task_max) task_max_base = task_max;
 
 	/* Raise limits for servers with >= 16G */
-	if ((serverperfmode != 0) && ((uint64_t)sane_size >= (uint64_t)(16 * 1024 * 1024 *1024ULL))) {
-		scale = (int)((uint64_t)sane_size / (uint64_t)(8 * 1024 * 1024 *1024ULL));
+	if ((serverperfmode != 0) && ((uint64_t)sane_size >= (uint64_t)(16 * 1024 * 1024 * 1024ULL))) {
+		scale = (int)((uint64_t)sane_size / (uint64_t)(8 * 1024 * 1024 * 1024ULL));
 		/* limit to 128 G */
-		if (scale > 16)
+		if (scale > 16) {
 			scale = 16;
+		}
 		task_max_base = 2500;
-	} else if ((uint64_t)sane_size >= (uint64_t)(3 * 1024 * 1024 *1024ULL))
-		scale = 2;
+		/* Raise limits for machines with >= 3GB */
+	} else if ((uint64_t)sane_size >= (uint64_t)(3 * 1024 * 1024 * 1024ULL)) {
+		if ((uint64_t)sane_size < (uint64_t)(8 * 1024 * 1024 * 1024ULL)) {
+			scale = 2;
+		} else {
+			/* limit to 64GB */
+			scale = MIN(16, (int)((uint64_t)sane_size / (uint64_t)(4 * 1024 * 1024 * 1024ULL)));
+		}
+	}
 
 	task_max = MAX(task_max, task_max_base * scale);
 
 	if (scale != 0) {
 		task_threadmax = task_max;
-		thread_max = task_max * 5; 
+		thread_max = task_max * 5;
 	}
 
 #endif
 
 	bsd_scale_setup(scale);
-	
+
 	ipc_space_max = SPACE_MAX;
 	ipc_port_max = PORT_MAX;
 	ipc_pset_max = SET_MAX;
 	semaphore_max = SEMAPHORE_MAX;
 }
-

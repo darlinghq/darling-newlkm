@@ -61,6 +61,10 @@
  */
 
 subsystem
+#if	KERNEL_SERVER
+	  KernelServer
+#endif	/* KERNEL_SERVER */
+
 #if	KERNEL_USER
 	  KernelUser
 #endif
@@ -75,45 +79,55 @@ type exception_data_t		= array[*:2] of integer_t;
 type exception_type_t		= int;
 
 routine		exception_raise(
-#if	KERNEL_USER
-			exception_port	: mach_port_move_send_t;
-			thread		: mach_port_move_send_t;
-			task		: mach_port_move_send_t;
-#else	/* KERNEL_USER */
 			exception_port	: mach_port_t;
 			thread		: mach_port_t;
 			task		: mach_port_t;
-#endif	/* KERNEL_USER */
 			exception	: exception_type_t;
 			code		: exception_data_t
+#if EXC_SERVER_SECTOKEN
+ ;
+ ServerSecToken stoken	: security_token_t
+#endif
+#if EXC_SERVER_AUDITTOKEN
+ ;
+ ServerAuditToken atoken: audit_token_t
+#endif
 			);
 
 routine		exception_raise_state(
-#if	KERNEL_USER
-			exception_port	: mach_port_move_send_t;
-#else	/* KERNEL_USER */
 			exception_port	: mach_port_t;
-#endif	/* KERNEL_USER */
 			exception	: exception_type_t;
 			code		: exception_data_t, const;
 		  inout flavor		: int;
 			old_state	: thread_state_t, const;
-		    out new_state	: thread_state_t);
+		    out new_state	: thread_state_t
+#if EXC_SERVER_SECTOKEN
+ ;
+ ServerSecToken stoken	: security_token_t
+#endif
+#if EXC_SERVER_AUDITTOKEN
+ ;
+ ServerAuditToken atoken: audit_token_t
+#endif
+			);
 
 routine		exception_raise_state_identity(
-#if	KERNEL_USER
-			exception_port  : mach_port_move_send_t;
-			thread		: mach_port_move_send_t;
-			task		: mach_port_move_send_t;
-#else	/* KERNEL_USER */
 			exception_port  : mach_port_t;
 			thread          : mach_port_t;
 			task            : mach_port_t;
-#endif	/* KERNEL_USER */
 			exception       : exception_type_t;
 			code            : exception_data_t;
 		  inout flavor          : int;
 			old_state       : thread_state_t;
-		    out new_state       : thread_state_t);
+		    out new_state       : thread_state_t
+#if EXC_SERVER_SECTOKEN
+ ;
+ ServerSecToken stoken	: security_token_t
+#endif
+#if EXC_SERVER_AUDITTOKEN
+ ;
+ ServerAuditToken atoken: audit_token_t
+#endif
+			);
 
 /* vim: set ft=c : */

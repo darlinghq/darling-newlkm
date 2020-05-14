@@ -619,8 +619,8 @@ kdebug_secasv(sav)
 		printf("\n");
 	}
 
-	if (sav->replay != NULL)
-		kdebug_secreplay(sav->replay);
+	if (sav->replay[0] != NULL)
+		kdebug_secreplay(sav->replay[0]);
 	if (sav->lft_c != NULL)
 		kdebug_sadb_lifetime((struct sadb_ext *)sav->lft_c);
 	if (sav->lft_h != NULL)
@@ -690,9 +690,9 @@ kdebug_mbufhdr(m)
 		printf("  m_ext{ ext_buf:0x%llx ext_free:0x%llx "
 		       "ext_size:%u ext_ref:0x%llx }\n",
 			(uint64_t)VM_KERNEL_ADDRPERM(m->m_ext.ext_buf),
-			(uint64_t)VM_KERNEL_ADDRPERM(m->m_ext.ext_free),
+			(uint64_t)VM_KERNEL_ADDRPERM(m_get_ext_free(m)),
 			m->m_ext.ext_size,
-			(uint64_t)VM_KERNEL_ADDRPERM(m->m_ext.ext_refs));
+			(uint64_t)VM_KERNEL_ADDRPERM(m_get_rfa(m));
 	}
 
 	return;

@@ -2,7 +2,7 @@
  * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,41 +22,41 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
  * @OSF_COPYRIGHT@
  */
-/* 
+/*
  * Mach Operating System
  * Copyright (c) 1991,1990,1989,1988,1987 Carnegie Mellon University
  * All Rights Reserved.
- * 
+ *
  * Permission to use, copy, modify and distribute this software and its
  * documentation is hereby granted, provided that both the copyright
  * notice and this permission notice appear in all copies of the
  * software, derivative works or modified versions, and any portions
  * thereof, and that both notices appear in supporting documentation.
- * 
+ *
  * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
  * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
  * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
- * 
+ *
  * Carnegie Mellon requests users of this software to return to
- * 
+ *
  *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
  *  School of Computer Science
  *  Carnegie Mellon University
  *  Pittsburgh PA 15213-3890
- * 
+ *
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
 /*
  */
 
-#ifndef	_KERN_TIMER_H_
+#ifndef _KERN_TIMER_H_
 #define _KERN_TIMER_H_
 
 #include <kern/kern_types.h>
@@ -80,88 +80,84 @@ extern int precise_user_kernel_time;
  * thread-local value (or in kernel debugger context). In the future,
  * we make take into account task-level or thread-level policy.
  */
-#define use_precise_user_kernel_time(thread) ( precise_user_kernel_time ) 
+#define use_precise_user_kernel_time(thread) (precise_user_kernel_time)
 
 /*
- *	Definitions for high resolution timers.  A check
- *	word on the high portion allows atomic updates.
+ * Definitions for high resolution timers.
  */
+
+#if __LP64__
+#define TIMER_ALIGNMENT
+#else
+#define TIMER_ALIGNMENT __attribute__((packed, aligned(4)))
+#endif
 
 struct timer {
-	uint64_t	tstamp;
-#if	defined(__LP64__)
-	uint64_t	all_bits;
-#else
-	uint32_t	low_bits;
-	uint32_t	high_bits;
-	uint32_t	high_bits_check;
-#endif
-};
+	uint64_t tstamp;
+#if defined(__LP64__)
+	uint64_t all_bits;
+#else /* defined(__LP64__) */
+	/* A check word on the high portion allows atomic updates. */
+	uint32_t low_bits;
+	uint32_t high_bits;
+	uint32_t high_bits_check;
+#endif /* !defined(__LP64__) */
+} TIMER_ALIGNMENT;
 
-#if defined (__DARLING__)
-#define timer_t         xnu_timer_t
-#endif
-typedef struct timer	timer_data_t, *timer_t;
+typedef struct timer timer_data_t, *timer_t;
 
 /*
- *	Exported kernel interface to timers
+ * Initialize the `timer`.
  */
-
-/* Start a timer by setting the timestamp */
-extern void		timer_start(
-					timer_t		timer,
-					uint64_t	tstamp);
-
-/* Stop a timer by updating from the timestamp */
-extern void		timer_stop(
-					timer_t		timer,
-					uint64_t	tstamp);
-
-/* Update the timer and start a new one */
-extern void		timer_switch(
-					timer_t		timer,
-					uint64_t	tstamp,
-					timer_t		new_timer);
-
-/* Update the thread timer at an event */
-extern void		thread_timer_event(
-					uint64_t	tstamp,
-					timer_t		new_timer);
-
-/* Initialize a timer */
-extern void		timer_init(
-					timer_t		timer);
-
-/* Update a saved timer value and return delta to current value */
-extern uint64_t	timer_delta(
-					timer_t		timer,
-					uint64_t	*save);
-
-/* Advance a timer by a 64 bit value */
-extern void		timer_advance(
-					timer_t		timer,
-					uint64_t	delta);
+void timer_init(timer_t timer);
 
 /*
- *	Exported hardware interface to timers
+ * Start the `timer` at time `tstamp`.
  */
+void timer_start(timer_t timer, uint64_t tstamp);
 
-/* Read timer value */
-#if	defined(__LP64__)
-static inline uint64_t timer_grab(
-					timer_t		timer)
+/*
+ * Stop the `timer` and update it with time `tstamp`.
+ */
+void timer_stop(timer_t timer, uint64_t tstamp);
+
+/*
+ * Update the `timer` at time `tstamp`, leaving it running.
+ */
+void timer_update(timer_t timer, uint64_t tstamp);
+
+/*
+ * Update the `timer` with time `tstamp` and start `new_timer`.
+ */
+void timer_switch(timer_t timer, uint64_t tstamp, timer_t new_timer);
+
+/*
+ * Update the thread timer at an "event," like a context switch, at time
+ * `tstamp`.  This stops the current timer and starts the `new_timer` running.
+ *
+ * Must be called with interrupts disabled.
+ */
+void processor_timer_switch_thread(uint64_t tstamp, timer_t new_timer);
+
+/*
+ * Return the difference between the `timer` and a previous value pointed to by
+ * `prev_in_cur_out`.  Store the current value of the timer to
+ * `prev_in_cur_out`.
+ */
+uint64_t timer_delta(timer_t timer, uint64_t *prev_in_cur_out);
+
+/*
+ * Read the accumulated time of `timer`.
+ */
+#if defined(__LP64__)
+static inline
+uint64_t
+timer_grab(timer_t timer)
 {
 	return timer->all_bits;
 }
-#else
-extern uint64_t	timer_grab(
-					timer_t		timer);
+#else /* defined(__LP64__) */
+uint64_t timer_grab(timer_t timer);
+#endif /* !defined(__LP64__) */
 
-/* Update timer value */
-extern void		timer_update(
-					timer_t		timer,
-					uint32_t	new_high,
-					uint32_t	new_low);
-#endif	/* defined(__LP64__) */
-
-#endif	/* _KERN_TIMER_H_ */
+#endif /* _KERN_TIMER_H_ */

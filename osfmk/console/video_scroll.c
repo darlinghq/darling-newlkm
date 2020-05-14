@@ -29,17 +29,16 @@
 #include <types.h>
 #include <console/video_console.h>
 
-extern void bcopy(const void *, void *, size_t);
-
 void
 video_scroll_up(void * start, void * end, void * dest)
 {
 	bcopy(start, dest, ((char *)end - (char *)start) << 2);
 }
 
-void video_scroll_down(void * start, /* HIGH addr */
-                       void * end,   /* LOW addr */
-                       void * dest)  /* HIGH addr */
+void
+video_scroll_down(void * start,      /* HIGH addr */
+    void * end,                      /* LOW addr */
+    void * dest)                     /* HIGH addr */
 {
 	bcopy(end, dest, ((char *)start - (char *)end) << 2);
 }

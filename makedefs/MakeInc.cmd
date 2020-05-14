@@ -10,31 +10,45 @@
 #
 # Commands for the build environment
 #
+
 ##
 # Verbosity
 ##
+
 ifeq ($(RC_XBS),YES)
-VERBOSE = YES
+	VERBOSE = YES
 else
-VERBOSE = NO
+	VERBOSE = NO
 endif
+
+ECHO = echo
+
+LOG = echo
+makelog = $(info $1)
+ERR = $(ECHO) > /dev/stderr
+
+QUIET ?= 0
+ifneq ($(QUIET),0)
+	LOG = :
+	makelog =
+	ifeq ($(VERBOSE),YES)
+		override VERBOSE = NO
+	endif
+endif
+
 ifeq ($(VERBOSE),YES)
-_v =
-_vstdout =
+	_v =
+	_vstdout =
+	XCRUN = /usr/bin/xcrun -verbose
 else
-_v = @
-_vstdout = > /dev/null
+	_v = @
+	_vstdout = > /dev/null
+	XCRUN = /usr/bin/xcrun
 endif
 
 VERBOSE_GENERATED_MAKE_FRAGMENTS = NO
 
-ifeq ($(VERBOSE),YES)
-	XCRUN = /usr/bin/xcrun -verbose
-else
-	XCRUN = /usr/bin/xcrun
-endif
-
-SDKROOT ?= macosx.internal
+SDKROOT ?= macosx
 HOST_SDKROOT ?= macosx
 
 # SDKROOT may be passed as a shorthand like "iphoneos.internal". We
@@ -50,6 +64,9 @@ override SDKROOT = $(SDKROOT_RESOLVED)
 
 ifeq ($(HOST_SDKROOT_RESOLVED),)
 export HOST_SDKROOT_RESOLVED := $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -show-sdk-path)
+ifeq ($(strip $(HOST_SDKROOT_RESOLVED)),)
+export HOST_SDKROOT_RESOLVED := /
+endif
 endif
 override HOST_SDKROOT = $(HOST_SDKROOT_RESOLVED)
 
@@ -60,6 +77,15 @@ ifeq ($(PLATFORM),)
 		export PLATFORM := MacOSX
 	else ifeq ($(shell echo $(PLATFORM) | tr A-Z a-z),watchos)
 		export PLATFORM := WatchOS
+	endif
+endif
+
+ifeq ($(PLATFORM),MacOSX)
+	ifeq (DriverKit,$(shell echo $(SDKROOT_RESOLVED) | sed 's,^.*/\([^/1-9]*\)[1-9][^/]*\.sdk$$,\1,'))
+		export PLATFORM := DriverKit
+		export DRIVERKIT ?= 1
+		export DRIVERKITROOT ?= /System/DriverKit
+		export DRIVERKITRUNTIMEROOT = $(DRIVERKITROOT)/Runtime
 	endif
 endif
 
@@ -83,6 +109,9 @@ ifeq ($(MIGCOM),)
 endif
 ifeq ($(MIGCC),)
 	export MIGCC := $(CC)
+endif
+ifeq ($(IIG),)
+	export IIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find iig)
 endif
 ifeq ($(STRIP),)
 	export STRIP := $(shell $(XCRUN) -sdk $(SDKROOT) -find strip)
@@ -118,16 +147,16 @@ endif
 #
 # Platform options
 #
-SUPPORTED_EMBEDDED_PLATFORMS := iPhoneOS iPhoneOSNano tvOS AppleTVOS WatchOS
+SUPPORTED_EMBEDDED_PLATFORMS := iPhoneOS iPhoneOSNano tvOS AppleTVOS WatchOS BridgeOS
 SUPPORTED_SIMULATOR_PLATFORMS := iPhoneSimulator iPhoneNanoSimulator tvSimulator AppleTVSimulator WatchSimulator
-SUPPORTED_PLATFORMS := MacOSX $(SUPPORTED_SIMULATOR_PLATFORMS) $(SUPPORTED_EMBEDDED_PLATFORMS)
+SUPPORTED_PLATFORMS := MacOSX DriverKit $(SUPPORTED_SIMULATOR_PLATFORMS) $(SUPPORTED_EMBEDDED_PLATFORMS)
 
 # Platform-specific tools
 ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
 ifeq ($(EMBEDDED_DEVICE_MAP),)
 	export EMBEDDED_DEVICE_MAP := $(shell $(XCRUN) -sdk $(SDKROOT) -find embedded_device_map)
 endif
-EDM_DBPATH = $(PLATFORMPATH)/usr/local/standalone/firmware/device_map.db
+EDM_DBPATH ?= $(PLATFORMPATH)/usr/local/standalone/firmware/device_map.db
 endif
 
 # Scripts or tools we build ourselves
@@ -167,7 +196,6 @@ TOUCH = /usr/bin/touch
 SLEEP = /bin/sleep
 AWK = /usr/bin/awk
 SED = /usr/bin/sed
-ECHO = /bin/echo
 PLUTIL = /usr/bin/plutil
 
 #

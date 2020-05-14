@@ -46,14 +46,20 @@ PRIVATE_DATAFILES = \
 	if_media.h \
 	if_mib.h \
 	if_pflog.h \
+	if_ports_used.h \
 	if_ppp.h \
 	if_utun.h \
 	if_var.h \
 	if_vlan_var.h \
+	if_fake_var.h \
+	if_6lowpan_var.h \
 	iptap.h \
 	lacp.h \
+	multi_layer_pkt_log.h \
 	ndrv_var.h \
 	necp.h \
+	net_api_stats.h \
+	net_log_common.h \
 	netsrc.h \
 	network_agent.h \
 	ntstat.h \
@@ -66,7 +72,10 @@ PRIVATE_DATAFILES = \
 	raw_cb.h \
 	route.h \
 	net_perf.h \
-	net_kev.h
+	net_kev.h \
+	sixxlowpan.h \
+	frame802154.h \
+	nat464_utils.h
 
 PRIVATE_KERNELFILES = $(filter-out radix.h,${KERNELFILES}) \
 	bpfdesc.h ppp_comp.h \

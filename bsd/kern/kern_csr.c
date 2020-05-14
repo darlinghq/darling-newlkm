@@ -63,26 +63,34 @@ int
 csr_check(csr_config_t mask)
 {
 	boot_args *args = (boot_args *)PE_state.bootArgs;
-	if ((mask & CSR_ALLOW_DEVICE_CONFIGURATION) && !(args->flags & kBootArgsFlagCSRConfigMode))
-		return EPERM;
-
-	if (csr_allow_all) {
-		return 0;
+	if (mask & CSR_ALLOW_DEVICE_CONFIGURATION) {
+		return (args->flags & kBootArgsFlagCSRConfigMode) ? 0 : EPERM;
 	}
 
 	csr_config_t config;
-	int error = csr_get_active_config(&config);
-	if (error) {
-		return error;
+	int ret = csr_get_active_config(&config);
+	if (ret) {
+		return ret;
 	}
 
-	if (mask == 0) {
-		/* pass 0 to check if Rootless enforcement is active */
-		return -1;
+	// CSR_ALLOW_KERNEL_DEBUGGER needs to be allowed when SIP is disabled
+	// to allow 3rd-party developers to debug their kexts.  Use
+	// CSR_ALLOW_UNTRUSTED_KEXTS as a proxy for "SIP is disabled" on the
+	// grounds that you can do the same damage with a kernel debugger as
+	// you can with an untrusted kext.
+	if ((config & (CSR_ALLOW_UNTRUSTED_KEXTS | CSR_ALLOW_APPLE_INTERNAL)) != 0) {
+		config |= CSR_ALLOW_KERNEL_DEBUGGER;
 	}
 
-	error = (config & mask) ? 0 : EPERM;
-	return error;
+	ret = ((config & mask) == mask) ? 0 : EPERM;
+	if (ret == EPERM) {
+		// Override the return value if booted from the BaseSystem and the mask does not contain any flag that should always be enforced.
+		if (csr_allow_all && (mask & CSR_ALWAYS_ENFORCED_FLAGS) == 0) {
+			ret = 0;
+		}
+	}
+
+	return ret;
 }
 
 /*
@@ -99,12 +107,14 @@ syscall_csr_check(struct csrctl_args *args)
 	csr_config_t mask = 0;
 	int error = 0;
 
-	if (args->useraddr == 0 || args->usersize != sizeof(mask))
+	if (args->useraddr == 0 || args->usersize != sizeof(mask)) {
 		return EINVAL;
+	}
 
 	error = copyin(args->useraddr, &mask, sizeof(mask));
-	if (error)
+	if (error) {
 		return error;
+	}
 
 	return csr_check(mask);
 }
@@ -115,12 +125,14 @@ syscall_csr_get_active_config(struct csrctl_args *args)
 	csr_config_t config = 0;
 	int error = 0;
 
-	if (args->useraddr == 0 || args->usersize != sizeof(config))
+	if (args->useraddr == 0 || args->usersize != sizeof(config)) {
 		return EINVAL;
+	}
 
 	error = csr_get_active_config(&config);
-	if (error)
+	if (error) {
 		return error;
+	}
 
 	return copyout(&config, args->useraddr, sizeof(config));
 }
@@ -133,11 +145,11 @@ int
 csrctl(__unused proc_t p, struct csrctl_args *args, __unused int32_t *retval)
 {
 	switch (args->op) {
-		case CSR_SYSCALL_CHECK:
-			return syscall_csr_check(args);
-		case CSR_SYSCALL_GET_ACTIVE_CONFIG:
-			return syscall_csr_get_active_config(args);
-		default:
-			return ENOSYS;
+	case CSR_SYSCALL_CHECK:
+		return syscall_csr_check(args);
+	case CSR_SYSCALL_GET_ACTIVE_CONFIG:
+		return syscall_csr_get_active_config(args);
+	default:
+		return ENOSYS;
 	}
 }

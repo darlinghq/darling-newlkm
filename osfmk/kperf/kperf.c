@@ -2,7 +2,7 @@
  * Copyright (c) 2011 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 #include <kern/ipc_tt.h> /* port_name_to_task */
@@ -38,13 +38,17 @@
 #include <kperf/kdebug_trigger.h>
 #include <kperf/kperf.h>
 #include <kperf/kperf_timer.h>
+#include <kperf/lazy.h>
 #include <kperf/pet.h>
 #include <kperf/sample.h>
 
+/* from libkern/libkern.h */
+extern uint64_t strtouq(const char *, char **, int);
+
 lck_grp_t kperf_lck_grp;
 
-/* thread on CPUs before starting the PET thread */
-thread_t *kperf_thread_on_cpus = NULL;
+/* IDs of threads on CPUs before starting the PET thread */
+uint64_t *kperf_tid_on_cpus = NULL;
 
 /* one wired sample buffer per CPU */
 static struct kperf_sample *intr_samplev;
@@ -58,6 +62,9 @@ static boolean_t kperf_initted = FALSE;
 
 /* whether or not to callback to kperf on context switch */
 boolean_t kperf_on_cpu_active = FALSE;
+
+unsigned int kperf_thread_blocked_action;
+unsigned int kperf_cpu_sample_action;
 
 struct kperf_sample *
 kperf_intr_sample_buffer(void)
@@ -76,8 +83,6 @@ kperf_init(void)
 {
 	static lck_grp_attr_t lck_grp_attr;
 
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
-
 	unsigned ncpus = 0;
 	int err;
 
@@ -91,18 +96,18 @@ kperf_init(void)
 	ncpus = machine_info.logical_cpu_max;
 
 	/* create buffers to remember which threads don't need to be sampled by PET */
-	kperf_thread_on_cpus = kalloc_tag(ncpus * sizeof(*kperf_thread_on_cpus),
-	                                  VM_KERN_MEMORY_DIAG);
-	if (kperf_thread_on_cpus == NULL) {
+	kperf_tid_on_cpus = kalloc_tag(ncpus * sizeof(*kperf_tid_on_cpus),
+	    VM_KERN_MEMORY_DIAG);
+	if (kperf_tid_on_cpus == NULL) {
 		err = ENOMEM;
 		goto error;
 	}
-	bzero(kperf_thread_on_cpus, ncpus * sizeof(*kperf_thread_on_cpus));
+	bzero(kperf_tid_on_cpus, ncpus * sizeof(*kperf_tid_on_cpus));
 
 	/* create the interrupt buffers */
 	intr_samplec = ncpus;
 	intr_samplev = kalloc_tag(ncpus * sizeof(*intr_samplev),
-	                          VM_KERN_MEMORY_DIAG);
+	    VM_KERN_MEMORY_DIAG);
 	if (intr_samplev == NULL) {
 		err = ENOMEM;
 		goto error;
@@ -124,9 +129,9 @@ error:
 		intr_samplec = 0;
 	}
 
-	if (kperf_thread_on_cpus) {
-		kfree(kperf_thread_on_cpus, ncpus * sizeof(*kperf_thread_on_cpus));
-		kperf_thread_on_cpus = NULL;
+	if (kperf_tid_on_cpus) {
+		kfree(kperf_tid_on_cpus, ncpus * sizeof(*kperf_tid_on_cpus));
+		kperf_tid_on_cpus = NULL;
 	}
 
 	return err;
@@ -135,12 +140,11 @@ error:
 void
 kperf_reset(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
-
 	/* turn off sampling first */
 	(void)kperf_sampling_disable();
 
 	/* cleanup miscellaneous configuration first */
+	kperf_lazy_reset();
 	(void)kperf_kdbg_cswitch_set(0);
 	(void)kperf_set_lightweight_pet(0);
 	kperf_kdebug_reset();
@@ -151,17 +155,90 @@ kperf_reset(void)
 }
 
 void
+kperf_kernel_configure(const char *config)
+{
+	int pairs = 0;
+	char *end;
+	bool pet = false;
+
+	assert(config != NULL);
+
+	ktrace_start_single_threaded();
+
+	ktrace_kernel_configure(KTRACE_KPERF);
+
+	if (config[0] == 'p') {
+		pet = true;
+		config++;
+	}
+
+	do {
+		uint32_t action_samplers;
+		uint64_t timer_period_ns;
+		uint64_t timer_period;
+
+		pairs += 1;
+		kperf_action_set_count(pairs);
+		kperf_timer_set_count(pairs);
+
+		action_samplers = (uint32_t)strtouq(config, &end, 0);
+		if (config == end) {
+			kprintf("kperf: unable to parse '%s' as action sampler\n", config);
+			goto out;
+		}
+		config = end;
+
+		kperf_action_set_samplers(pairs, action_samplers);
+
+		if (config[0] == '\0') {
+			kprintf("kperf: missing timer period in config\n");
+			goto out;
+		}
+		config++;
+
+		timer_period_ns = strtouq(config, &end, 0);
+		if (config == end) {
+			kprintf("kperf: unable to parse '%s' as timer period\n", config);
+			goto out;
+		}
+		nanoseconds_to_absolutetime(timer_period_ns, &timer_period);
+		config = end;
+
+		kperf_timer_set_period(pairs - 1, timer_period);
+		kperf_timer_set_action(pairs - 1, pairs);
+
+		if (pet) {
+			kperf_timer_set_petid(pairs - 1);
+			kperf_set_lightweight_pet(1);
+			pet = false;
+		}
+	} while (*(config++) == ',');
+
+	int error = kperf_sampling_enable();
+	if (error) {
+		kprintf("kperf: cannot enable sampling at boot: %d", error);
+	}
+
+out:
+	ktrace_end_single_threaded();
+}
+
+void kperf_on_cpu_internal(thread_t thread, thread_continue_t continuation,
+    uintptr_t *starting_fp);
+void
 kperf_on_cpu_internal(thread_t thread, thread_continue_t continuation,
-                      uintptr_t *starting_fp)
+    uintptr_t *starting_fp)
 {
 	if (kperf_kdebug_cswitch) {
 		/* trace the new thread's PID for Instruments */
 		int pid = task_pid(get_threadtask(thread));
-
 		BUF_DATA(PERF_TI_CSWITCH, thread_tid(thread), pid);
 	}
 	if (kperf_lightweight_pet_active) {
 		kperf_pet_on_cpu(thread, continuation, starting_fp);
+	}
+	if (kperf_lazy_wait_action != 0) {
+		kperf_lazy_wait_sample(thread, continuation, starting_fp);
 	}
 }
 
@@ -169,20 +246,8 @@ void
 kperf_on_cpu_update(void)
 {
 	kperf_on_cpu_active = kperf_kdebug_cswitch ||
-	                      kperf_lightweight_pet_active;
-}
-
-/* random misc-ish functions */
-uint32_t
-kperf_get_thread_flags(thread_t thread)
-{
-	return thread->kperf_flags;
-}
-
-void
-kperf_set_thread_flags(thread_t thread, uint32_t flags)
-{
-	thread->kperf_flags = flags;
+	    kperf_lightweight_pet_active ||
+	    kperf_lazy_wait_action != 0;
 }
 
 unsigned int
@@ -240,7 +305,7 @@ kperf_sampling_disable(void)
 boolean_t
 kperf_thread_get_dirty(thread_t thread)
 {
-	return (thread->c_switch != thread->kperf_c_switch);
+	return thread->c_switch != thread->kperf_c_switch;
 }
 
 void
@@ -256,22 +321,19 @@ kperf_thread_set_dirty(thread_t thread, boolean_t dirty)
 int
 kperf_port_to_pid(mach_port_name_t portname)
 {
-	task_t task;
-	int pid;
-
 	if (!MACH_PORT_VALID(portname)) {
 		return -1;
 	}
 
-	task = port_name_to_task(portname);
-
+	task_t task = port_name_to_task(portname);
 	if (task == TASK_NULL) {
 		return -1;
 	}
 
-	pid = task_pid(task);
+	pid_t pid = task_pid(task);
 
-	task_deallocate_internal(task);
+	os_ref_count_t __assert_only count = task_deallocate_internal(task);
+	assert(count != 0);
 
 	return pid;
 }

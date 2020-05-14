@@ -7,9 +7,10 @@ include $(MakeInc_cmd)
 include $(MakeInc_def)
 
 INSTINC_SUBDIRS = \
-        machine \
-	c++ \
-	crypto
+    machine \
+    c++ \
+    crypto \
+    img4
 INSTINC_SUBDIRS_X86_64 = \
         i386
 INSTINC_SUBDIRS_X86_64H = \
@@ -33,6 +34,10 @@ DATAFILES = \
 	OSReturn.h \
 	OSTypes.h
 
+DRIVERKIT_DATAFILES = \
+	OSByteOrder.h \
+	_OSByteOrder.h
+
 KERNELFILES = \
 	${DATAFILES} \
 	OSAtomic.h \
@@ -42,7 +47,9 @@ KERNELFILES = \
 	sysctl.h \
 	tree.h \
 	zconf.h	\
-	zlib.h
+	zlib.h \
+	crc.h \
+	Block.h
 
 PRIVATE_KERNELFILES = \
 	OSKextLibPrivate.h \
@@ -50,13 +57,18 @@ PRIVATE_KERNELFILES = \
 	kext_request_keys.h \
 	mkext.h \
 	prelink.h \
-	section_keywords.h
+	section_keywords.h \
+	Block_private.h
 
 PRIVATE_DATAFILES = \
 	${PRIVATE_KERNELFILES} \
 	tree.h
 
 INSTALL_MI_LIST	= ${DATAFILES}
+
+INSTALL_DRIVERKIT_MI_LIST = ${DRIVERKIT_DATAFILES}
+
+DRIVERKITINCDIR = $(DRIVERKITSDKHEADERSROOT)/usr/local/include
 
 INSTALL_MI_DIR = libkern
 
@@ -81,9 +93,9 @@ EXPORT_MI_GEN_LIST = version.h
 EXPORT_MI_DIR = libkern
 
 version.h: version.h.template $(SRCROOT)/config/MasterVersion
-	@echo "[$(CMD_MC)] $(ColorH)GENERATING$(Color0) $(ColorLF)libkern/$@$(Color0) from $(ColorF)$<$(Color0)";
+	$(call makelog,[$(CMD_MC)] $(ColorH)GENERATING$(Color0) $(ColorLF)libkern/$@$(Color0) from $(ColorF)$<$(Color0))
 	$(_v)install $(DATA_INSTALL_FLAGS) $< $@
-	$(_v)$(NEWVERS) $@ > /dev/null;
+	$(_v)$(NEWVERS) $@ > /dev/null
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

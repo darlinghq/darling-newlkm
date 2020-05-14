@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2015 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -40,40 +40,27 @@
 #include <net/net_osdep.h>
 #include <net/classq/classq.h>
 #include <pexpert/pexpert.h>
-#if CLASSQ_RED
-#include <net/classq/classq_red.h>
-#endif /* CLASSQ_RED */
-#if CLASSQ_RIO
-#include <net/classq/classq_rio.h>
-#endif /* CLASSQ_RIO */
-#if CLASSQ_BLUE
-#include <net/classq/classq_blue.h>
-#endif /* CLASSQ_BLUE */
 #include <net/classq/classq_sfb.h>
+#include <net/classq/classq_fq_codel.h>
 #include <net/pktsched/pktsched.h>
 #include <net/pktsched/pktsched_fq_codel.h>
 
 #include <libkern/libkern.h>
 
-#if PF_ALTQ
-#include <net/altq/altq.h>
-#endif /* PF_ALTQ */
 
 static errno_t ifclassq_dequeue_common(struct ifclassq *, mbuf_svc_class_t,
-    u_int32_t, u_int32_t, struct mbuf **, struct mbuf **, u_int32_t *,
+    u_int32_t, u_int32_t, classq_pkt_t *, classq_pkt_t *, u_int32_t *,
     u_int32_t *, boolean_t);
-static struct mbuf *ifclassq_poll_common(struct ifclassq *,
-    mbuf_svc_class_t, boolean_t);
-static struct mbuf *ifclassq_tbr_dequeue_common(struct ifclassq *, int,
-    mbuf_svc_class_t, boolean_t);
+static void ifclassq_tbr_dequeue_common(struct ifclassq *, mbuf_svc_class_t,
+    boolean_t, classq_pkt_t *);
 
 static u_int64_t ifclassq_target_qdelay = 0;
-SYSCTL_QUAD(_net_classq, OID_AUTO, target_qdelay, CTLFLAG_RW|CTLFLAG_LOCKED,
+SYSCTL_QUAD(_net_classq, OID_AUTO, target_qdelay, CTLFLAG_RW | CTLFLAG_LOCKED,
     &ifclassq_target_qdelay, "target queue delay in nanoseconds");
 
 static u_int64_t ifclassq_update_interval = 0;
 SYSCTL_QUAD(_net_classq, OID_AUTO, update_interval,
-    CTLFLAG_RW|CTLFLAG_LOCKED, &ifclassq_update_interval,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &ifclassq_update_interval,
     "update interval in nanoseconds");
 
 static int32_t ifclassq_sched_fq_codel;
@@ -85,21 +72,13 @@ classq_init(void)
 	_CASSERT(MBUF_SC_BE == 0);
 	_CASSERT(IFCQ_SC_MAX == MBUF_SC_MAX_CLASSES);
 
-#if CLASSQ_RED
-	red_init();
-#endif /* CLASSQ_RED */
-#if CLASSQ_RIO
-	rio_init();
-#endif /* CLASSQ_RIO */
-#if CLASSQ_BLUE
-	blue_init();
-#endif /* CLASSQ_BLUE */
 	sfb_init();
 	fq_codel_scheduler_init();
 
 	if (!PE_parse_boot_argn("fq_codel", &ifclassq_sched_fq_codel,
-	    sizeof (ifclassq_sched_fq_codel)))
-		ifclassq_sched_fq_codel = 0;
+	    sizeof(ifclassq_sched_fq_codel))) {
+		ifclassq_sched_fq_codel = 1;
+	}
 }
 
 int
@@ -114,8 +93,8 @@ ifclassq_setup(struct ifnet *ifp, u_int32_t sflags, boolean_t reuse)
 	ifq->ifcq_ifp = ifp;
 	IFCQ_LEN(ifq) = 0;
 	IFCQ_BYTES(ifq) = 0;
-	bzero(&ifq->ifcq_xmitcnt, sizeof (ifq->ifcq_xmitcnt));
-	bzero(&ifq->ifcq_dropcnt, sizeof (ifq->ifcq_dropcnt));
+	bzero(&ifq->ifcq_xmitcnt, sizeof(ifq->ifcq_xmitcnt));
+	bzero(&ifq->ifcq_dropcnt, sizeof(ifq->ifcq_dropcnt));
 
 	VERIFY(!IFCQ_TBR_IS_ENABLED(ifq));
 	VERIFY(ifq->ifcq_type == PKTSCHEDT_NONE);
@@ -130,8 +109,9 @@ ifclassq_setup(struct ifnet *ifp, u_int32_t sflags, boolean_t reuse)
 	if (ifp->if_eflags & IFEF_TXSTART) {
 		u_int32_t maxlen = 0;
 
-		if ((maxlen = IFCQ_MAXLEN(ifq)) == 0)
+		if ((maxlen = IFCQ_MAXLEN(ifq)) == 0) {
 			maxlen = if_sndq_maxlen;
+		}
 		IFCQ_SET_MAXLEN(ifq, maxlen);
 
 		if (IFCQ_MAXLEN(ifq) != if_sndq_maxlen &&
@@ -144,30 +124,12 @@ ifclassq_setup(struct ifnet *ifp, u_int32_t sflags, boolean_t reuse)
 		}
 		ifq->ifcq_sflags = sflags;
 		err = ifclassq_pktsched_setup(ifq);
-		if (err == 0)
+		if (err == 0) {
 			ifq->ifcq_flags = (IFCQF_READY | IFCQF_ENABLED);
+		}
 	}
-
-#if PF_ALTQ
-	ifq->ifcq_drain = 0;
-	IFCQ_ALTQ(ifq)->altq_ifcq = ifq;
-	VERIFY(IFCQ_ALTQ(ifq)->altq_type == ALTQT_NONE);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_flags == 0);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_disc == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_enqueue == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_dequeue == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_dequeue_sc == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_request == NULL);
-
-	if ((ifp->if_eflags & IFEF_TXSTART) &&
-	    ifp->if_output_sched_model != IFNET_SCHED_MODEL_DRIVER_MANAGED)
-		ALTQ_SET_READY(IFCQ_ALTQ(ifq));
-	else
-		ALTQ_CLEAR_READY(IFCQ_ALTQ(ifq));
-#endif /* PF_ALTQ */
 	IFCQ_UNLOCK(ifq);
-
-	return (err);
+	return err;
 }
 
 void
@@ -176,28 +138,10 @@ ifclassq_teardown(struct ifnet *ifp)
 	struct ifclassq *ifq = &ifp->if_snd;
 
 	IFCQ_LOCK(ifq);
-#if PF_ALTQ
-	if (ALTQ_IS_READY(IFCQ_ALTQ(ifq))) {
-		if (ALTQ_IS_ENABLED(IFCQ_ALTQ(ifq)))
-			altq_disable(IFCQ_ALTQ(ifq));
-		if (ALTQ_IS_ATTACHED(IFCQ_ALTQ(ifq)))
-			altq_detach(IFCQ_ALTQ(ifq));
-		IFCQ_ALTQ(ifq)->altq_flags = 0;
-	}
-	ifq->ifcq_drain = 0;
-	IFCQ_ALTQ(ifq)->altq_ifcq = NULL;
-	VERIFY(IFCQ_ALTQ(ifq)->altq_type == ALTQT_NONE);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_flags == 0);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_disc == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_enqueue == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_dequeue == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_dequeue_sc == NULL);
-	VERIFY(IFCQ_ALTQ(ifq)->altq_request == NULL);
-#endif /* PF_ALTQ */
 
 	if (IFCQ_IS_READY(ifq)) {
 		if (IFCQ_TBR_IS_ENABLED(ifq)) {
-			struct tb_profile tb = { 0, 0, 0 };
+			struct tb_profile tb = { .rate = 0, .percent = 0, .depth = 0 };
 			(void) ifclassq_tbr_set(ifq, &tb, FALSE);
 		}
 		(void) pktsched_teardown(ifq);
@@ -218,8 +162,8 @@ ifclassq_teardown(struct ifnet *ifp)
 	IFCQ_LEN(ifq) = 0;
 	IFCQ_BYTES(ifq) = 0;
 	IFCQ_MAXLEN(ifq) = 0;
-	bzero(&ifq->ifcq_xmitcnt, sizeof (ifq->ifcq_xmitcnt));
-	bzero(&ifq->ifcq_dropcnt, sizeof (ifq->ifcq_dropcnt));
+	bzero(&ifq->ifcq_xmitcnt, sizeof(ifq->ifcq_xmitcnt));
+	bzero(&ifq->ifcq_dropcnt, sizeof(ifq->ifcq_dropcnt));
 
 	IFCQ_UNLOCK(ifq);
 }
@@ -228,6 +172,7 @@ int
 ifclassq_pktsched_setup(struct ifclassq *ifq)
 {
 	struct ifnet *ifp = ifq->ifcq_ifp;
+	classq_pkt_type_t ptype = QP_MBUF;
 	int err = 0;
 
 	IFCQ_LOCK_ASSERT_HELD(ifq);
@@ -235,36 +180,43 @@ ifclassq_pktsched_setup(struct ifclassq *ifq)
 
 	switch (ifp->if_output_sched_model) {
 	case IFNET_SCHED_MODEL_DRIVER_MANAGED:
-		err = pktsched_setup(ifq, PKTSCHEDT_TCQ, ifq->ifcq_sflags);
+		if (ifclassq_sched_fq_codel != 0) {
+			err = pktsched_setup(ifq, PKTSCHEDT_FQ_CODEL,
+			    ifq->ifcq_sflags, ptype);
+		} else {
+			err = pktsched_setup(ifq, PKTSCHEDT_TCQ,
+			    ifq->ifcq_sflags, ptype);
+		}
 		break;
 
 	case IFNET_SCHED_MODEL_NORMAL:
 		if (ifclassq_sched_fq_codel != 0) {
 			err = pktsched_setup(ifq, PKTSCHEDT_FQ_CODEL,
-			    ifq->ifcq_sflags);
+			    ifq->ifcq_sflags, ptype);
 		} else {
 			err = pktsched_setup(ifq, PKTSCHEDT_QFQ,
-			    ifq->ifcq_sflags);
+			    ifq->ifcq_sflags, ptype);
 		}
 		break;
 	case IFNET_SCHED_MODEL_FQ_CODEL:
 		err = pktsched_setup(ifq, PKTSCHEDT_FQ_CODEL,
-		    ifq->ifcq_sflags);
+		    ifq->ifcq_sflags, ptype);
 		break;
 	default:
 		VERIFY(0);
 		/* NOTREACHED */
 	}
 
-	return (err);
+	return err;
 }
 
 void
 ifclassq_set_maxlen(struct ifclassq *ifq, u_int32_t maxqlen)
 {
 	IFCQ_LOCK(ifq);
-	if (maxqlen == 0)
+	if (maxqlen == 0) {
 		maxqlen = if_sndq_maxlen;
+	}
 	IFCQ_SET_MAXLEN(ifq, maxqlen);
 	IFCQ_UNLOCK(ifq);
 }
@@ -272,7 +224,7 @@ ifclassq_set_maxlen(struct ifclassq *ifq, u_int32_t maxqlen)
 u_int32_t
 ifclassq_get_maxlen(struct ifclassq *ifq)
 {
-	return (IFCQ_MAXLEN(ifq));
+	return IFCQ_MAXLEN(ifq);
 }
 
 int
@@ -292,226 +244,204 @@ ifclassq_get_len(struct ifclassq *ifq, mbuf_svc_class_t sc, u_int32_t *packets,
 	}
 	IFCQ_UNLOCK(ifq);
 
-	return (err);
+
+	return err;
+}
+
+inline void
+ifclassq_set_packet_metadata(struct ifclassq *ifq, struct ifnet *ifp,
+    classq_pkt_t *p)
+{
+	if (!IFNET_IS_CELLULAR(ifp)) {
+		return;
+	}
+
+	switch (p->cp_ptype) {
+	case QP_MBUF: {
+		struct mbuf *m = p->cp_mbuf;
+		m->m_pkthdr.pkt_flags |= PKTF_VALID_UNSENT_DATA;
+		m->m_pkthdr.bufstatus_if = IFCQ_BYTES(ifq);
+		m->m_pkthdr.bufstatus_sndbuf = ifp->if_sndbyte_unsent;
+		break;
+	}
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
 }
 
 errno_t
-ifclassq_enqueue(struct ifclassq *ifq, struct mbuf *m)
+ifclassq_enqueue(struct ifclassq *ifq, classq_pkt_t *p, boolean_t *pdrop)
 {
 	errno_t err;
 
-	IFCQ_LOCK_SPIN(ifq);
+	switch (p->cp_ptype) {
+	case QP_MBUF:
+		IFCQ_LOCK_SPIN(ifq);
+		break;
 
-#if PF_ALTQ
-	if (ALTQ_IS_ENABLED(IFCQ_ALTQ(ifq))) {
-		ALTQ_ENQUEUE(IFCQ_ALTQ(ifq), m, err);
-	} else {
-		u_int32_t qlen = IFCQ_LEN(ifq);
-		IFCQ_ENQUEUE(ifq, m, err);
-		if (IFCQ_LEN(ifq) > qlen)
-			ifq->ifcq_drain += (IFCQ_LEN(ifq) - qlen);
+	default:
+		IFCQ_LOCK(ifq);
+		break;
 	}
-#else /* !PF_ALTQ */
-	IFCQ_ENQUEUE(ifq, m, err);
-#endif /* PF_ALTQ */
 
+	IFCQ_ENQUEUE(ifq, p, err, pdrop);
 	IFCQ_UNLOCK(ifq);
-
-	return (err);
+	return err;
 }
 
 errno_t
 ifclassq_dequeue(struct ifclassq *ifq, u_int32_t pkt_limit,
-    u_int32_t byte_limit, struct mbuf **head,
-    struct mbuf **tail, u_int32_t *cnt, u_int32_t *len)
+    u_int32_t byte_limit, classq_pkt_t *head, classq_pkt_t *tail,
+    u_int32_t *cnt, u_int32_t *len)
 {
-	return (ifclassq_dequeue_common(ifq, MBUF_SC_UNSPEC, pkt_limit,
-	    byte_limit, head, tail, cnt, len, FALSE));
+	return ifclassq_dequeue_common(ifq, MBUF_SC_UNSPEC, pkt_limit,
+	           byte_limit, head, tail, cnt, len, FALSE);
 }
 
 errno_t
 ifclassq_dequeue_sc(struct ifclassq *ifq, mbuf_svc_class_t sc,
-    u_int32_t pkt_limit, struct mbuf **head, struct mbuf **tail,
-    u_int32_t *cnt, u_int32_t *len)
+    u_int32_t pkt_limit, u_int32_t byte_limit, classq_pkt_t *head,
+    classq_pkt_t *tail, u_int32_t *cnt, u_int32_t *len)
 {
-	return (ifclassq_dequeue_common(ifq, sc, pkt_limit,
-	    CLASSQ_DEQUEUE_MAX_BYTE_LIMIT, head, tail, cnt, len, TRUE));
+	return ifclassq_dequeue_common(ifq, sc, pkt_limit, byte_limit,
+	           head, tail, cnt, len, TRUE);
 }
 
 static errno_t
-ifclassq_dequeue_common(struct ifclassq *ifq, mbuf_svc_class_t sc,
-    u_int32_t pkt_limit, u_int32_t byte_limit, struct mbuf **head,
-    struct mbuf **tail, u_int32_t *cnt, u_int32_t *len, boolean_t drvmgt)
+ifclassq_dequeue_common_default(struct ifclassq *ifq, mbuf_svc_class_t sc,
+    u_int32_t pkt_limit, u_int32_t byte_limit, classq_pkt_t *head,
+    classq_pkt_t *tail, u_int32_t *cnt, u_int32_t *len, boolean_t drvmgt)
 {
 	struct ifnet *ifp = ifq->ifcq_ifp;
-	u_int32_t i = 0, l = 0;
-	struct mbuf **first, *last;
-#if PF_ALTQ
-	struct ifaltq *altq = IFCQ_ALTQ(ifq);
-	boolean_t draining;
-#endif /* PF_ALTQ */
+	u_int32_t i = 0, l = 0, lock_spin = 1;
+	classq_pkt_t first = CLASSQ_PKT_INITIALIZER(first);
+	classq_pkt_t last = CLASSQ_PKT_INITIALIZER(last);
 
 	VERIFY(!drvmgt || MBUF_VALID_SC(sc));
+
+
+	if (IFCQ_TBR_IS_ENABLED(ifq)) {
+		goto dequeue_loop;
+	}
 
 	/*
 	 * If the scheduler support dequeueing multiple packets at the
 	 * same time, call that one instead.
 	 */
-
-	if (ifq->ifcq_dequeue_multi != NULL) {
+	if (drvmgt && ifq->ifcq_dequeue_sc_multi != NULL) {
 		int err;
-		IFCQ_LOCK_SPIN(ifq);
-		err = ifq->ifcq_dequeue_multi(ifq, CLASSQDQ_REMOVE,
-		    pkt_limit, byte_limit, head, tail, cnt, len);
+
+		if (lock_spin) {
+			IFCQ_LOCK_SPIN(ifq);
+		} else {
+			IFCQ_LOCK(ifq);
+		}
+		err = ifq->ifcq_dequeue_sc_multi(ifq, sc, pkt_limit,
+		    byte_limit, head, tail, cnt, len);
 		IFCQ_UNLOCK(ifq);
 
-		if (err == 0 && (*head) == NULL)
+		if (err == 0 && head->cp_mbuf == NULL) {
 			err = EAGAIN;
-		return (err);
+		}
+		return err;
+	} else if (ifq->ifcq_dequeue_multi != NULL) {
+		int err;
+
+		if (lock_spin) {
+			IFCQ_LOCK_SPIN(ifq);
+		} else {
+			IFCQ_LOCK(ifq);
+		}
+
+		err = ifq->ifcq_dequeue_multi(ifq, pkt_limit, byte_limit,
+		    head, tail, cnt, len);
+		IFCQ_UNLOCK(ifq);
+
+		if (err == 0 && head->cp_mbuf == NULL) {
+			err = EAGAIN;
+		}
+		return err;
 	}
 
-	*head = NULL;
-	first = &(*head);
-	last = NULL;
+dequeue_loop:
 
-	IFCQ_LOCK_SPIN(ifq);
+	if (lock_spin) {
+		IFCQ_LOCK_SPIN(ifq);
+	} else {
+		IFCQ_LOCK(ifq);
+	}
 
 	while (i < pkt_limit && l < byte_limit) {
-#if PF_ALTQ
-		u_int32_t qlen;
-
-		qlen = IFCQ_LEN(ifq);
-		draining = IFCQ_IS_DRAINING(ifq);
-
 		if (drvmgt) {
-			if (IFCQ_TBR_IS_ENABLED(ifq))
-				IFCQ_TBR_DEQUEUE_SC(ifq, sc, *head);
-			else if (draining)
-				IFCQ_DEQUEUE_SC(ifq, sc, *head);
-			else if (ALTQ_IS_ENABLED(altq))
-				ALTQ_DEQUEUE_SC(altq, sc, *head);
-			else
-				*head = NULL;
+			if (IFCQ_TBR_IS_ENABLED(ifq)) {
+				IFCQ_TBR_DEQUEUE_SC(ifq, sc, head);
+			} else {
+				IFCQ_DEQUEUE_SC(ifq, sc, head);
+			}
 		} else {
-			if (IFCQ_TBR_IS_ENABLED(ifq))
-				IFCQ_TBR_DEQUEUE(ifq, *head);
-			else if (draining)
-				IFCQ_DEQUEUE(ifq, *head);
-			else if (ALTQ_IS_ENABLED(altq))
-				ALTQ_DEQUEUE(altq, *head);
-			else
-				*head = NULL;
+			if (IFCQ_TBR_IS_ENABLED(ifq)) {
+				IFCQ_TBR_DEQUEUE(ifq, head);
+			} else {
+				IFCQ_DEQUEUE(ifq, head);
+			}
 		}
 
-		if (draining && *head != NULL) {
-			VERIFY(ifq->ifcq_drain >= (qlen - IFCQ_LEN(ifq)));
-			ifq->ifcq_drain -= (qlen - IFCQ_LEN(ifq));
+		if (head->cp_mbuf == NULL) {
+			break;
 		}
-#else /* ! PF_ALTQ */
-		if (drvmgt) {
-			if (IFCQ_TBR_IS_ENABLED(ifq))
-				IFCQ_TBR_DEQUEUE_SC(ifq, sc, *head);
-			else
-				IFCQ_DEQUEUE_SC(ifq, sc, *head);
-		} else {
-			if (IFCQ_TBR_IS_ENABLED(ifq))
-				IFCQ_TBR_DEQUEUE(ifq, *head);
-			else
-				IFCQ_DEQUEUE(ifq, *head);
-		}
-#endif /* !PF_ALTQ */
 
-		if (*head == NULL)
+		if (first.cp_mbuf == NULL) {
+			first = *head;
+		}
+
+		switch (head->cp_ptype) {
+		case QP_MBUF:
+			head->cp_mbuf->m_nextpkt = NULL;
+			l += head->cp_mbuf->m_pkthdr.len;
+			ifclassq_set_packet_metadata(ifq, ifp, head);
+			if (last.cp_mbuf != NULL) {
+				last.cp_mbuf->m_nextpkt = head->cp_mbuf;
+			}
 			break;
 
-		(*head)->m_nextpkt = NULL;
-		last = *head;
 
-		l += (*head)->m_pkthdr.len;
-
-#if MEASURE_BW
-		(*head)->m_pkthdr.pkt_bwseq =
-		    atomic_add_64_ov(&(ifp->if_bw.cur_seq), m_pktlen(*head));
-#endif /* MEASURE_BW */
-		if (IFNET_IS_CELLULAR(ifp)) {
-			(*head)->m_pkthdr.pkt_flags |= PKTF_VALID_UNSENT_DATA;
-			(*head)->m_pkthdr.bufstatus_if = IFCQ_BYTES(ifq);
-			(*head)->m_pkthdr.bufstatus_sndbuf = ifp->if_sndbyte_unsent;
+		default:
+			VERIFY(0);
+			/* NOTREACHED */
+			__builtin_unreachable();
 		}
-		head = &(*head)->m_nextpkt;
+
+		last = *head;
 		i++;
 	}
 
 	IFCQ_UNLOCK(ifq);
 
-	if (tail != NULL)
+	if (tail != NULL) {
 		*tail = last;
-	if (cnt != NULL)
+	}
+	if (cnt != NULL) {
 		*cnt = i;
-	if (len != NULL)
+	}
+	if (len != NULL) {
 		*len = l;
-
-	return ((*first != NULL) ? 0 : EAGAIN);
-}
-
-struct mbuf *
-ifclassq_poll(struct ifclassq *ifq)
-{
-	return (ifclassq_poll_common(ifq, MBUF_SC_UNSPEC, FALSE));
-}
-
-struct mbuf *
-ifclassq_poll_sc(struct ifclassq *ifq, mbuf_svc_class_t sc)
-{
-	return (ifclassq_poll_common(ifq, sc, TRUE));
-}
-
-static struct mbuf *
-ifclassq_poll_common(struct ifclassq *ifq, mbuf_svc_class_t sc,
-    boolean_t drvmgt)
-{
-#if PF_ALTQ
-	struct ifaltq *altq = IFCQ_ALTQ(ifq);
-#endif /* PF_ALTQ */
-	struct mbuf *m;
-
-	VERIFY(!drvmgt || MBUF_VALID_SC(sc));
-
-#if PF_ALTQ
-	if (drvmgt) {
-		if (IFCQ_TBR_IS_ENABLED(ifq))
-			IFCQ_TBR_POLL_SC(ifq, sc, m);
-		else if (IFCQ_IS_DRAINING(ifq))
-			IFCQ_POLL_SC(ifq, sc, m);
-		else if (ALTQ_IS_ENABLED(altq))
-			ALTQ_POLL_SC(altq, sc, m);
-		else
-			m = NULL;
-	} else {
-		if (IFCQ_TBR_IS_ENABLED(ifq))
-			IFCQ_TBR_POLL(ifq, m);
-		else if (IFCQ_IS_DRAINING(ifq))
-			IFCQ_POLL(ifq, m);
-		else if (ALTQ_IS_ENABLED(altq))
-			ALTQ_POLL(altq, m);
-		else
-			m = NULL;
 	}
-#else /* ! PF_ALTQ */
-	if (drvmgt) {
-		if (IFCQ_TBR_IS_ENABLED(ifq))
-			IFCQ_TBR_POLL_SC(ifq, sc, m);
-		else
-			IFCQ_POLL_SC(ifq, sc, m);
-	} else {
-		if (IFCQ_TBR_IS_ENABLED(ifq))
-			IFCQ_TBR_POLL(ifq, m);
-		else
-			IFCQ_POLL(ifq, m);
-	}
-#endif /* !PF_ALTQ */
 
-	return (m);
+	*head = first;
+	return (first.cp_mbuf != NULL) ? 0 : EAGAIN;
+}
+
+static errno_t
+ifclassq_dequeue_common(struct ifclassq *ifq, mbuf_svc_class_t sc,
+    u_int32_t pkt_limit, u_int32_t byte_limit, classq_pkt_t *head,
+    classq_pkt_t *tail, u_int32_t *cnt, u_int32_t *len, boolean_t drvmgt)
+{
+	return ifclassq_dequeue_common_default(ifq, sc,
+	           pkt_limit, byte_limit, head, tail, cnt, len, drvmgt);
 }
 
 void
@@ -519,11 +449,6 @@ ifclassq_update(struct ifclassq *ifq, cqev_t ev)
 {
 	IFCQ_LOCK_ASSERT_HELD(ifq);
 	VERIFY(IFCQ_IS_READY(ifq));
-
-#if PF_ALTQ
-	if (ALTQ_IS_ENABLED(IFCQ_ALTQ(ifq)))
-		ALTQ_UPDATE(IFCQ_ALTQ(ifq), ev);
-#endif /* PF_ALTQ */
 	IFCQ_UPDATE(ifq, ev);
 }
 
@@ -531,13 +456,12 @@ int
 ifclassq_attach(struct ifclassq *ifq, u_int32_t type, void *discipline,
     ifclassq_enq_func enqueue, ifclassq_deq_func dequeue,
     ifclassq_deq_sc_func dequeue_sc, ifclassq_deq_multi_func dequeue_multi,
-    ifclassq_req_func request)
+    ifclassq_deq_sc_multi_func dequeue_sc_multi, ifclassq_req_func request)
 {
 	IFCQ_LOCK_ASSERT_HELD(ifq);
 
 	VERIFY(ifq->ifcq_disc == NULL);
 	VERIFY(enqueue != NULL);
-	VERIFY(!(dequeue != NULL && dequeue_sc != NULL));
 	VERIFY(request != NULL);
 
 	ifq->ifcq_type = type;
@@ -546,9 +470,10 @@ ifclassq_attach(struct ifclassq *ifq, u_int32_t type, void *discipline,
 	ifq->ifcq_dequeue = dequeue;
 	ifq->ifcq_dequeue_sc = dequeue_sc;
 	ifq->ifcq_dequeue_multi = dequeue_multi;
+	ifq->ifcq_dequeue_sc_multi = dequeue_sc_multi;
 	ifq->ifcq_request = request;
 
-	return (0);
+	return 0;
 }
 
 int
@@ -565,7 +490,7 @@ ifclassq_detach(struct ifclassq *ifq)
 	ifq->ifcq_dequeue_sc = NULL;
 	ifq->ifcq_request = NULL;
 
-	return (0);
+	return 0;
 }
 
 int
@@ -575,18 +500,20 @@ ifclassq_getqstats(struct ifclassq *ifq, u_int32_t qid, void *ubuf,
 	struct if_ifclassq_stats *ifqs;
 	int err;
 
-	if (*nbytes < sizeof (*ifqs))
-		return (EINVAL);
+	if (*nbytes < sizeof(*ifqs)) {
+		return EINVAL;
+	}
 
-	ifqs = _MALLOC(sizeof (*ifqs), M_TEMP, M_WAITOK | M_ZERO);
-	if (ifqs == NULL)
-		return (ENOMEM);
+	ifqs = _MALLOC(sizeof(*ifqs), M_TEMP, M_WAITOK | M_ZERO);
+	if (ifqs == NULL) {
+		return ENOMEM;
+	}
 
 	IFCQ_LOCK(ifq);
 	if (!IFCQ_IS_READY(ifq)) {
 		IFCQ_UNLOCK(ifq);
 		_FREE(ifqs, M_TEMP);
-		return (ENXIO);
+		return ENXIO;
 	}
 
 	ifqs->ifqs_len = IFCQ_LEN(ifq);
@@ -599,12 +526,13 @@ ifclassq_getqstats(struct ifclassq *ifq, u_int32_t qid, void *ubuf,
 	IFCQ_UNLOCK(ifq);
 
 	if (err == 0 && (err = copyout((caddr_t)ifqs,
-	    (user_addr_t)(uintptr_t)ubuf, sizeof (*ifqs))) == 0)
-		*nbytes = sizeof (*ifqs);
+	    (user_addr_t)(uintptr_t)ubuf, sizeof(*ifqs))) == 0) {
+		*nbytes = sizeof(*ifqs);
+	}
 
 	_FREE(ifqs, M_TEMP);
 
-	return (err);
+	return err;
 }
 
 const char *
@@ -638,7 +566,7 @@ ifclassq_ev2str(cqev_t ev)
 		break;
 	}
 
-	return (c);
+	return c;
 }
 
 /*
@@ -648,28 +576,28 @@ ifclassq_ev2str(cqev_t ev)
  *	depth:	byte << 32
  *
  */
-#define	TBR_SHIFT	32
-#define	TBR_SCALE(x)	((int64_t)(x) << TBR_SHIFT)
-#define	TBR_UNSCALE(x)	((x) >> TBR_SHIFT)
+#define TBR_SHIFT       32
+#define TBR_SCALE(x)    ((int64_t)(x) << TBR_SHIFT)
+#define TBR_UNSCALE(x)  ((x) >> TBR_SHIFT)
 
-struct mbuf *
-ifclassq_tbr_dequeue(struct ifclassq *ifq, int op)
+void
+ifclassq_tbr_dequeue(struct ifclassq *ifq, classq_pkt_t *pkt)
 {
-	return (ifclassq_tbr_dequeue_common(ifq, op, MBUF_SC_UNSPEC, FALSE));
+	ifclassq_tbr_dequeue_common(ifq, MBUF_SC_UNSPEC, FALSE, pkt);
 }
 
-struct mbuf *
-ifclassq_tbr_dequeue_sc(struct ifclassq *ifq, int op, mbuf_svc_class_t sc)
+void
+ifclassq_tbr_dequeue_sc(struct ifclassq *ifq, mbuf_svc_class_t sc,
+    classq_pkt_t *pkt)
 {
-	return (ifclassq_tbr_dequeue_common(ifq, op, sc, TRUE));
+	ifclassq_tbr_dequeue_common(ifq, sc, TRUE, pkt);
 }
 
-static struct mbuf *
-ifclassq_tbr_dequeue_common(struct ifclassq *ifq, int op,
-    mbuf_svc_class_t sc, boolean_t drvmgt)
+static void
+ifclassq_tbr_dequeue_common(struct ifclassq *ifq, mbuf_svc_class_t sc,
+    boolean_t drvmgt, classq_pkt_t *pkt)
 {
 	struct tb_regulator *tbr;
-	struct mbuf *m;
 	int64_t interval;
 	u_int64_t now;
 
@@ -678,65 +606,49 @@ ifclassq_tbr_dequeue_common(struct ifclassq *ifq, int op,
 	VERIFY(!drvmgt || MBUF_VALID_SC(sc));
 	VERIFY(IFCQ_TBR_IS_ENABLED(ifq));
 
+	*pkt = CLASSQ_PKT_INITIALIZER(*pkt);
 	tbr = &ifq->ifcq_tbr;
-	if (op == CLASSQDQ_REMOVE && tbr->tbr_lastop == CLASSQDQ_POLL) {
-		/* if this is a remove after poll, bypass tbr check */
-	} else {
-		/* update token only when it is negative */
-		if (tbr->tbr_token <= 0) {
-			now = read_machclk();
-			interval = now - tbr->tbr_last;
-			if (interval >= tbr->tbr_filluptime) {
+	/* update token only when it is negative */
+	if (tbr->tbr_token <= 0) {
+		now = read_machclk();
+		interval = now - tbr->tbr_last;
+		if (interval >= tbr->tbr_filluptime) {
+			tbr->tbr_token = tbr->tbr_depth;
+		} else {
+			tbr->tbr_token += interval * tbr->tbr_rate;
+			if (tbr->tbr_token > tbr->tbr_depth) {
 				tbr->tbr_token = tbr->tbr_depth;
-			} else {
-				tbr->tbr_token += interval * tbr->tbr_rate;
-				if (tbr->tbr_token > tbr->tbr_depth)
-					tbr->tbr_token = tbr->tbr_depth;
 			}
-			tbr->tbr_last = now;
 		}
-		/* if token is still negative, don't allow dequeue */
-		if (tbr->tbr_token <= 0)
-			return (NULL);
+		tbr->tbr_last = now;
+	}
+	/* if token is still negative, don't allow dequeue */
+	if (tbr->tbr_token <= 0) {
+		return;
 	}
 
 	/*
 	 * ifclassq takes precedence over ALTQ queue;
 	 * ifcq_drain count is adjusted by the caller.
 	 */
-#if PF_ALTQ
-	if (IFCQ_IS_DRAINING(ifq)) {
-#endif /* PF_ALTQ */
-		if (op == CLASSQDQ_POLL) {
-			if (drvmgt)
-				IFCQ_POLL_SC(ifq, sc, m);
-			else
-				IFCQ_POLL(ifq, m);
-		} else {
-			if (drvmgt)
-				IFCQ_DEQUEUE_SC(ifq, sc, m);
-			else
-				IFCQ_DEQUEUE(ifq, m);
-		}
-#if PF_ALTQ
+	if (drvmgt) {
+		IFCQ_DEQUEUE_SC(ifq, sc, pkt);
 	} else {
-		struct ifaltq *altq = IFCQ_ALTQ(ifq);
-		if (ALTQ_IS_ENABLED(altq)) {
-			if (drvmgt)
-				m = (*altq->altq_dequeue_sc)(altq, sc, op);
-			else
-				m = (*altq->altq_dequeue)(altq, op);
-		} else {
-			m = NULL;
+		IFCQ_DEQUEUE(ifq, pkt);
+	}
+
+	if (pkt->cp_mbuf != NULL) {
+		switch (pkt->cp_ptype) {
+		case QP_MBUF:
+			tbr->tbr_token -= TBR_SCALE(m_pktlen(pkt->cp_mbuf));
+			break;
+
+
+		default:
+			VERIFY(0);
+			/* NOTREACHED */
 		}
 	}
-#endif /* PF_ALTQ */
-
-	if (m != NULL && op == CLASSQDQ_REMOVE)
-		tbr->tbr_token -= TBR_SCALE(m_pktlen(m));
-	tbr->tbr_lastop = op;
-
-	return (m);
 }
 
 /*
@@ -763,27 +675,32 @@ ifclassq_tbr_set(struct ifclassq *ifq, struct tb_profile *profile,
 	if (profile->percent > 0) {
 		u_int64_t eff_rate;
 
-		if (profile->percent > 100)
-			return (EINVAL);
-		if ((eff_rate = ifp->if_output_bw.eff_bw) == 0)
-			return (ENODEV);
+		if (profile->percent > 100) {
+			return EINVAL;
+		}
+		if ((eff_rate = ifp->if_output_bw.eff_bw) == 0) {
+			return ENODEV;
+		}
 		rate = (eff_rate * profile->percent) / 100;
 	}
 
 	if (rate == 0) {
-		if (!IFCQ_TBR_IS_ENABLED(ifq))
-			return (ENOENT);
+		if (!IFCQ_TBR_IS_ENABLED(ifq)) {
+			return 0;
+		}
 
-		if (pktsched_verbose)
+		if (pktsched_verbose) {
 			printf("%s: TBR disabled\n", if_name(ifp));
+		}
 
 		/* disable this TBR */
 		ifq->ifcq_flags &= ~IFCQF_TBR;
-		bzero(tbr, sizeof (*tbr));
+		bzero(tbr, sizeof(*tbr));
 		ifnet_set_start_cycle(ifp, NULL);
-		if (update)
+		if (update) {
 			ifclassq_update(ifq, CLASSQ_EV_LINK_BANDWIDTH);
-		return (0);
+		}
+		return 0;
 	}
 
 	if (pktsched_verbose) {
@@ -793,7 +710,7 @@ ifclassq_tbr_set(struct ifclassq *ifq, struct tb_profile *profile,
 	}
 
 	/* set the new TBR */
-	bzero(tbr, sizeof (*tbr));
+	bzero(tbr, sizeof(*tbr));
 	tbr->tbr_rate_raw = rate;
 	tbr->tbr_percent = profile->percent;
 	ifq->ifcq_flags |= IFCQF_TBR;
@@ -814,15 +731,17 @@ ifclassq_tbr_set(struct ifclassq *ifq, struct tb_profile *profile,
 		int64_t ival, idepth = 0;
 		int i;
 
-		if (mtu < IF_MINMTU)
+		if (mtu < IF_MINMTU) {
 			mtu = IF_MINMTU;
+		}
 
 		ival = pktsched_nsecs_to_abstime(10 * NSEC_PER_MSEC); /* 10ms */
 
-		for (i = 1; ; i++) {
+		for (i = 1;; i++) {
 			idepth = TBR_SCALE(i * mtu);
-			if ((idepth / tbr->tbr_rate) > ival)
+			if ((idepth / tbr->tbr_rate) > ival) {
 				break;
+			}
 		}
 		VERIFY(idepth > 0);
 
@@ -840,11 +759,10 @@ ifclassq_tbr_set(struct ifclassq *ifq, struct tb_profile *profile,
 	}
 	tbr->tbr_token = tbr->tbr_depth;
 	tbr->tbr_last = read_machclk();
-	tbr->tbr_lastop = CLASSQDQ_REMOVE;
 
 	if (tbr->tbr_rate > 0 && (ifp->if_flags & IFF_UP)) {
 		struct timespec ts =
-		    { 0, pktsched_abs_to_nsecs(tbr->tbr_filluptime) };
+		{ 0, pktsched_abs_to_nsecs(tbr->tbr_filluptime) };
 		if (pktsched_verbose) {
 			printf("%s: TBR calculated tokens %lld "
 			    "filluptime %llu ns\n", if_name(ifp),
@@ -865,27 +783,30 @@ ifclassq_tbr_set(struct ifclassq *ifq, struct tb_profile *profile,
 		}
 		ifnet_set_start_cycle(ifp, NULL);
 	}
-	if (update && tbr->tbr_rate_raw != old_rate)
+	if (update && tbr->tbr_rate_raw != old_rate) {
 		ifclassq_update(ifq, CLASSQ_EV_LINK_BANDWIDTH);
+	}
 
-	return (0);
+	return 0;
 }
 
 void
 ifclassq_calc_target_qdelay(struct ifnet *ifp, u_int64_t *if_target_qdelay)
 {
-	u_int64_t target_qdelay = 0;
-	target_qdelay = IFCQ_TARGET_QDELAY(&ifp->if_snd);
+	u_int64_t qdelay = 0;
+	qdelay = IFCQ_TARGET_QDELAY(&ifp->if_snd);
 
-	if (ifclassq_target_qdelay != 0)
-		target_qdelay = ifclassq_target_qdelay;
+	if (ifclassq_target_qdelay != 0) {
+		qdelay = ifclassq_target_qdelay;
+	}
 
 	/*
 	 * If we do not know the effective bandwidth, use the default
 	 * target queue delay.
 	 */
-	if (target_qdelay == 0)
-		target_qdelay = IFQ_TARGET_DELAY;
+	if (qdelay == 0) {
+		qdelay = IFQ_TARGET_DELAY;
+	}
 
 	/*
 	 * If a delay has been added to ifnet start callback for
@@ -893,10 +814,11 @@ ifclassq_calc_target_qdelay(struct ifnet *ifp, u_int64_t *if_target_qdelay)
 	 * because the packets can be in the queue longer.
 	 */
 	if ((ifp->if_eflags & IFEF_ENQUEUE_MULTI) &&
-	    ifp->if_start_delay_timeout > 0)
-		target_qdelay += ifp->if_start_delay_timeout;
+	    ifp->if_start_delay_timeout > 0) {
+		qdelay += ifp->if_start_delay_timeout;
+	}
 
-	*(if_target_qdelay) = target_qdelay;
+	*(if_target_qdelay) = qdelay;
 }
 
 void
@@ -905,12 +827,20 @@ ifclassq_calc_update_interval(u_int64_t *update_interval)
 	u_int64_t uint = 0;
 
 	/* If the system level override is set, use it */
-	if (ifclassq_update_interval != 0)
+	if (ifclassq_update_interval != 0) {
 		uint = ifclassq_update_interval;
+	}
 
 	/* Otherwise use the default value */
-	if (uint == 0)
+	if (uint == 0) {
 		uint = IFQ_UPDATE_INTERVAL;
+	}
 
 	*update_interval = uint;
+}
+
+void
+ifclassq_reap_caches(boolean_t purge)
+{
+	fq_codel_reap_caches(purge);
 }

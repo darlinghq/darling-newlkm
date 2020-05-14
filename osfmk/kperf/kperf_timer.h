@@ -4,7 +4,7 @@
  * Copyright (c) 2011 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -13,10 +13,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -24,7 +24,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
@@ -34,8 +34,8 @@
 struct kperf_timer {
 	struct timer_call tcall;
 	uint64_t period;
-	unsigned actionid;
-	volatile unsigned active;
+	_Atomic uint32_t action_state;
+	uint32_t actionid;
 
 	/*
 	 * A bitmap of CPUs that have a pending timer to service.  On Intel, it
@@ -44,7 +44,11 @@ struct kperf_timer {
 	 * the signal handler to multiplex simultaneous fires of different
 	 * timers.
 	 */
-	bitmap_t pending_cpus;
+	_Atomic bitmap_t pending_cpus;
+
+#if DEVELOPMENT || DEBUG
+	uint64_t fire_time;
+#endif /* DEVELOPMENT || DEBUG */
 };
 
 extern struct kperf_timer *kperf_timerv;
@@ -58,6 +62,31 @@ void kperf_ipi_handler(void *param);
 // return values from the action
 #define TIMER_REPROGRAM (0)
 #define TIMER_STOP      (1)
+
+#if defined(__x86_64__)
+
+#define KP_MIN_PERIOD_NS        (20 * NSEC_PER_USEC)
+#define KP_MIN_PERIOD_BG_NS     (1 * NSEC_PER_MSEC)
+#define KP_MIN_PERIOD_PET_NS    (2 * NSEC_PER_MSEC)
+#define KP_MIN_PERIOD_PET_BG_NS (5 * NSEC_PER_MSEC)
+
+#elif defined(__arm64__)
+
+#define KP_MIN_PERIOD_NS        (50 * NSEC_PER_USEC)
+#define KP_MIN_PERIOD_BG_NS     (1 * NSEC_PER_MSEC)
+#define KP_MIN_PERIOD_PET_NS    (2 * NSEC_PER_MSEC)
+#define KP_MIN_PERIOD_PET_BG_NS (10 * NSEC_PER_MSEC)
+
+#elif defined(__arm__)
+
+#define KP_MIN_PERIOD_NS        (100 * NSEC_PER_USEC)
+#define KP_MIN_PERIOD_BG_NS     (10 * NSEC_PER_MSEC)
+#define KP_MIN_PERIOD_PET_NS    (2 * NSEC_PER_MSEC)
+#define KP_MIN_PERIOD_PET_BG_NS (50 * NSEC_PER_MSEC)
+
+#else /* defined(__x86_64__) */
+#error "unsupported architecture"
+#endif /* defined(__x86_64__) */
 
 /* getters and setters on timers */
 unsigned kperf_timer_get_count(void);

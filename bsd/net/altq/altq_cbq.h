@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -60,27 +60,10 @@
  */
 
 #ifndef _NET_ALTQ_ALTQ_CBQ_H_
-#define	_NET_ALTQ_ALTQ_CBQ_H_
+#define _NET_ALTQ_ALTQ_CBQ_H_
 
 #include <net/pfvar.h>
 #include <net/altq/altq.h>
 #include <net/pktsched/pktsched_cbq.h>
 
-#ifdef BSD_KERNEL_PRIVATE
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-extern int	altq_cbq_pfattach(struct pf_altq *);
-extern int	altq_cbq_add(struct pf_altq *);
-extern int	altq_cbq_remove(struct pf_altq *);
-extern int	altq_cbq_add_queue(struct pf_altq *);
-extern int	altq_cbq_remove_queue(struct pf_altq *);
-extern int	altq_cbq_getqstats(struct pf_altq *, void *, int *);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* BSD_KERNEL_PRIVATE */
 #endif /* !_NET_ALTQ_ALTQ_CBQ_H_ */

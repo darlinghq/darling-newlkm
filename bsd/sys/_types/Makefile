@@ -17,6 +17,7 @@ EXPINC_SUBDIRS =
 DATAFILES = \
 	_blkcnt_t.h \
 	_blksize_t.h \
+	_caddr_t.h \
 	_clock_t.h \
 	_ct_rune_t.h \
 	_dev_t.h \
@@ -79,12 +80,48 @@ DATAFILES = \
 	_ucontext.h \
 	_ucontext64.h \
 	_uid_t.h \
+	_u_char.h \
+	_u_int.h \
+	_u_int16_t.h \
+	_u_int32_t.h \
+	_u_int64_t.h \
+	_u_int8_t.h \
+	_u_short.h \
+	_uintptr_t.h \
+	_useconds_t.h \
+	_uuid_t.h \
+	_va_list.h \
+	_wchar_t.h \
+	_wint_t.h \
+	_user32_timex.h \
+	_user64_timex.h \
+	_user32_ntptimeval.h \
+	_user64_ntptimeval.h \
+
+# Installs header file for DriverKit drivers -
+#	  $(DSTROOT)/System/DriverKit/System/usr/include/
+DRIVERKIT_DATAFILES = \
+	_ct_rune_t.h \
+	_errno_t.h \
+	_int16_t.h \
+	_int32_t.h \
+	_int64_t.h \
+	_int8_t.h \
+	_intptr_t.h \
+	_mbstate_t.h \
+	_null.h \
+	_offsetof.h \
+	_os_inline.h \
+	_ptrdiff_t.h \
+	_rsize_t.h \
+	_rune_t.h \
+	_size_t.h \
+	_ssize_t.h \
 	_u_int16_t.h \
 	_u_int32_t.h \
 	_u_int64_t.h \
 	_u_int8_t.h \
 	_uintptr_t.h \
-	_useconds_t.h \
 	_uuid_t.h \
 	_va_list.h \
 	_wchar_t.h \
@@ -113,6 +150,8 @@ PRIVATE_KERNELFILES = \
 
 # /System/Library/Frameworks/System.framework/Headers and /usr/include
 INSTALL_MI_LIST	= ${DATAFILES}
+
+INSTALL_DRIVERKIT_MI_LIST = ${DRIVERKIT_DATAFILES}
 
 INSTALL_MI_GEN_LIST =
 

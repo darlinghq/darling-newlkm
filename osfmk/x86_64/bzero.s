@@ -59,26 +59,21 @@
 #include <i386/asm.h>
 
 /*
+ * void *secure_memset(void * addr, int pattern, size_t length)
+ *
+ * It is important that this function remains defined in assembly to avoid
+ * compiler optimizations.
+ */
+ENTRY(secure_memset)
+/*
  * void *memset(void * addr, int pattern, size_t length)
  */
-
+/* TODO: add variants for use with non-cacheable ranges */
 ENTRY(memset)
 	movq	%rdi, %r8
 	movq	%rsi, %rax		/* move pattern (arg2) to rax */
-	movb	%al,%ah			/* fill out pattern */
-	movw	%ax,%cx
-	shll	$16,%eax
-	movw	%cx,%ax	
-	mov		%eax, %ecx
-	shlq	$32,%rax
-	orq		%rcx, %rax 
-	cld						/* reset direction flag */
-	movq 	%rdx, %rcx		/* mov quads first */
-	shrq	$3, %rcx
-	rep
-	stosq
-	movq	%rdx,%rcx		/* mov bytes */
-	andq	$7,%rcx
+	movq	%rdx, %rcx		/* mov bytes */
+	cld				/* reset direction flag */
 	rep
 	stosb
 	movq	%r8 ,%rax		/* returns its first argument */
@@ -112,13 +107,8 @@ ENTRY(memset_word)
 Entry(blkclr)
 ENTRY2(bzero,__bzero)
 	movq	%rsi,%rcx
-	xorq	%rax,%rax
-	shrq	$3,%rcx
+	xor	%eax,%eax
 	cld
-	rep
-	stosq
-	movq	%rsi,%rcx
-	andq	$7,%rcx
 	rep
 	stosb
 	ret

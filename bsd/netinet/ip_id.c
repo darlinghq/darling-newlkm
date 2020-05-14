@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -115,7 +115,7 @@
 /*
  * Size of L (see comments above on the lower and upper limits.)
  */
-#define	ARRAY_SIZE	(4096)
+#define ARRAY_SIZE      (4096)
 
 static uint16_t *id_array = NULL;
 static bitstr_t *id_bits = NULL;
@@ -130,14 +130,14 @@ static lck_grp_t *ipid_lock_grp;
 static lck_grp_attr_t *ipid_lock_grp_attr;
 
 SYSCTL_UINT(_net_inet_ip, OID_AUTO, random_id_statistics,
-	CTLFLAG_RW | CTLFLAG_LOCKED, &random_id_statistics, 0,
-	"Enable IP ID statistics");
+    CTLFLAG_RW | CTLFLAG_LOCKED, &random_id_statistics, 0,
+    "Enable IP ID statistics");
 SYSCTL_QUAD(_net_inet_ip, OID_AUTO, random_id_collisions,
-	CTLFLAG_RD | CTLFLAG_LOCKED, &random_id_collisions,
-	"Count of IP ID collisions");
+    CTLFLAG_RD | CTLFLAG_LOCKED, &random_id_collisions,
+    "Count of IP ID collisions");
 SYSCTL_QUAD(_net_inet_ip, OID_AUTO, random_id_total,
-	CTLFLAG_RD | CTLFLAG_LOCKED, &random_id_total,
-	"Count of IP IDs created");
+    CTLFLAG_RD | CTLFLAG_LOCKED, &random_id_total,
+    "Count of IP IDs created");
 
 /*
  * Called once from ip_init().
@@ -155,7 +155,7 @@ ip_initid(void)
 	ipid_lock_attr = lck_attr_alloc_init();
 	lck_mtx_init(&ipid_lock, ipid_lock_grp, ipid_lock_attr);
 
-	id_array = (uint16_t *)_MALLOC(ARRAY_SIZE * sizeof (uint16_t),
+	id_array = (uint16_t *)_MALLOC(ARRAY_SIZE * sizeof(uint16_t),
 	    M_TEMP, M_WAITOK | M_ZERO);
 	id_bits = (bitstr_t *)_MALLOC(bitstr_size(65536), M_TEMP,
 	    M_WAITOK | M_ZERO);
@@ -182,8 +182,9 @@ ip_randomid(void)
 	 * Given that we don't allow the size of the array to change, accessing
 	 * id_array and id_bits prior to acquiring the lock below is safe.
 	 */
-	if (id_array == NULL || ip_use_randomid == 0)
-		return (htons(ip_id++));
+	if (id_array == NULL || ip_use_randomid == 0) {
+		return htons(ip_id++);
+	}
 
 	/*
 	 * To avoid a conflict with the zeros that the array is initially
@@ -192,24 +193,27 @@ ip_randomid(void)
 	 */
 	new_id = 0;
 	do {
-		if (random_id_statistics && new_id != 0)
+		if (random_id_statistics && new_id != 0) {
 			random_id_collisions++;
-		read_random(&new_id, sizeof (new_id));
-	} while (bit_test(id_bits, new_id) || new_id == 0);
+		}
+		read_random(&new_id, sizeof(new_id));
+	} while (bitstr_test(id_bits, new_id) || new_id == 0);
 
 	/*
 	 * These require serialization to maintain correctness.
 	 */
 	lck_mtx_lock_spin(&ipid_lock);
-	bit_clear(id_bits, id_array[array_ptr]);
-	bit_set(id_bits, new_id);
+	bitstr_clear(id_bits, id_array[array_ptr]);
+	bitstr_set(id_bits, new_id);
 	id_array[array_ptr] = new_id;
-	if (++array_ptr == ARRAY_SIZE)
+	if (++array_ptr == ARRAY_SIZE) {
 		array_ptr = 0;
+	}
 	lck_mtx_unlock(&ipid_lock);
 
-	if (random_id_statistics)
+	if (random_id_statistics) {
 		random_id_total++;
+	}
 
-	return (new_id);
+	return new_id;
 }

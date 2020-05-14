@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2019 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,91 +22,68 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#ifndef	_PRNG_RANDOM_H_
-#define	_PRNG_RANDOM_H_
+#ifndef _PRNG_RANDOM_H_
+#define _PRNG_RANDOM_H_
 
 __BEGIN_DECLS
 
+#include <corecrypto/cckprng.h>
+
 #ifdef XNU_KERNEL_PRIVATE
 
-#define	ENTROPY_BUFFER_BYTE_SIZE	64
+#define ENTROPY_BUFFER_BYTE_SIZE 32
 
-#define	ENTROPY_BUFFER_SIZE		ENTROPY_BUFFER_BYTE_SIZE/sizeof(uint32_t)
+#define ENTROPY_BUFFER_SIZE (ENTROPY_BUFFER_BYTE_SIZE / sizeof(uint32_t))
+
+// This mask can be applied to EntropyData.sample_count to get an
+// index suitable for storing the next sample in
+// EntropyData.buffer. Note that ENTROPY_BUFFER_SIZE must be a power
+// of two for the following mask calculation to be valid.
+#define ENTROPY_BUFFER_INDEX_MASK (ENTROPY_BUFFER_SIZE - 1)
 
 typedef struct entropy_data {
-	uint32_t	*index_ptr;
-	uint32_t	buffer[ENTROPY_BUFFER_SIZE];
+	/*
+	 * TODO: Should sample_count be volatile?  Are we exposed to any races that
+	 * we care about if it is not?
+	 */
+
+	// At 32 bits, this counter can overflow. Since we're primarily
+	// interested in the delta from one read to the next, we don't
+	// worry about this too much.
+	uint32_t sample_count;
+	uint32_t buffer[ENTROPY_BUFFER_SIZE];
 } entropy_data_t;
 
 extern entropy_data_t EntropyData;
 
 /* Trace codes for DBG_SEC_KERNEL: */
-#define ENTROPY_READ(n)	SECURITYDBG_CODE(DBG_SEC_KERNEL, n) /* n: 0 .. 3 */
+#define ENTROPY_READ(n) SECURITYDBG_CODE(DBG_SEC_KERNEL, n) /* n: 0 .. 3 */
 
-/*
- * Early_random implementation params: */
-#define	EARLY_RANDOM_SEED_SIZE		(16)
-#define	EARLY_RANDOM_STATE_STATIC_SIZE	(264)
+void random_cpu_init(int cpu);
 
-#if defined (__x86_64__)
-#define current_prng_context()	(current_cpu_datap()->cpu_prng)
-#define master_prng_context()	(cpu_datap(master_cpu)->cpu_prng)
-#else
-#error architecture unknown
-#endif
-
-#include <corecrypto/ccdrbg.h>
-#include <corecrypto/ccsha1.h>
-
-typedef struct	ccdrbg_info ccdrbg_info_t;
-typedef void  (*ccdrbg_factory_t)(ccdrbg_info_t *info, const void *custom);
-
-extern void	ccdrbg_factory_yarrow(ccdrbg_info_t *info, const void *custom);
-
-void		prng_factory_register(ccdrbg_factory_t factory);
-void		prng_cpu_init(int cpu);
-
-void		entropy_buffer_read(char *buffer, unsigned int *count);
-void		entropy_boot_trace(void);
-
-/*
- * Wrapper for requesting a CCDRBG operation.
- * This macro makes the DRBG call with pre-emption disabled to ensure that
- * any attempt to block will cause a panic. And the operation is timed and
- * cannot exceed 10msec (for development kernels).
- * But skip this while we retain Yarrow.
- */
-#define YARROW 1
-#if YARROW
-#define PRNG_CCDRBG(op)					\
-MACRO_BEGIN						\
-	op;						\
-MACRO_END
-#else
-#define PRNG_CCDRBG(op)					\
-MACRO_BEGIN						\
-	uint64_t	start;				\
-	uint64_t	stop;				\
-	disable_preemption();				\
-	start = mach_absolute_time();			\
-	op;						\
-	stop = mach_absolute_time();			\
-	enable_preemption();				\
-	assert(stop - start < 10*NSEC_PER_MSEC ||	\
-	       machine_timeout_suspended());		\
-	(void) start;					\
-	(void) stop;					\
-MACRO_END
-#endif
 
 #endif /* XNU_KERNEL_PRIVATE */
 
-/* /dev/random's PRNG is reseeded after generating this many bytes: */
-#define	RESEED_BYTES (17597)
+void register_and_init_prng(struct cckprng_ctx *ctx, const struct cckprng_funcs *funcs);
+
+#include <kern/simple_lock.h>
+/* Definitions for boolean PRNG */
+#define RANDOM_BOOL_GEN_SEED_COUNT 4
+struct bool_gen {
+	unsigned int seed[RANDOM_BOOL_GEN_SEED_COUNT];
+	unsigned int state;
+	decl_simple_lock_data(, lock);
+};
+
+extern void random_bool_init(struct bool_gen * bg);
+
+extern void random_bool_gen_entropy(struct bool_gen * bg, unsigned int * buffer, int count);
+
+extern unsigned int random_bool_gen_bits(struct bool_gen * bg, unsigned int * buffer, unsigned int count, unsigned int numbits);
 
 __END_DECLS
 

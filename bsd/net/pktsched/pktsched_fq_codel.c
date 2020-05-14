@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2016-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -35,21 +35,25 @@
 #include <net/classq/classq_fq_codel.h>
 #include <net/pktsched/pktsched_fq_codel.h>
 
-
 static size_t fq_if_size;
 static struct zone *fq_if_zone;
 
-static fq_if_t *fq_if_alloc(struct ifnet *ifp, int how);
+static fq_if_t *fq_if_alloc(struct ifnet *, classq_pkt_type_t);
 static void fq_if_destroy(fq_if_t *fqs);
 static void fq_if_classq_init(fq_if_t *fqs, u_int32_t priority,
     u_int32_t quantum, u_int32_t drr_max, u_int32_t svc_class);
-static int fq_if_enqueue_classq(struct ifclassq *ifq, struct mbuf *m);
-static struct mbuf *fq_if_dequeue_classq(struct ifclassq *ifq, cqdq_op_t);
-static int fq_if_dequeue_classq_multi(struct ifclassq *, cqdq_op_t,
-    u_int32_t, u_int32_t, struct mbuf **, struct mbuf **, u_int32_t *,
-    u_int32_t *);
+static int fq_if_enqueue_classq(struct ifclassq *, classq_pkt_t *, boolean_t *);
+static void fq_if_dequeue_classq(struct ifclassq *, classq_pkt_t *);
+static int fq_if_dequeue_classq_multi(struct ifclassq *, u_int32_t,
+    u_int32_t, classq_pkt_t *, classq_pkt_t *, u_int32_t *, u_int32_t *);
+static void fq_if_dequeue_sc_classq(struct ifclassq *, mbuf_svc_class_t,
+    classq_pkt_t *);
+static int fq_if_dequeue_sc_classq_multi(struct ifclassq *,
+    mbuf_svc_class_t, u_int32_t, u_int32_t, classq_pkt_t *,
+    classq_pkt_t *, u_int32_t *, u_int32_t *);
 static void fq_if_dequeue(fq_if_t *, fq_if_classq_t *, u_int32_t,
-    u_int32_t, struct mbuf **, struct mbuf **, u_int32_t *, u_int32_t *);
+    u_int32_t, classq_pkt_t *, classq_pkt_t *, u_int32_t *,
+    u_int32_t *, boolean_t drvmgmt);
 static int fq_if_request_classq(struct ifclassq *ifq, cqrq_t op, void *arg);
 void fq_if_stat_sc(fq_if_t *fqs, cqrq_stat_sc_t *stat);
 static void fq_if_purge(fq_if_t *);
@@ -59,18 +63,77 @@ static void fq_if_empty_new_flow(fq_t *fq, fq_if_classq_t *fq_cl,
     bool add_to_old);
 static void fq_if_empty_old_flow(fq_if_t *fqs, fq_if_classq_t *fq_cl,
     fq_t *fq, bool remove_hash);
-static void fq_if_destroy_flow(fq_if_t *fqs, fq_if_classq_t *fq_cl,
-    fq_t *fq);
 
-#define	FQ_IF_ZONE_MAX	32	/* Maximum elements in zone */
-#define	FQ_IF_ZONE_NAME	"pktsched_fq_if" /* zone for fq_if class */
+#define FQ_IF_ZONE_MAX  32      /* Maximum elements in zone */
+#define FQ_IF_ZONE_NAME "pktsched_fq_if" /* zone for fq_if class */
 
-#define	FQ_IF_FLOW_HASH_ID(_flowid_) \
+#define FQ_IF_FLOW_HASH_ID(_flowid_) \
 	(((_flowid_) >> FQ_IF_HASH_TAG_SHIFT) & FQ_IF_HASH_TAG_MASK)
 
-#define	FQ_IF_CLASSQ_IDLE(_fcl_) \
+#define FQ_IF_CLASSQ_IDLE(_fcl_) \
 	(STAILQ_EMPTY(&(_fcl_)->fcl_new_flows) && \
 	STAILQ_EMPTY(&(_fcl_)->fcl_old_flows))
+
+typedef void (* fq_if_append_pkt_t)(classq_pkt_t *, classq_pkt_t *);
+typedef boolean_t (* fq_getq_flow_t)(fq_if_t *, fq_if_classq_t *, fq_t *,
+    u_int32_t, u_int32_t, classq_pkt_t *, classq_pkt_t *, u_int32_t *,
+    u_int32_t *, boolean_t *, u_int32_t);
+
+static void
+fq_if_append_mbuf(classq_pkt_t *pkt, classq_pkt_t *next_pkt)
+{
+	pkt->cp_mbuf->m_nextpkt = next_pkt->cp_mbuf;
+}
+
+
+
+static boolean_t
+fq_getq_flow_mbuf(fq_if_t *fqs, fq_if_classq_t *fq_cl, fq_t *fq,
+    u_int32_t byte_limit, u_int32_t pkt_limit, classq_pkt_t *top,
+    classq_pkt_t *last, u_int32_t *byte_cnt, u_int32_t *pkt_cnt,
+    boolean_t *qempty, u_int32_t pflags)
+{
+	u_int32_t plen;
+	pktsched_pkt_t pkt;
+	boolean_t limit_reached = FALSE;
+	struct ifclassq *ifq = fqs->fqs_ifq;
+	struct ifnet *ifp = ifq->ifcq_ifp;
+
+	while (fq->fq_deficit > 0 && limit_reached == FALSE &&
+	    !MBUFQ_EMPTY(&fq->fq_mbufq)) {
+		_PKTSCHED_PKT_INIT(&pkt);
+		fq_getq_flow(fqs, fq, &pkt);
+		ASSERT(pkt.pktsched_ptype == QP_MBUF);
+
+		plen = pktsched_get_pkt_len(&pkt);
+		fq->fq_deficit -= plen;
+		pkt.pktsched_pkt_mbuf->m_pkthdr.pkt_flags |= pflags;
+
+		if (top->cp_mbuf == NULL) {
+			*top = pkt.pktsched_pkt;
+		} else {
+			ASSERT(last->cp_mbuf != NULL);
+			ASSERT(last->cp_mbuf->m_nextpkt == NULL);
+			last->cp_mbuf->m_nextpkt = pkt.pktsched_pkt_mbuf;
+		}
+		*last = pkt.pktsched_pkt;
+		last->cp_mbuf->m_nextpkt = NULL;
+		fq_cl->fcl_stat.fcl_dequeue++;
+		fq_cl->fcl_stat.fcl_dequeue_bytes += plen;
+		*pkt_cnt += 1;
+		*byte_cnt += plen;
+
+		ifclassq_set_packet_metadata(ifq, ifp, &pkt.pktsched_pkt);
+
+		/* Check if the limit is reached */
+		if (*pkt_cnt >= pkt_limit || *byte_cnt >= byte_limit) {
+			limit_reached = TRUE;
+		}
+	}
+
+	*qempty = MBUFQ_EMPTY(&fq->fq_mbufq);
+	return limit_reached;
+}
 
 void
 fq_codel_scheduler_init(void)
@@ -78,7 +141,7 @@ fq_codel_scheduler_init(void)
 	/* Initialize the zone for flow queue structures */
 	fq_codel_init();
 
-	fq_if_size = sizeof (fq_if_t);
+	fq_if_size = sizeof(fq_if_t);
 	fq_if_zone = zinit(fq_if_size, (FQ_IF_ZONE_MAX * fq_if_size), 0,
 	    FQ_IF_ZONE_NAME);
 	if (fq_if_zone == NULL) {
@@ -87,45 +150,75 @@ fq_codel_scheduler_init(void)
 	}
 	zone_change(fq_if_zone, Z_EXPAND, TRUE);
 	zone_change(fq_if_zone, Z_CALLERACCT, TRUE);
-
 }
 
 fq_if_t *
-fq_if_alloc(struct ifnet *ifp, int how)
+fq_if_alloc(struct ifnet *ifp, classq_pkt_type_t ptype)
 {
 	fq_if_t *fqs;
-	fqs = (how == M_WAITOK) ? zalloc(fq_if_zone) :
-	    zalloc_noblock(fq_if_zone);
-	if (fqs == NULL)
-		return (NULL);
+	fqs = zalloc(fq_if_zone);
+	if (fqs == NULL) {
+		return NULL;
+	}
 
 	bzero(fqs, fq_if_size);
 	fqs->fqs_ifq = &ifp->if_snd;
+	fqs->fqs_ptype = ptype;
 
 	/* Calculate target queue delay */
 	ifclassq_calc_target_qdelay(ifp, &fqs->fqs_target_qdelay);
 
 	/* Calculate update interval */
 	ifclassq_calc_update_interval(&fqs->fqs_update_interval);
-	fqs->fqs_pkt_droplimit = FQ_IF_MAX_PKT_LIMIT;
+
+	/* Configure packet drop limit across all queues */
+	fqs->fqs_pkt_droplimit = IFCQ_PKT_DROP_LIMIT(&ifp->if_snd);
 	STAILQ_INIT(&fqs->fqs_fclist);
-	return (fqs);
+	return fqs;
 }
 
 void
 fq_if_destroy(fq_if_t *fqs)
 {
-	IFCQ_LOCK_ASSERT_HELD(fqs->fqs_ifq);
 	fq_if_purge(fqs);
 	fqs->fqs_ifq = NULL;
 	zfree(fq_if_zone, fqs);
 }
 
 static inline u_int32_t
-fq_if_service_to_priority(mbuf_svc_class_t svc)
+fq_if_service_to_priority(fq_if_t *fqs, mbuf_svc_class_t svc)
 {
 	u_int32_t pri;
 
+	if (fqs->fqs_flags & FQS_DRIVER_MANAGED) {
+		switch (svc) {
+		case MBUF_SC_BK_SYS:
+		case MBUF_SC_BK:
+			pri = FQ_IF_BK_INDEX;
+			break;
+		case MBUF_SC_BE:
+		case MBUF_SC_RD:
+		case MBUF_SC_OAM:
+			pri = FQ_IF_BE_INDEX;
+			break;
+		case MBUF_SC_AV:
+		case MBUF_SC_RV:
+		case MBUF_SC_VI:
+		case MBUF_SC_SIG:
+			pri = FQ_IF_VI_INDEX;
+			break;
+		case MBUF_SC_VO:
+		case MBUF_SC_CTL:
+			pri = FQ_IF_VO_INDEX;
+			break;
+		default:
+			pri = FQ_IF_BE_INDEX; /* Use best effort by default */
+			break;
+		}
+		return pri;
+	}
+
+	/* scheduler is not managed by the driver */
 	switch (svc) {
 	case MBUF_SC_BK_SYS:
 		pri = FQ_IF_BK_SYS_INDEX;
@@ -151,6 +244,9 @@ fq_if_service_to_priority(mbuf_svc_class_t svc)
 	case MBUF_SC_VI:
 		pri = FQ_IF_VI_INDEX;
 		break;
+	case MBUF_SC_SIG:
+		pri = FQ_IF_SIG_INDEX;
+		break;
 	case MBUF_SC_VO:
 		pri = FQ_IF_VO_INDEX;
 		break;
@@ -161,7 +257,7 @@ fq_if_service_to_priority(mbuf_svc_class_t svc)
 		pri = FQ_IF_BE_INDEX; /* Use best effort by default */
 		break;
 	}
-	return (pri);
+	return pri;
 }
 
 void
@@ -169,11 +265,10 @@ fq_if_classq_init(fq_if_t *fqs, u_int32_t pri, u_int32_t quantum,
     u_int32_t drr_max, u_int32_t svc_class)
 {
 	fq_if_classq_t *fq_cl;
-
+	VERIFY(pri < FQ_IF_MAX_CLASSES);
 	fq_cl = &fqs->fqs_classq[pri];
 
-	VERIFY(pri >= 0 && pri < FQ_IF_MAX_CLASSES &&
-	    fq_cl->fcl_quantum == 0);
+	VERIFY(fq_cl->fcl_quantum == 0);
 	fq_cl->fcl_quantum = quantum;
 	fq_cl->fcl_pri = pri;
 	fq_cl->fcl_drr_max = drr_max;
@@ -183,38 +278,44 @@ fq_if_classq_init(fq_if_t *fqs, u_int32_t pri, u_int32_t quantum,
 }
 
 int
-fq_if_enqueue_classq(struct ifclassq *ifq, struct mbuf *m)
+fq_if_enqueue_classq(struct ifclassq *ifq, classq_pkt_t *p, boolean_t *pdrop)
 {
 	u_int32_t pri;
 	fq_if_t *fqs;
 	fq_if_classq_t *fq_cl;
 	int ret, len;
 	mbuf_svc_class_t svc;
+	pktsched_pkt_t pkt;
 
 	IFCQ_LOCK_ASSERT_HELD(ifq);
-	if (!(m->m_flags & M_PKTHDR)) {
+	if ((p->cp_ptype == QP_MBUF) && !(p->cp_mbuf->m_flags & M_PKTHDR)) {
 		IFCQ_CONVERT_LOCK(ifq);
-		m_freem(m);
-		return (ENOBUFS);
+		m_freem(p->cp_mbuf);
+		*p = CLASSQ_PKT_INITIALIZER(*p);
+		*pdrop = TRUE;
+		return ENOBUFS;
 	}
+	pktsched_pkt_encap(&pkt, p);
 
 	fqs = (fq_if_t *)ifq->ifcq_disc;
-	svc = mbuf_get_service_class(m);
-	pri = fq_if_service_to_priority(svc);
-	VERIFY(pri >= 0 && pri < FQ_IF_MAX_CLASSES);
+	svc = pktsched_get_pkt_svc(&pkt);
+	pri = fq_if_service_to_priority(fqs, svc);
+	VERIFY(pri < FQ_IF_MAX_CLASSES);
 	fq_cl = &fqs->fqs_classq[pri];
 
 	if (svc == MBUF_SC_BK_SYS && fqs->fqs_throttle == 1) {
 		/* BK_SYS is currently throttled */
 		fq_cl->fcl_stat.fcl_throttle_drops++;
 		IFCQ_CONVERT_LOCK(ifq);
-		m_freem(m);
-		return (EQSUSPENDED);
+		pktsched_free_pkt(&pkt);
+		*pdrop = TRUE;
+		return EQSUSPENDED;
 	}
 
-	len = m_length(m);
-	ret = fq_addq(fqs, m, fq_cl);
-	if (!FQ_IF_CLASSQ_IDLE(fq_cl)) {
+	len = pktsched_get_pkt_len(&pkt);
+	ret = fq_addq(fqs, &pkt, fq_cl);
+	if (!(fqs->fqs_flags & FQS_DRIVER_MANAGED) &&
+	    !FQ_IF_CLASSQ_IDLE(fq_cl)) {
 		if (((fqs->fqs_bitmaps[FQ_IF_ER] | fqs->fqs_bitmaps[FQ_IF_EB]) &
 		    (1 << pri)) == 0) {
 			/*
@@ -229,62 +330,94 @@ fq_if_enqueue_classq(struct ifclassq *ifq, struct mbuf *m)
 		if (ret == CLASSQEQ_SUCCESS_FC) {
 			/* packet enqueued, return advisory feedback */
 			ret = EQFULL;
+			*pdrop = FALSE;
 		} else {
-			VERIFY(ret == CLASSQEQ_DROPPED ||
-			    ret == CLASSQEQ_DROPPED_FC ||
-			    ret == CLASSQEQ_DROPPED_SP);
+			*pdrop = TRUE;
+			VERIFY(ret == CLASSQEQ_DROP ||
+			    ret == CLASSQEQ_DROP_FC ||
+			    ret == CLASSQEQ_DROP_SP);
+			pktsched_free_pkt(&pkt);
 			switch (ret) {
-			case CLASSQEQ_DROPPED:
-				return (ENOBUFS);
-			case CLASSQEQ_DROPPED_FC:
-				return (EQFULL);
-			case CLASSQEQ_DROPPED_SP:
-				return (EQSUSPENDED);
+			case CLASSQEQ_DROP:
+				return ENOBUFS;
+			case CLASSQEQ_DROP_FC:
+				return EQFULL;
+			case CLASSQEQ_DROP_SP:
+				return EQSUSPENDED;
 			}
 		}
+	} else {
+		*pdrop = FALSE;
 	}
 	IFCQ_INC_LEN(ifq);
 	IFCQ_INC_BYTES(ifq, len);
-	return (ret);
+	return ret;
 }
 
-struct mbuf *
-fq_if_dequeue_classq(struct ifclassq *ifq, cqdq_op_t op)
+static void
+fq_if_dequeue_classq(struct ifclassq *ifq, classq_pkt_t *pkt)
 {
-	struct mbuf *top;
+	(void) fq_if_dequeue_classq_multi(ifq, 1,
+	    CLASSQ_DEQUEUE_MAX_BYTE_LIMIT, pkt, NULL, NULL, NULL);
+}
 
-	(void) fq_if_dequeue_classq_multi(ifq, op, 1,
-	    CLASSQ_DEQUEUE_MAX_BYTE_LIMIT, &top, NULL, NULL, NULL);
+static void
+fq_if_dequeue_sc_classq(struct ifclassq *ifq, mbuf_svc_class_t svc,
+    classq_pkt_t *pkt)
+{
+	fq_if_t *fqs = (fq_if_t *)ifq->ifcq_disc;
+	fq_if_classq_t *fq_cl;
+	u_int32_t pri;
 
-	return (top);
+	pri = fq_if_service_to_priority(fqs, svc);
+	fq_cl = &fqs->fqs_classq[pri];
+
+	fq_if_dequeue(fqs, fq_cl, 1, CLASSQ_DEQUEUE_MAX_BYTE_LIMIT,
+	    pkt, NULL, NULL, NULL, TRUE);
 }
 
 int
-fq_if_dequeue_classq_multi(struct ifclassq *ifq, cqdq_op_t op,
-    u_int32_t maxpktcnt, u_int32_t maxbytecnt, struct mbuf **first_packet,
-    struct mbuf **last_packet, u_int32_t *retpktcnt, u_int32_t *retbytecnt)
+fq_if_dequeue_classq_multi(struct ifclassq *ifq, u_int32_t maxpktcnt,
+    u_int32_t maxbytecnt, classq_pkt_t *first_packet,
+    classq_pkt_t *last_packet, u_int32_t *retpktcnt,
+    u_int32_t *retbytecnt)
 {
-#pragma unused(op)
-	struct mbuf *top = NULL, *tail = NULL, *first, *last;
-	u_int32_t pktcnt = 0, bytecnt = 0, total_pktcnt, total_bytecnt;
-	fq_if_t *fqs;
+	u_int32_t pktcnt = 0, bytecnt = 0, total_pktcnt = 0, total_bytecnt = 0;
+	classq_pkt_t first = CLASSQ_PKT_INITIALIZER(fisrt);
+	classq_pkt_t last = CLASSQ_PKT_INITIALIZER(last);
+	classq_pkt_t tmp = CLASSQ_PKT_INITIALIZER(tmp);
+	fq_if_append_pkt_t append_pkt;
 	fq_if_classq_t *fq_cl;
+	fq_if_t *fqs;
 	int pri;
 
 	IFCQ_LOCK_ASSERT_HELD(ifq);
 
 	fqs = (fq_if_t *)ifq->ifcq_disc;
 
-	first = last = NULL;
-	total_pktcnt = total_bytecnt = 0;
+	switch (fqs->fqs_ptype) {
+	case QP_MBUF:
+		append_pkt = fq_if_append_mbuf;
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
 
 	for (;;) {
+		classq_pkt_t top = CLASSQ_PKT_INITIALIZER(top);
+		classq_pkt_t tail = CLASSQ_PKT_INITIALIZER(tail);
+
 		if (fqs->fqs_bitmaps[FQ_IF_ER] == 0 &&
 		    fqs->fqs_bitmaps[FQ_IF_EB] == 0) {
 			fqs->fqs_bitmaps[FQ_IF_EB] = fqs->fqs_bitmaps[FQ_IF_IB];
 			fqs->fqs_bitmaps[FQ_IF_IB] = 0;
-			if (fqs->fqs_bitmaps[FQ_IF_EB] == 0)
+			if (fqs->fqs_bitmaps[FQ_IF_EB] == 0) {
 				break;
+			}
 		}
 		pri = pktsched_ffs(fqs->fqs_bitmaps[FQ_IF_ER]);
 		if (pri == 0) {
@@ -308,26 +441,27 @@ fq_if_dequeue_classq_multi(struct ifclassq *ifq, cqdq_op_t op,
 			fq_cl->fcl_budget += (min(fq_cl->fcl_drr_max,
 			    fq_cl->fcl_stat.fcl_flows_cnt) *
 			    fq_cl->fcl_quantum);
-			if (fq_cl->fcl_budget <= 0)
+			if (fq_cl->fcl_budget <= 0) {
 				goto state_change;
+			}
 		}
 		fq_if_dequeue(fqs, fq_cl, (maxpktcnt - total_pktcnt),
 		    (maxbytecnt - total_bytecnt), &top, &tail, &pktcnt,
-		    &bytecnt);
-		if (top != NULL) {
-			VERIFY(pktcnt > 0 && bytecnt > 0);
-			if (first == NULL) {
+		    &bytecnt, FALSE);
+		if (top.cp_mbuf != NULL) {
+			ASSERT(pktcnt > 0 && bytecnt > 0);
+			if (first.cp_mbuf == NULL) {
 				first = top;
-				last = tail;
 				total_pktcnt = pktcnt;
 				total_bytecnt = bytecnt;
 			} else {
-				last->m_nextpkt = top;
-				last = tail;
+				ASSERT(last.cp_mbuf != NULL);
+				append_pkt(&last, &top);
 				total_pktcnt += pktcnt;
 				total_bytecnt += bytecnt;
 			}
-			last->m_nextpkt = NULL;
+			last = tail;
+			append_pkt(&last, &tmp);
 			fq_cl->fcl_budget -= bytecnt;
 			pktcnt = 0;
 			bytecnt = 0;
@@ -349,33 +483,101 @@ state_change:
 			pktsched_bit_clr(pri, &fqs->fqs_bitmaps[FQ_IF_ER]);
 			VERIFY(((fqs->fqs_bitmaps[FQ_IF_ER] |
 			    fqs->fqs_bitmaps[FQ_IF_EB] |
-			    fqs->fqs_bitmaps[FQ_IF_IB])&(1 << pri)) == 0);
+			    fqs->fqs_bitmaps[FQ_IF_IB]) & (1 << pri)) == 0);
 			fq_cl->fcl_budget = 0;
 		}
-		if (total_pktcnt >= maxpktcnt || total_bytecnt >= maxbytecnt)
+		if (total_pktcnt >= maxpktcnt || total_bytecnt >= maxbytecnt) {
 			break;
+		}
 	}
-	if (first != NULL) {
-		if (first_packet != NULL)
-			*first_packet = first;
-		if (last_packet != NULL)
-			*last_packet = last;
-		if (retpktcnt != NULL)
-			*retpktcnt = total_pktcnt;
-		if (retbytecnt != NULL)
-			*retbytecnt = total_bytecnt;
-		IFCQ_XMIT_ADD(ifq, total_pktcnt, total_bytecnt);
-	} else {
-		if (first_packet != NULL)
-			*first_packet = NULL;
-		if (last_packet != NULL)
-			*last_packet = NULL;
-		if (retpktcnt != NULL)
-			*retpktcnt = 0;
-		if (retbytecnt != NULL)
-			*retbytecnt = 0;
+
+	if (__probable(first_packet != NULL)) {
+		*first_packet = first;
 	}
-	return (0);
+	if (last_packet != NULL) {
+		*last_packet = last;
+	}
+	if (retpktcnt != NULL) {
+		*retpktcnt = total_pktcnt;
+	}
+	if (retbytecnt != NULL) {
+		*retbytecnt = total_bytecnt;
+	}
+
+	IFCQ_XMIT_ADD(ifq, total_pktcnt, total_bytecnt);
+	return 0;
+}
+
+int
+fq_if_dequeue_sc_classq_multi(struct ifclassq *ifq, mbuf_svc_class_t svc,
+    u_int32_t maxpktcnt, u_int32_t maxbytecnt, classq_pkt_t *first_packet,
+    classq_pkt_t *last_packet, u_int32_t *retpktcnt, u_int32_t *retbytecnt)
+{
+	fq_if_t *fqs = (fq_if_t *)ifq->ifcq_disc;
+	u_int32_t pri;
+	u_int32_t total_pktcnt = 0, total_bytecnt = 0;
+	fq_if_classq_t *fq_cl;
+	classq_pkt_t first = CLASSQ_PKT_INITIALIZER(fisrt);
+	classq_pkt_t last = CLASSQ_PKT_INITIALIZER(last);
+	fq_if_append_pkt_t append_pkt;
+
+	switch (fqs->fqs_ptype) {
+	case QP_MBUF:
+		append_pkt = fq_if_append_mbuf;
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	pri = fq_if_service_to_priority(fqs, svc);
+	fq_cl = &fqs->fqs_classq[pri];
+	/*
+	 * Now we have the queue for a particular service class. We need
+	 * to dequeue as many packets as needed, first from the new flows
+	 * and then from the old flows.
+	 */
+	while (total_pktcnt < maxpktcnt && total_bytecnt < maxbytecnt &&
+	    fq_cl->fcl_stat.fcl_pkt_cnt > 0) {
+		classq_pkt_t top = CLASSQ_PKT_INITIALIZER(top);
+		classq_pkt_t tail = CLASSQ_PKT_INITIALIZER(tail);
+		u_int32_t pktcnt = 0, bytecnt = 0;
+
+		fq_if_dequeue(fqs, fq_cl, (maxpktcnt - total_pktcnt),
+		    (maxbytecnt - total_bytecnt), &top, &tail, &pktcnt,
+		    &bytecnt, TRUE);
+		if (top.cp_mbuf != NULL) {
+			if (first.cp_mbuf == NULL) {
+				first = top;
+				total_pktcnt = pktcnt;
+				total_bytecnt = bytecnt;
+			} else {
+				ASSERT(last.cp_mbuf != NULL);
+				append_pkt(&last, &top);
+				total_pktcnt += pktcnt;
+				total_bytecnt += bytecnt;
+			}
+			last = tail;
+		}
+	}
+
+	if (__probable(first_packet != NULL)) {
+		*first_packet = first;
+	}
+	if (last_packet != NULL) {
+		*last_packet = last;
+	}
+	if (retpktcnt != NULL) {
+		*retpktcnt = total_pktcnt;
+	}
+	if (retbytecnt != NULL) {
+		*retbytecnt = total_bytecnt;
+	}
+
+	return 0;
 }
 
 static void
@@ -384,15 +586,20 @@ fq_if_purge_flow(fq_if_t *fqs, fq_t *fq, u_int32_t *pktsp,
 {
 	fq_if_classq_t *fq_cl;
 	u_int32_t pkts, bytes;
-	struct mbuf *m;
+	pktsched_pkt_t pkt;
 
 	fq_cl = &fqs->fqs_classq[fq->fq_sc_index];
 	pkts = bytes = 0;
-	while ((m = fq_getq_flow(fqs, fq)) != NULL) {
+	_PKTSCHED_PKT_INIT(&pkt);
+	for (;;) {
+		fq_getq_flow(fqs, fq, &pkt);
+		if (pkt.pktsched_pkt_mbuf == NULL) {
+			VERIFY(pkt.pktsched_ptype == QP_INVALID);
+			break;
+		}
 		pkts++;
-		bytes += m_length(m);
-		m_freem(m);
-		m = NULL;
+		bytes += pktsched_get_pkt_len(&pkt);
+		pktsched_free_pkt(&pkt);
 	}
 	IFCQ_DROP_ADD(fqs->fqs_ifq, pkts, bytes);
 
@@ -411,10 +618,12 @@ fq_if_purge_flow(fq_if_t *fqs, fq_t *fq, u_int32_t *pktsp,
 			    &fqs->fqs_bitmaps[i]);
 		}
 	}
-	if (pktsp != NULL)
+	if (pktsp != NULL) {
 		*pktsp = pkts;
-	if (bytesp != NULL)
+	}
+	if (bytesp != NULL) {
 		*bytesp = bytes;
+	}
 }
 
 static void
@@ -456,7 +665,7 @@ fq_if_purge(fq_if_t *fqs)
 		VERIFY(SLIST_EMPTY(&fqs->fqs_flows[i]));
 	}
 
-	bzero(&fqs->fqs_bitmaps, sizeof (fqs->fqs_bitmaps));
+	bzero(&fqs->fqs_bitmaps, sizeof(fqs->fqs_bitmaps));
 
 	IFCQ_LEN(fqs->fqs_ifq) = 0;
 	IFCQ_BYTES(fqs->fqs_ifq) = 0;
@@ -471,10 +680,12 @@ fq_if_purge_sc(fq_if_t *fqs, cqrq_purge_sc_t *req)
 	req->packets = req->bytes = 0;
 	VERIFY(req->flow != 0);
 
-	fq = fq_if_hash_pkt(fqs, req->flow, req->sc, 0, FALSE);
+	/* packet type is needed only if we want to create a flow queue */
+	fq = fq_if_hash_pkt(fqs, req->flow, req->sc, 0, FALSE, QP_INVALID);
 
-	if (fq != NULL)
+	if (fq != NULL) {
 		fq_if_purge_flow(fqs, fq, &req->packets, &req->bytes);
+	}
 }
 
 static void
@@ -514,19 +725,22 @@ fq_if_throttle(fq_if_t *fqs, cqrq_throttle_t *tr)
 {
 	struct ifclassq *ifq = fqs->fqs_ifq;
 	int index;
-
+#if !MACH_ASSERT
+#pragma unused(ifq)
+#endif
 	IFCQ_LOCK_ASSERT_HELD(ifq);
 
 	if (!tr->set) {
 		tr->level = fqs->fqs_throttle;
-		return (0);
+		return 0;
 	}
 
-	if (tr->level == fqs->fqs_throttle)
-		return (EALREADY);
+	if (tr->level == fqs->fqs_throttle) {
+		return EALREADY;
+	}
 
 	/* Throttling is allowed on BK_SYS class only */
-	index = fq_if_service_to_priority(MBUF_SC_BK_SYS);
+	index = fq_if_service_to_priority(fqs, MBUF_SC_BK_SYS);
 	switch (tr->level) {
 	case IFNET_THROTTLE_OFF:
 		fq_if_classq_resume(fqs, &fqs->fqs_classq[index]);
@@ -537,7 +751,7 @@ fq_if_throttle(fq_if_t *fqs, cqrq_throttle_t *tr)
 	default:
 		break;
 	}
-	return (0);
+	return 0;
 }
 
 void
@@ -546,10 +760,11 @@ fq_if_stat_sc(fq_if_t *fqs, cqrq_stat_sc_t *stat)
 	u_int32_t pri;
 	fq_if_classq_t *fq_cl;
 
-	if (stat == NULL)
+	if (stat == NULL) {
 		return;
+	}
 
-	pri = fq_if_service_to_priority(stat->sc);
+	pri = fq_if_service_to_priority(fqs, stat->sc);
 	fq_cl = &fqs->fqs_classq[pri];
 	stat->packets = fq_cl->fcl_stat.fcl_pkt_cnt;
 	stat->bytes = fq_cl->fcl_stat.fcl_byte_cnt;
@@ -584,11 +799,12 @@ fq_if_request_classq(struct ifclassq *ifq, cqrq_t rq, void *arg)
 		fq_if_stat_sc(fqs, (cqrq_stat_sc_t *)arg);
 		break;
 	}
-	return (err);
+	return err;
 }
 
 int
-fq_if_setup_ifclassq(struct ifclassq *ifq, u_int32_t flags)
+fq_if_setup_ifclassq(struct ifclassq *ifq, u_int32_t flags,
+    classq_pkt_type_t ptype)
 {
 #pragma unused(flags)
 	struct ifnet *ifp = ifq->ifcq_ifp;
@@ -599,36 +815,64 @@ fq_if_setup_ifclassq(struct ifclassq *ifq, u_int32_t flags)
 	VERIFY(ifq->ifcq_disc == NULL);
 	VERIFY(ifq->ifcq_type == PKTSCHEDT_NONE);
 
-	fqs = fq_if_alloc(ifp, M_WAITOK);
-	if (fqs == NULL)
-		return (ENOMEM);
+	fqs = fq_if_alloc(ifp, ptype);
+	if (fqs == NULL) {
+		return ENOMEM;
+	}
 
-	fq_if_classq_init(fqs, FQ_IF_BK_SYS_INDEX, 1500, 2, MBUF_SC_BK_SYS);
-	fq_if_classq_init(fqs, FQ_IF_BK_INDEX, 1500, 2, MBUF_SC_BK);
-	fq_if_classq_init(fqs, FQ_IF_BE_INDEX, 1500, 4, MBUF_SC_BE);
-	fq_if_classq_init(fqs, FQ_IF_RD_INDEX, 1500, 4, MBUF_SC_RD);
-	fq_if_classq_init(fqs, FQ_IF_OAM_INDEX, 1500, 4, MBUF_SC_OAM);
-	fq_if_classq_init(fqs, FQ_IF_AV_INDEX, 3000, 6, MBUF_SC_AV);
-	fq_if_classq_init(fqs, FQ_IF_RV_INDEX, 3000, 6, MBUF_SC_RV);
-	fq_if_classq_init(fqs, FQ_IF_VI_INDEX, 3000, 6, MBUF_SC_VI);
-	fq_if_classq_init(fqs, FQ_IF_VO_INDEX, 600, 8, MBUF_SC_VO);
-	fq_if_classq_init(fqs, FQ_IF_CTL_INDEX, 600, 8, MBUF_SC_CTL);
+	if (flags & PKTSCHEDF_QALG_DRIVER_MANAGED) {
+		fqs->fqs_flags |= FQS_DRIVER_MANAGED;
+		fq_if_classq_init(fqs, FQ_IF_BK_INDEX, 1500,
+		    2, MBUF_SC_BK);
+		fq_if_classq_init(fqs, FQ_IF_BE_INDEX, 1500,
+		    4, MBUF_SC_BE);
+		fq_if_classq_init(fqs, FQ_IF_VI_INDEX, 3000,
+		    6, MBUF_SC_VI);
+		fq_if_classq_init(fqs, FQ_IF_VO_INDEX, 600,
+		    8, MBUF_SC_VO);
+	} else {
+		/* SIG shares same INDEX with VI */
+		_CASSERT(SCIDX_SIG == SCIDX_VI);
+		_CASSERT(FQ_IF_SIG_INDEX == FQ_IF_VI_INDEX);
+
+		fq_if_classq_init(fqs, FQ_IF_BK_SYS_INDEX, 1500,
+		    2, MBUF_SC_BK_SYS);
+		fq_if_classq_init(fqs, FQ_IF_BK_INDEX, 1500,
+		    2, MBUF_SC_BK);
+		fq_if_classq_init(fqs, FQ_IF_BE_INDEX, 1500,
+		    4, MBUF_SC_BE);
+		fq_if_classq_init(fqs, FQ_IF_RD_INDEX, 1500,
+		    4, MBUF_SC_RD);
+		fq_if_classq_init(fqs, FQ_IF_OAM_INDEX, 1500,
+		    4, MBUF_SC_OAM);
+		fq_if_classq_init(fqs, FQ_IF_AV_INDEX, 3000,
+		    6, MBUF_SC_AV);
+		fq_if_classq_init(fqs, FQ_IF_RV_INDEX, 3000,
+		    6, MBUF_SC_RV);
+		fq_if_classq_init(fqs, FQ_IF_VI_INDEX, 3000,
+		    6, MBUF_SC_VI);
+		fq_if_classq_init(fqs, FQ_IF_VO_INDEX, 600,
+		    8, MBUF_SC_VO);
+		fq_if_classq_init(fqs, FQ_IF_CTL_INDEX, 600,
+		    8, MBUF_SC_CTL);
+	}
 
 	err = ifclassq_attach(ifq, PKTSCHEDT_FQ_CODEL, fqs,
-	    fq_if_enqueue_classq, fq_if_dequeue_classq, NULL,
-	    fq_if_dequeue_classq_multi, fq_if_request_classq);
+	    fq_if_enqueue_classq, fq_if_dequeue_classq,
+	    fq_if_dequeue_sc_classq, fq_if_dequeue_classq_multi,
+	    fq_if_dequeue_sc_classq_multi, fq_if_request_classq);
 
 	if (err != 0) {
 		printf("%s: error from ifclassq_attach, "
 		    "failed to attach fq_if: %d\n", __func__, err);
 		fq_if_destroy(fqs);
 	}
-	return (err);
+	return err;
 }
 
 fq_t *
 fq_if_hash_pkt(fq_if_t *fqs, u_int32_t flowid, mbuf_svc_class_t svc_class,
-    u_int64_t now, boolean_t create)
+    u_int64_t now, boolean_t create, classq_pkt_type_t ptype)
 {
 	fq_t *fq = NULL;
 	flowq_list_t *fq_list;
@@ -636,7 +880,7 @@ fq_if_hash_pkt(fq_if_t *fqs, u_int32_t flowid, mbuf_svc_class_t svc_class,
 	u_int8_t fqs_hash_id;
 	u_int8_t scidx;
 
-	scidx = fq_if_service_to_priority(svc_class);
+	scidx = fq_if_service_to_priority(fqs, svc_class);
 
 	fqs_hash_id = FQ_IF_FLOW_HASH_ID(flowid);
 
@@ -644,19 +888,21 @@ fq_if_hash_pkt(fq_if_t *fqs, u_int32_t flowid, mbuf_svc_class_t svc_class,
 
 	SLIST_FOREACH(fq, fq_list, fq_hashlink) {
 		if (fq->fq_flowhash == flowid &&
-		    fq->fq_sc_index == scidx)
+		    fq->fq_sc_index == scidx) {
 			break;
+		}
 	}
 	if (fq == NULL && create == TRUE) {
+		ASSERT(ptype == QP_MBUF);
+
 		/* If the flow is not already on the list, allocate it */
 		IFCQ_CONVERT_LOCK(fqs->fqs_ifq);
-		fq = fq_alloc(M_WAITOK);
+		fq = fq_alloc(ptype);
 		if (fq != NULL) {
 			fq->fq_flowhash = flowid;
 			fq->fq_sc_index = scidx;
 			fq->fq_updatetime = now + fqs->fqs_update_interval;
 			fq_cl = &fqs->fqs_classq[scidx];
-
 			fq->fq_flags = FQF_FLOWCTL_CAPABLE;
 			SLIST_INSERT_HEAD(fq_list, fq, fq_hashlink);
 			fq_cl->fcl_stat.fcl_flows_cnt++;
@@ -667,13 +913,14 @@ fq_if_hash_pkt(fq_if_t *fqs, u_int32_t flowid, mbuf_svc_class_t svc_class,
 	 * If getq time is not set because this is the first packet or after
 	 * idle time, set it now so that we can detect a stall.
 	 */
-	if (fq->fq_getqtime == 0)
+	if (fq != NULL && fq->fq_getqtime == 0) {
 		fq->fq_getqtime = now;
+	}
 
-	return (fq);
+	return fq;
 }
 
-static void
+void
 fq_if_destroy_flow(fq_if_t *fqs, fq_if_classq_t *fq_cl, fq_t *fq)
 {
 	u_int8_t hash_id;
@@ -683,14 +930,13 @@ fq_if_destroy_flow(fq_if_t *fqs, fq_if_classq_t *fq_cl, fq_t *fq)
 	fq_cl->fcl_stat.fcl_flows_cnt--;
 	IFCQ_CONVERT_LOCK(fqs->fqs_ifq);
 	fq_destroy(fq);
-
 }
 
 inline boolean_t
 fq_if_at_drop_limit(fq_if_t *fqs)
 {
-	return (((IFCQ_LEN(fqs->fqs_ifq) >= fqs->fqs_pkt_droplimit) ?
-	    TRUE : FALSE));
+	return (IFCQ_LEN(fqs->fqs_ifq) >= fqs->fqs_pkt_droplimit) ?
+	       TRUE : FALSE;
 }
 
 static void
@@ -734,20 +980,39 @@ inline void
 fq_if_drop_packet(fq_if_t *fqs)
 {
 	fq_t *fq = fqs->fqs_large_flow;
-	struct mbuf *m;
 	fq_if_classq_t *fq_cl;
+	pktsched_pkt_t pkt;
+	volatile uint32_t *pkt_flags;
+	uint64_t *pkt_timestamp;
 
-	if (fq == NULL)
+	if (fq == NULL) {
 		return;
-	/* mbufq can not be empty on the largest flow */
-	VERIFY(!MBUFQ_EMPTY(&fq->fq_mbufq));
+	}
+	/* queue can not be empty on the largest flow */
+	VERIFY(!fq_empty(fq));
 
 	fq_cl = &fqs->fqs_classq[fq->fq_sc_index];
+	_PKTSCHED_PKT_INIT(&pkt);
+	fq_getq_flow_internal(fqs, fq, &pkt);
+	ASSERT(pkt.pktsched_ptype != QP_INVALID);
 
-	m = fq_getq_flow(fqs, fq);
+	pktsched_get_pkt_vars(&pkt, &pkt_flags, &pkt_timestamp, NULL, NULL,
+	    NULL, NULL);
 
 	IFCQ_CONVERT_LOCK(fqs->fqs_ifq);
-	if (MBUFQ_EMPTY(&fq->fq_mbufq)) {
+	*pkt_timestamp = 0;
+	switch (pkt.pktsched_ptype) {
+	case QP_MBUF:
+		*pkt_flags &= ~PKTF_PRIV_GUARDED;
+		break;
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	if (fq_empty(fq)) {
+		fqs->fqs_large_flow = NULL;
 		if (fq->fq_flags & FQF_OLD_FLOW) {
 			fq_if_empty_old_flow(fqs, fq_cl, fq, true);
 		} else {
@@ -755,18 +1020,31 @@ fq_if_drop_packet(fq_if_t *fqs)
 			fq_if_empty_new_flow(fq, fq_cl, true);
 		}
 	}
-	IFCQ_DROP_ADD(fqs->fqs_ifq, 1, m_length(m));
+	IFCQ_DROP_ADD(fqs->fqs_ifq, 1, pktsched_get_pkt_len(&pkt));
 
-	m_freem(m);
+	pktsched_free_pkt(&pkt);
 	fq_cl->fcl_stat.fcl_drop_overflow++;
 }
 
 inline void
 fq_if_is_flow_heavy(fq_if_t *fqs, fq_t *fq)
 {
-	fq_t *prev_fq = fqs->fqs_large_flow;
-	if (prev_fq == NULL && !MBUFQ_EMPTY(&fq->fq_mbufq)) {
-		fqs->fqs_large_flow = fq;
+	fq_t *prev_fq;
+
+	if (fqs->fqs_large_flow != NULL &&
+	    fqs->fqs_large_flow->fq_bytes < FQ_IF_LARGE_FLOW_BYTE_LIMIT) {
+		fqs->fqs_large_flow = NULL;
+	}
+
+	if (fq == NULL || fq->fq_bytes < FQ_IF_LARGE_FLOW_BYTE_LIMIT) {
+		return;
+	}
+
+	prev_fq = fqs->fqs_large_flow;
+	if (prev_fq == NULL) {
+		if (!fq_empty(fq)) {
+			fqs->fqs_large_flow = fq;
+		}
 		return;
 	} else if (fq->fq_bytes > prev_fq->fq_bytes) {
 		fqs->fqs_large_flow = fq;
@@ -774,32 +1052,26 @@ fq_if_is_flow_heavy(fq_if_t *fqs, fq_t *fq)
 }
 
 boolean_t
-fq_if_add_fcentry(fq_if_t *fqs, struct pkthdr *pkt, fq_if_classq_t *fq_cl)
+fq_if_add_fcentry(fq_if_t *fqs, pktsched_pkt_t *pkt, uint32_t flowid,
+    uint8_t flowsrc, fq_if_classq_t *fq_cl)
 {
 	struct flowadv_fcentry *fce;
-	u_int32_t flowsrc, flowid;
-
-	flowsrc = pkt->pkt_flowsrc;
-	flowid = pkt->pkt_flowid;
 
 	STAILQ_FOREACH(fce, &fqs->fqs_fclist, fce_link) {
-		if (fce->fce_flowsrc == flowsrc &&
+		if ((uint8_t)fce->fce_flowsrc_type == flowsrc &&
 		    fce->fce_flowid == flowid) {
 			/* Already on flowcontrol list */
-			return (TRUE);
+			return TRUE;
 		}
 	}
-
 	IFCQ_CONVERT_LOCK(fqs->fqs_ifq);
-	fce = flowadv_alloc_entry(M_WAITOK);
+	fce = pktsched_alloc_fcentry(pkt, fqs->fqs_ifq->ifcq_ifp, M_WAITOK);
 	if (fce != NULL) {
-		fce->fce_flowsrc = flowsrc;
-		fce->fce_flowid = flowid;
 		/* XXX Add number of bytes in the queue */
 		STAILQ_INSERT_TAIL(&fqs->fqs_fclist, fce, fce_link);
 		fq_cl->fcl_stat.fcl_flow_control++;
 	}
-	return ((fce != NULL) ? TRUE : FALSE);
+	return (fce != NULL) ? TRUE : FALSE;
 }
 
 void
@@ -809,8 +1081,9 @@ fq_if_flow_feedback(fq_if_t *fqs, fq_t *fq, fq_if_classq_t *fq_cl)
 
 	IFCQ_CONVERT_LOCK(fqs->fqs_ifq);
 	STAILQ_FOREACH(fce, &fqs->fqs_fclist, fce_link) {
-		if (fce->fce_flowid == fq->fq_flowhash)
+		if (fce->fce_flowid == fq->fq_flowhash) {
 			break;
+		}
 	}
 	if (fce != NULL) {
 		STAILQ_REMOVE(&fqs->fqs_fclist, fce, flowadv_fcentry,
@@ -824,92 +1097,65 @@ fq_if_flow_feedback(fq_if_t *fqs, fq_t *fq, fq_if_classq_t *fq_cl)
 
 void
 fq_if_dequeue(fq_if_t *fqs, fq_if_classq_t *fq_cl, u_int32_t pktlimit,
-    u_int32_t bytelimit, struct mbuf **top, struct mbuf **tail,
-    u_int32_t *retpktcnt, u_int32_t *retbytecnt)
+    u_int32_t bytelimit, classq_pkt_t *top, classq_pkt_t *tail,
+    u_int32_t *retpktcnt, u_int32_t *retbytecnt, boolean_t drvmgmt)
 {
 	fq_t *fq = NULL, *tfq = NULL;
-	struct mbuf *m = NULL, *last = NULL;
 	flowq_stailq_t temp_stailq;
-	u_int32_t pktcnt, bytecnt, mlen;
-	boolean_t limit_reached = FALSE;
+	u_int32_t pktcnt, bytecnt;
+	boolean_t qempty, limit_reached = FALSE;
+	classq_pkt_t last = CLASSQ_PKT_INITIALIZER(last);
+	fq_getq_flow_t fq_getq_flow_fn;
+
+	switch (fqs->fqs_ptype) {
+	case QP_MBUF:
+		fq_getq_flow_fn = fq_getq_flow_mbuf;
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
 
 	/*
 	 * maximum byte limit should not be greater than the budget for
 	 * this class
 	 */
-	if ((int32_t)bytelimit > fq_cl->fcl_budget)
+	if ((int32_t)bytelimit > fq_cl->fcl_budget && !drvmgmt) {
 		bytelimit = fq_cl->fcl_budget;
+	}
 
 	VERIFY(pktlimit > 0 && bytelimit > 0 && top != NULL);
-
-	*top = NULL;
 	pktcnt = bytecnt = 0;
 	STAILQ_INIT(&temp_stailq);
 
 	STAILQ_FOREACH_SAFE(fq, &fq_cl->fcl_new_flows, fq_actlink, tfq) {
-		VERIFY((fq->fq_flags & (FQF_NEW_FLOW|FQF_OLD_FLOW)) ==
+		ASSERT((fq->fq_flags & (FQF_NEW_FLOW | FQF_OLD_FLOW)) ==
 		    FQF_NEW_FLOW);
-		while (fq->fq_deficit > 0 && limit_reached == FALSE &&
-		    !MBUFQ_EMPTY(&fq->fq_mbufq)) {
 
-			m = fq_getq_flow(fqs, fq);
-			m->m_pkthdr.pkt_flags |= PKTF_NEW_FLOW;
-			mlen = m_length(m);
-			fq->fq_deficit -= mlen;
+		limit_reached = fq_getq_flow_fn(fqs, fq_cl, fq, bytelimit,
+		    pktlimit, top, &last, &bytecnt, &pktcnt, &qempty,
+		    PKTF_NEW_FLOW);
 
-			if (*top == NULL) {
-				*top = m;
-			} else {
-				last->m_nextpkt = m;
-			}
-			last = m;
-			last->m_nextpkt = NULL;
-			fq_cl->fcl_stat.fcl_dequeue++;
-			fq_cl->fcl_stat.fcl_dequeue_bytes += mlen;
-
-			pktcnt++;
-			bytecnt += mlen;
-
-			/* Check if the limit is reached */
-			if (pktcnt >= pktlimit || bytecnt >= bytelimit)
-				limit_reached = TRUE;
-		}
-
-		if (fq->fq_deficit <= 0 || MBUFQ_EMPTY(&fq->fq_mbufq)) {
+		if (fq->fq_deficit <= 0 || qempty) {
 			fq_if_empty_new_flow(fq, fq_cl, true);
-			fq->fq_deficit += fq_cl->fcl_quantum;
 		}
-		if (limit_reached == TRUE)
+		fq->fq_deficit += fq_cl->fcl_quantum;
+		if (limit_reached) {
 			goto done;
+		}
 	}
 
 	STAILQ_FOREACH_SAFE(fq, &fq_cl->fcl_old_flows, fq_actlink, tfq) {
-		VERIFY((fq->fq_flags & (FQF_NEW_FLOW|FQF_OLD_FLOW)) ==
+		VERIFY((fq->fq_flags & (FQF_NEW_FLOW | FQF_OLD_FLOW)) ==
 		    FQF_OLD_FLOW);
-		while (fq->fq_deficit > 0 && !MBUFQ_EMPTY(&fq->fq_mbufq) &&
-		    limit_reached == FALSE) {
-			m = fq_getq_flow(fqs, fq);
-			mlen = m_length(m);
-			fq->fq_deficit -= mlen;
-			if (*top == NULL) {
-				*top = m;
-			} else {
-				last->m_nextpkt = m;
-			}
-			last = m;
-			last->m_nextpkt = NULL;
-			fq_cl->fcl_stat.fcl_dequeue++;
-			fq_cl->fcl_stat.fcl_dequeue_bytes += mlen;
 
-			pktcnt++;
-			bytecnt += mlen;
+		limit_reached = fq_getq_flow_fn(fqs, fq_cl, fq, bytelimit,
+		    pktlimit, top, &last, &bytecnt, &pktcnt, &qempty, 0);
 
-			/* Check if the limit is reached */
-			if (pktcnt >= pktlimit || bytecnt >= bytelimit)
-				limit_reached = TRUE;
-		}
-
-		if (MBUFQ_EMPTY(&fq->fq_mbufq)) {
+		if (qempty) {
 			fq_if_empty_old_flow(fqs, fq_cl, fq, true);
 		} else if (fq->fq_deficit <= 0) {
 			STAILQ_REMOVE(&fq_cl->fcl_old_flows, fq,
@@ -922,9 +1168,9 @@ fq_if_dequeue(fq_if_t *fqs, fq_if_classq_t *fq_cl, u_int32_t pktlimit,
 			STAILQ_INSERT_TAIL(&temp_stailq, fq, fq_actlink);
 			fq->fq_deficit += fq_cl->fcl_quantum;
 		}
-
-		if (limit_reached == TRUE)
+		if (limit_reached) {
 			break;
+		}
 	}
 
 done:
@@ -934,14 +1180,17 @@ done:
 		fq_cl->fcl_old_flows = temp_stailq;
 	}
 
-	if (last != NULL) {
-		VERIFY(*top != NULL);
-		if (tail != NULL)
+	if (last.cp_mbuf != NULL) {
+		VERIFY(top->cp_mbuf != NULL);
+		if (tail != NULL) {
 			*tail = last;
-		if (retpktcnt != NULL)
+		}
+		if (retpktcnt != NULL) {
 			*retpktcnt = pktcnt;
-		if (retbytecnt != NULL)
+		}
+		if (retbytecnt != NULL) {
 			*retbytecnt = bytecnt;
+		}
 	}
 }
 
@@ -955,8 +1204,32 @@ fq_if_teardown_ifclassq(struct ifclassq *ifq)
 
 	fq_if_destroy(fqs);
 	ifq->ifcq_disc = NULL;
+	return ifclassq_detach(ifq);
+}
 
-	return (ifclassq_detach(ifq));
+static void
+fq_export_flowstats(fq_if_t *fqs, fq_t *fq,
+    struct fq_codel_flowstats *flowstat)
+{
+	bzero(flowstat, sizeof(*flowstat));
+	flowstat->fqst_min_qdelay = fq->fq_min_qdelay;
+	flowstat->fqst_bytes = fq->fq_bytes;
+	flowstat->fqst_flowhash = fq->fq_flowhash;
+	if (fq->fq_flags & FQF_NEW_FLOW) {
+		flowstat->fqst_flags |= FQ_FLOWSTATS_NEW_FLOW;
+	}
+	if (fq->fq_flags & FQF_OLD_FLOW) {
+		flowstat->fqst_flags |= FQ_FLOWSTATS_OLD_FLOW;
+	}
+	if (fq->fq_flags & FQF_DELAY_HIGH) {
+		flowstat->fqst_flags |= FQ_FLOWSTATS_DELAY_HIGH;
+	}
+	if (fq->fq_flags & FQF_FLOWCTL_ON) {
+		flowstat->fqst_flags |= FQ_FLOWSTATS_FLOWCTL_ON;
+	}
+	if (fqs->fqs_large_flow == fq) {
+		flowstat->fqst_flags |= FQ_FLOWSTATS_LARGE_FLOW;
+	}
 }
 
 int
@@ -966,9 +1239,12 @@ fq_if_getqstats_ifclassq(struct ifclassq *ifq, u_int32_t qid,
 	struct fq_codel_classstats *fcls;
 	fq_if_classq_t *fq_cl;
 	fq_if_t *fqs;
+	fq_t *fq = NULL;
+	u_int32_t i, flowstat_cnt;
 
-	if (qid >= FQ_IF_MAX_CLASSES)
-		return (EINVAL);
+	if (qid >= FQ_IF_MAX_CLASSES) {
+		return EINVAL;
+	}
 
 	fqs = (fq_if_t *)ifq->ifcq_disc;
 	fcls = &ifqs->ifqs_fq_codel_stats;
@@ -1002,5 +1278,31 @@ fq_if_getqstats_ifclassq(struct ifclassq *ifq, u_int32_t qid,
 	fcls->fcls_throttle_drops = fq_cl->fcl_stat.fcl_throttle_drops;
 	fcls->fcls_dup_rexmts = fq_cl->fcl_stat.fcl_dup_rexmts;
 
-	return (0);
+	/* Gather per flow stats */
+	flowstat_cnt = min((fcls->fcls_newflows_cnt +
+	    fcls->fcls_oldflows_cnt), FQ_IF_MAX_FLOWSTATS);
+	i = 0;
+	STAILQ_FOREACH(fq, &fq_cl->fcl_new_flows, fq_actlink) {
+		if (i >= fcls->fcls_newflows_cnt || i >= flowstat_cnt) {
+			break;
+		}
+
+		/* leave space for a few old flows */
+		if ((flowstat_cnt - i) < fcls->fcls_oldflows_cnt &&
+		    i >= (FQ_IF_MAX_FLOWSTATS >> 1)) {
+			break;
+		}
+		fq_export_flowstats(fqs, fq, &fcls->fcls_flowstats[i]);
+		i++;
+	}
+	STAILQ_FOREACH(fq, &fq_cl->fcl_old_flows, fq_actlink) {
+		if (i >= flowstat_cnt) {
+			break;
+		}
+		fq_export_flowstats(fqs, fq, &fcls->fcls_flowstats[i]);
+		i++;
+	}
+	VERIFY(i <= flowstat_cnt);
+	fcls->fcls_flowstats_cnt = i;
+	return 0;
 }

@@ -41,7 +41,8 @@ enum {
 	PERSONA_OP_CREATE  = 1,
 	PERSONA_OP_DESTROY = 2,
 	PERSONA_OP_LOOKUP  = 3,
-	PERSONA_OP_MAX     = 3,
+	PERSONA_OP_SUPPORT = 4,
+	PERSONA_OP_MAX     = 4,
 };
 
 static struct mgr_config {
@@ -49,7 +50,8 @@ static struct mgr_config {
 } g;
 
 
-static int persona_op_create(struct kpersona_info *ki)
+static int
+persona_op_create(struct kpersona_info *ki)
 {
 	int ret;
 	uid_t persona_id = 0;
@@ -67,55 +69,76 @@ static int persona_op_create(struct kpersona_info *ki)
 	return ret;
 }
 
-static int persona_op_destroy(struct kpersona_info *ki)
+static int
+persona_op_destroy(struct kpersona_info *ki)
 {
 	int ret;
 
 	info("Destroying Persona %d...", ki->persona_id);
 	ki->persona_info_version = PERSONA_INFO_V1;
 	ret = kpersona_dealloc(ki->persona_id);
-	if (ret < 0)
+	if (ret < 0) {
 		err_print("destroy failed!");
+	}
 
 	return ret;
 }
 
-static int persona_op_lookup(struct kpersona_info *ki, pid_t pid, uid_t uid)
+static int
+persona_op_lookup(struct kpersona_info *ki, pid_t pid, uid_t uid)
 {
 	int ret;
 
-	info("Looking up persona (pid:%d, uid:%d)", pid, uid);
+	info("Looking up persona (login:%s, pid:%d, uid:%d)", ki->persona_name, pid, uid);
 	if (pid > 0) {
 		ki->persona_info_version = PERSONA_INFO_V1;
 		ret = kpersona_pidinfo(pid, ki);
-		if (ret < 0)
+		if (ret < 0) {
 			err_print("pidinfo failed!");
-		else
+		} else {
 			dump_kpersona("Persona-for-pid:", ki);
+		}
 	} else {
 		int np = 0;
 		uid_t personas[128];
 		size_t npersonas = ARRAY_SZ(personas);
 		const char *name = NULL;
-		if (ki->persona_name[0] != 0)
+		if (ki->persona_name[0] != 0) {
 			name = ki->persona_name;
+		}
 
 		np = kpersona_find(name, uid, personas, &npersonas);
-		if (np < 0)
+		if (np < 0) {
 			err("kpersona_find returned %d (errno:%d)", np, errno);
+		}
 		info("Found %zu persona%c", npersonas, npersonas != 1 ? 's' : ' ');
 		np = npersonas;
 		while (np--) {
 			info("\tpersona[%d]=%d...", np, personas[np]);
 			ki->persona_info_version = PERSONA_INFO_V1;
 			ret = kpersona_info(personas[np], ki);
-			if (ret < 0)
+			if (ret < 0) {
 				err("kpersona_info failed (errno:%d) for persona[%d]", errno, personas[np]);
+			}
 			dump_kpersona(NULL, ki);
 		}
 	}
 
 	return ret;
+}
+
+static int
+persona_op_support(void)
+{
+	uid_t pna_id = -1;
+	int ret = kpersona_get(&pna_id);
+	if (ret == 0 || errno != ENOSYS) {
+		info("Persona subsystem is supported (id=%d)", pna_id);
+		return 0;
+	}
+
+	info("Persona subsystem is not supported");
+	return ENOSYS;
 }
 
 
@@ -125,19 +148,22 @@ static int persona_op_lookup(struct kpersona_info *ki, pid_t pid, uid_t uid)
  *
  * = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
  */
-static void usage_main(const char *progname, const char *msg, int verbose)
+static void
+usage_main(const char *progname, const char *msg, int verbose)
 {
 	const char *nm = basename((char *)progname);
 
-	if (msg)
+	if (msg) {
 		printf("%s\n\n", msg);
+	}
 
 	printf("%s v%d.%d\n", PROG_NAME, PROG_VMAJOR, PROG_VMINOR);
 	printf("usage: %s [op] [-v] [-i id] [-t type] [-p pid] [-u uid] [-g gid] [-l login] [-G {groupspec}] [-m gmuid]\n", nm);
-	if (!verbose)
+	if (!verbose) {
 		exit(1);
+	}
 
-	printf("\t%-15s\tOne of: create | destroy | lookup\n", "[op]");
+	printf("\t%-15s\tOne of: create | destroy | lookup | support\n", "[op]");
 	printf("\t%-15s\tBe verbose\n", "-v");
 
 	printf("\t%-15s\tID of the persona\n", "-i id");
@@ -154,13 +180,14 @@ static void usage_main(const char *progname, const char *msg, int verbose)
 	exit(1);
 }
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
 	char ch;
 	int ret;
 
 	const char *op_str = NULL;
-	int persona_op = 0;
+	int persona_op = -1;
 	struct kpersona_info kinfo;
 	uid_t uid = (uid_t)-1;
 	pid_t pid = (pid_t)-1;
@@ -170,25 +197,31 @@ int main(int argc, char **argv)
 	 */
 	g.verbose = 0;
 
-	if (geteuid() != 0)
+	if (geteuid() != 0) {
 		err("%s must be run as root", argv[0] ? basename(argv[0]) : PROG_NAME);
+	}
 
-	if (argc < 2)
+	if (argc < 2) {
 		usage_main(argv[0], "Not enough arguments", 0);
+	}
 
 	op_str = argv[1];
 
-	if (strcmp(op_str, "create") == 0)
+	if (strcmp(op_str, "create") == 0) {
 		persona_op = PERSONA_OP_CREATE;
-	else if (strcmp(op_str, "destroy") == 0)
+	} else if (strcmp(op_str, "destroy") == 0) {
 		persona_op = PERSONA_OP_DESTROY;
-	else if (strcmp(op_str, "lookup") == 0)
+	} else if (strcmp(op_str, "lookup") == 0) {
 		persona_op = PERSONA_OP_LOOKUP;
-	else if (strcmp(op_str, "help") == 0 || strcmp(op_str, "-h") == 0)
+	} else if (strcmp(op_str, "support") == 0) {
+		persona_op = PERSONA_OP_SUPPORT;
+	} else if (strcmp(op_str, "help") == 0 || strcmp(op_str, "-h") == 0) {
 		usage_main(argv[0], NULL, 1);
+	}
 
-	if (persona_op <= 0 || persona_op > PERSONA_OP_MAX)
+	if (persona_op <= 0 || persona_op > PERSONA_OP_MAX) {
 		usage_main(argv[0], "Invalid [op]", 0);
+	}
 
 	memset(&kinfo, 0, sizeof(kinfo));
 	kinfo.persona_gmuid = KAUTH_UID_NONE;
@@ -201,45 +234,63 @@ int main(int argc, char **argv)
 		switch (ch) {
 		case 'i':
 			ret = atoi(optarg);
-			if (ret <= 0)
-				err("Invalid Persona ID: %s", optarg);
+			if (ret <= 0) {
+				ret = PERSONA_ID_NONE;
+			}
 			kinfo.persona_id = (uid_t)ret;
 			break;
 		case 't':
-			ret = atoi(optarg);
-			if (ret <= PERSONA_INVALID || ret > PERSONA_TYPE_MAX)
-				err("Invalid type specification: %s", optarg);
-			kinfo.persona_type = ret;
+			if (strncmp(optarg, "guest", 6) == 0) {
+				kinfo.persona_type = PERSONA_GUEST;
+			} else if (strncmp(optarg, "managed", 8) == 0) {
+				kinfo.persona_type = PERSONA_MANAGED;
+			} else if (strncmp(optarg, "priv", 4) == 0) { /* shortcut... */
+				kinfo.persona_type = PERSONA_PRIV;
+			} else if (strncmp(optarg, "system", 7) == 0) {
+				kinfo.persona_type = PERSONA_SYSTEM;
+			} else {
+				ret = atoi(optarg);
+				if (ret <= PERSONA_INVALID || ret > PERSONA_TYPE_MAX) {
+					err("Invalid type specification: %s", optarg);
+				}
+				kinfo.persona_type = ret;
+			}
 			break;
 		case 'p':
 			ret = atoi(optarg);
-			if (ret <= 0)
+			if (ret <= 0) {
 				err("Invalid PID: %s", optarg);
+			}
 			pid = (pid_t)ret;
 			break;
 		case 'u':
 			ret = atoi(optarg);
-			if (ret <= 0)
-				err("Invalid UID: %s", optarg);
+			/* allow invalid / -1 as a wildcard for lookup */
+			if (ret < 0 && persona_op != PERSONA_OP_LOOKUP) {
+				err("Invalid UID:%s (%d)", optarg, ret);
+			}
 			uid = (uid_t)ret;
 			break;
 		case 'g':
 			kinfo.persona_gid = (gid_t)atoi(optarg);
-			if (kinfo.persona_gid <= 500)
+			if (kinfo.persona_gid <= 500) {
 				err("Invalid GID: %d", kinfo.persona_gid);
+			}
 			break;
 		case 'l':
 			strncpy(kinfo.persona_name, optarg, MAXLOGNAME);
 			break;
 		case 'G':
 			ret = parse_groupspec(&kinfo, optarg);
-			if (ret < 0)
+			if (ret < 0) {
 				err("Invalid groupspec: \"%s\"", optarg);
+			}
 			break;
 		case 'm':
 			ret = atoi(optarg);
-			if (ret < 0)
+			if (ret < 0) {
 				err("Invalid group membership ID: %s", optarg);
+			}
 			kinfo.persona_gmuid = (uid_t)ret;
 			break;
 		case 'v':
@@ -255,23 +306,26 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (uid == (uid_t)-1)
+	if (uid == (uid_t)-1 && persona_op != PERSONA_OP_LOOKUP) {
 		uid = kinfo.persona_id;
+	}
 
-	if (kinfo.persona_gmuid && kinfo.persona_ngroups == 0) {
+	if (kinfo.persona_gmuid != KAUTH_UID_NONE && kinfo.persona_ngroups == 0) {
 		/*
 		 * In order to set the group membership UID, we need to set at
 		 * least one group: make it equal to either the GID or UID
 		 */
 		kinfo.persona_ngroups = 1;
-		if (kinfo.persona_gid)
+		if (kinfo.persona_gid) {
 			kinfo.persona_groups[0] = kinfo.persona_gid;
-		else
+		} else {
 			kinfo.persona_groups[0] = kinfo.persona_id;
+		}
 	}
 
-	if (g.verbose)
+	if (g.verbose) {
 		dump_kpersona("Input persona:", &kinfo);
+	}
 
 	switch (persona_op) {
 	case PERSONA_OP_CREATE:
@@ -282,6 +336,9 @@ int main(int argc, char **argv)
 		break;
 	case PERSONA_OP_LOOKUP:
 		ret = persona_op_lookup(&kinfo, pid, uid);
+		break;
+	case PERSONA_OP_SUPPORT:
+		ret = persona_op_support();
 		break;
 	default:
 		err("Invalid persona op: %d", persona_op);

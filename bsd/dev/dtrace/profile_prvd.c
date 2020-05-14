@@ -23,14 +23,6 @@
  * Use is subject to license terms.
  */
 
-/* #pragma ident	"@(#)profile.c	1.7	07/01/10 SMI" */
-
-#ifdef KERNEL
-#ifndef _KERNEL
-#define _KERNEL /* Solaris vs. Darwin */
-#endif
-#endif
-
 #include <kern/cpu_data.h>
 #include <kern/thread.h>
 #include <kern/assert.h>
@@ -54,6 +46,8 @@
 
 #if defined(__x86_64__)
 extern x86_saved_state_t *find_kern_regs(thread_t);
+#elif defined (__arm__) || defined(__arm64__)
+extern struct arm_saved_state *find_kern_regs(thread_t);
 #else
 #error Unknown architecture
 #endif
@@ -63,7 +57,6 @@ extern x86_saved_state_t *find_kern_regs(thread_t);
 
 extern void profile_init(void);
 
-static dev_info_t *profile_devi;
 static dtrace_provider_id_t profile_id;
 
 /*
@@ -83,7 +76,7 @@ static dtrace_provider_id_t profile_id;
  * On SPARC, the picture is further complicated because the compiler
  * optimizes away tail-calls -- so the following frames are optimized away:
  *
- * 	profile_fire
+ *      profile_fire
  *	cyclic_expire
  *
  * This gives three frames.  However, on DEBUG kernels, the cyclic_expire
@@ -98,45 +91,47 @@ static dtrace_provider_id_t profile_id;
 
 #if defined(__x86_64__)
 #define PROF_ARTIFICIAL_FRAMES  9
+#elif defined(__arm__) || defined(__arm64__)
+#define PROF_ARTIFICIAL_FRAMES 8
 #else
 #error Unknown architecture
 #endif
 
-#define	PROF_NAMELEN		15
+#define PROF_NAMELEN            15
 
-#define	PROF_PROFILE		0
-#define	PROF_TICK		1
-#define	PROF_PREFIX_PROFILE	"profile-"
-#define	PROF_PREFIX_TICK	"tick-"
+#define PROF_PROFILE            0
+#define PROF_TICK               1
+#define PROF_PREFIX_PROFILE     "profile-"
+#define PROF_PREFIX_TICK        "tick-"
 
 typedef struct profile_probe {
-	char		prof_name[PROF_NAMELEN];
-	dtrace_id_t	prof_id;
-	int		prof_kind;
-	hrtime_t	prof_interval;
-	cyclic_id_t	prof_cyclic;
+	char            prof_name[PROF_NAMELEN];
+	dtrace_id_t     prof_id;
+	int             prof_kind;
+	hrtime_t        prof_interval;
+	cyclic_id_t     prof_cyclic;
 } profile_probe_t;
 
 typedef struct profile_probe_percpu {
-	hrtime_t	profc_expected;
-	hrtime_t	profc_interval;
-	profile_probe_t	*profc_probe;
+	hrtime_t        profc_expected;
+	hrtime_t        profc_interval;
+	profile_probe_t *profc_probe;
 } profile_probe_percpu_t;
 
-hrtime_t	profile_interval_min = NANOSEC / 5000;		/* 5000 hz */
-int		profile_aframes = 0;				/* override */
+hrtime_t        profile_interval_min = NANOSEC / 5000;          /* 5000 hz */
+int             profile_aframes = 0;                            /* override */
 
 static int profile_rates[] = {
-    97, 199, 499, 997, 1999,
-    4001, 4999, 0, 0, 0,
-    0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0
+	97, 199, 499, 997, 1999,
+	4001, 4999, 0, 0, 0,
+	0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0
 };
 
 static int profile_ticks[] = {
-    1, 10, 100, 500, 1000,
-    5000, 0, 0, 0, 0,
-    0, 0, 0, 0, 0
+	1, 10, 100, 500, 1000,
+	5000, 0, 0, 0, 0,
+	0, 0, 0, 0, 0
 };
 
 /*
@@ -146,9 +141,9 @@ static int profile_ticks[] = {
  * this gets its value from PROFILE_MAX_DEFAULT or profile-max-probes if it's
  * present in the profile.conf file.
  */
-#define	PROFILE_MAX_DEFAULT	1000	/* default max. number of probes */
-static uint32_t profile_max;		/* maximum number of profile probes */
-static uint32_t profile_total;	/* current number of profile probes */
+#define PROFILE_MAX_DEFAULT     1000    /* default max. number of probes */
+static uint32_t profile_max;            /* maximum number of profile probes */
+static uint32_t profile_total;  /* current number of profile probes */
 
 static void
 profile_fire(void *arg)
@@ -165,8 +160,7 @@ profile_fire(void *arg)
 
 	if (NULL != kern_regs) {
 		/* Kernel was interrupted. */
-		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip,  0x0, late, 0, 0);
-
+		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip, 0x0, late, 0, 0);
 	} else {
 		pal_register_cache_state(current_thread(), VALID);
 		/* Possibly a user interrupt */
@@ -175,7 +169,7 @@ profile_fire(void *arg)
 		if (NULL == tagged_regs) {
 			/* Too bad, so sad, no useful interrupt state. */
 			dtrace_probe(prof->prof_id, 0xcafebabe,
-	    		0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			    0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
 		} else if (is_saved_state64(tagged_regs)) {
 			x86_saved_state64_t *regs = saved_state64(tagged_regs);
 
@@ -184,6 +178,50 @@ profile_fire(void *arg)
 			x86_saved_state32_t *regs = saved_state32(tagged_regs);
 
 			dtrace_probe(prof->prof_id, 0x0, regs->eip, late, 0, 0);
+		}
+	}
+#elif defined(__arm__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		// We should only come in here from interrupt context, so we should always have valid kernel regs
+		assert(NULL != arm_kern_regs);
+
+		if (arm_kern_regs->cpsr & 0xF) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, arm_kern_regs->pc, 0x0, late, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, arm_user_regs->pc, late, 0, 0);
+			}
+		}
+	}
+#elif defined(__arm64__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		// We should only come in here from interrupt context, so we should always have valid kernel regs
+		assert(NULL != arm_kern_regs);
+
+		if (saved_state64(arm_kern_regs)->cpsr & 0xF) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, saved_state64(arm_kern_regs)->pc, 0x0, late, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, late, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, get_saved_state_pc(arm_user_regs), late, 0, 0);
+			}
 		}
 	}
 #else
@@ -201,7 +239,7 @@ profile_tick(void *arg)
 
 	if (NULL != kern_regs) {
 		/* Kernel was interrupted. */
-		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip,  0x0, 0, 0, 0);
+		dtrace_probe(prof->prof_id, saved_state64(kern_regs)->isf.rip, 0x0, 0, 0, 0);
 	} else {
 		pal_register_cache_state(current_thread(), VALID);
 		/* Possibly a user interrupt */
@@ -210,7 +248,7 @@ profile_tick(void *arg)
 		if (NULL == tagged_regs) {
 			/* Too bad, so sad, no useful interrupt state. */
 			dtrace_probe(prof->prof_id, 0xcafebabe,
-	    		0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			    0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
 		} else if (is_saved_state64(tagged_regs)) {
 			x86_saved_state64_t *regs = saved_state64(tagged_regs);
 
@@ -221,6 +259,45 @@ profile_tick(void *arg)
 			dtrace_probe(prof->prof_id, 0x0, regs->eip, 0, 0, 0);
 		}
 	}
+#elif defined(__arm__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		if (NULL != arm_kern_regs) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, arm_kern_regs->pc, 0x0, 0, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, arm_user_regs->pc, 0, 0, 0);
+			}
+		}
+	}
+#elif defined(__arm64__)
+	{
+		arm_saved_state_t *arm_kern_regs = (arm_saved_state_t *) find_kern_regs(current_thread());
+
+		if (NULL != arm_kern_regs) {
+			/* Kernel was interrupted. */
+			dtrace_probe(prof->prof_id, saved_state64(arm_kern_regs)->pc, 0x0, 0, 0, 0);
+		} else {
+			/* Possibly a user interrupt */
+			arm_saved_state_t   *arm_user_regs = (arm_saved_state_t *)find_user_regs(current_thread());
+
+			if (NULL == arm_user_regs) {
+				/* Too bad, so sad, no useful interrupt state. */
+				dtrace_probe(prof->prof_id, 0xcafebabe, 0x0, 0, 0, 0); /* XXX_BOGUS also see profile_usermode() below. */
+			} else {
+				dtrace_probe(prof->prof_id, 0x0, get_saved_state_pc(arm_user_regs), 0, 0, 0);
+			}
+		}
+	}
+
 #else
 #error Unknown architecture
 #endif
@@ -231,22 +308,25 @@ profile_create(hrtime_t interval, const char *name, int kind)
 {
 	profile_probe_t *prof;
 
-	if (interval < profile_interval_min)
-		return;
-
-	if (dtrace_probe_lookup(profile_id, NULL, NULL, name) != 0)
-		return;
-
-	atomic_add_32(&profile_total, 1);
-	if (profile_total > profile_max) {
-		atomic_add_32(&profile_total, -1);
+	if (interval < profile_interval_min) {
 		return;
 	}
 
-	if (PROF_TICK == kind)
-		prof = kmem_zalloc(sizeof (profile_probe_t), KM_SLEEP);
-	else
-		prof = kmem_zalloc(sizeof (profile_probe_t) + NCPU*sizeof(profile_probe_percpu_t), KM_SLEEP);
+	if (dtrace_probe_lookup(profile_id, NULL, NULL, name) != 0) {
+		return;
+	}
+
+	os_atomic_inc(&profile_total, relaxed);
+	if (profile_total > profile_max) {
+		os_atomic_dec(&profile_total, relaxed);
+		return;
+	}
+
+	if (PROF_TICK == kind) {
+		prof = kmem_zalloc(sizeof(profile_probe_t), KM_SLEEP);
+	} else {
+		prof = kmem_zalloc(sizeof(profile_probe_t) + NCPU * sizeof(profile_probe_percpu_t), KM_SLEEP);
+	}
 
 	(void) strlcpy(prof->prof_name, name, sizeof(prof->prof_name));
 	prof->prof_interval = interval;
@@ -279,23 +359,23 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 		const char *name;
 		hrtime_t mult;
 	} suffixes[] = {
-		{ "ns", 	NANOSEC / NANOSEC },
-		{ "nsec",	NANOSEC / NANOSEC },
-		{ "us",		NANOSEC / MICROSEC },
-		{ "usec",	NANOSEC / MICROSEC },
-		{ "ms",		NANOSEC / MILLISEC },
-		{ "msec",	NANOSEC / MILLISEC },
-		{ "s",		NANOSEC / SEC },
-		{ "sec",	NANOSEC / SEC },
-		{ "m",		NANOSEC * (hrtime_t)60 },
-		{ "min",	NANOSEC * (hrtime_t)60 },
-		{ "h",		NANOSEC * (hrtime_t)(60 * 60) },
-		{ "hour",	NANOSEC * (hrtime_t)(60 * 60) },
-		{ "d",		NANOSEC * (hrtime_t)(24 * 60 * 60) },
-		{ "day",	NANOSEC * (hrtime_t)(24 * 60 * 60) },
-		{ "hz",		0 },
+		{ "ns", NANOSEC / NANOSEC },
+		{ "nsec", NANOSEC / NANOSEC },
+		{ "us", NANOSEC / MICROSEC },
+		{ "usec", NANOSEC / MICROSEC },
+		{ "ms", NANOSEC / MILLISEC },
+		{ "msec", NANOSEC / MILLISEC },
+		{ "s", NANOSEC / SEC },
+		{ "sec", NANOSEC / SEC },
+		{ "m", NANOSEC * (hrtime_t)60 },
+		{ "min", NANOSEC * (hrtime_t)60 },
+		{ "h", NANOSEC * (hrtime_t)(60 * 60) },
+		{ "hour", NANOSEC * (hrtime_t)(60 * 60) },
+		{ "d", NANOSEC * (hrtime_t)(24 * 60 * 60) },
+		{ "day", NANOSEC * (hrtime_t)(24 * 60 * 60) },
+		{ "hz", 0 },
 		{ NULL, 0 }
-	};		
+	};
 
 	if (desc == NULL) {
 		char n[PROF_NAMELEN];
@@ -303,18 +383,20 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 		/*
 		 * If no description was provided, provide all of our probes.
 		 */
-		for (i = 0; i < (int)(sizeof (profile_rates) / sizeof (int)); i++) {
-			if ((rate = profile_rates[i]) == 0)
+		for (i = 0; i < (int)(sizeof(profile_rates) / sizeof(int)); i++) {
+			if ((rate = profile_rates[i]) == 0) {
 				continue;
+			}
 
 			(void) snprintf(n, PROF_NAMELEN, "%s%d",
 			    PROF_PREFIX_PROFILE, rate);
 			profile_create(NANOSEC / rate, n, PROF_PROFILE);
 		}
 
-		for (i = 0; i < (int)(sizeof (profile_ticks) / sizeof (int)); i++) {
-			if ((rate = profile_ticks[i]) == 0)
+		for (i = 0; i < (int)(sizeof(profile_ticks) / sizeof(int)); i++) {
+			if ((rate = profile_ticks[i]) == 0) {
 				continue;
+			}
 
 			(void) snprintf(n, PROF_NAMELEN, "%s%d",
 			    PROF_PREFIX_TICK, rate);
@@ -329,13 +411,15 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 	for (i = 0; types[i].prefix != NULL; i++) {
 		len = strlen(types[i].prefix);
 
-		if (strncmp(name, types[i].prefix, len) != 0)
+		if (strncmp(name, types[i].prefix, len) != 0) {
 			continue;
+		}
 		break;
 	}
 
-	if (types[i].prefix == NULL)
+	if (types[i].prefix == NULL) {
 		return;
+	}
 
 	kind = types[i].kind;
 	j = strlen(name) - len;
@@ -344,8 +428,9 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 	 * We need to start before any time suffix.
 	 */
 	for (j = strlen(name); j >= len; j--) {
-		if (name[j] >= '0' && name[j] <= '9')
+		if (name[j] >= '0' && name[j] <= '9') {
 			break;
+		}
 		suffix = &name[j];
 	}
 
@@ -355,15 +440,17 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 	 * Now determine the numerical value present in the probe name.
 	 */
 	for (; j >= len; j--) {
-		if (name[j] < '0' || name[j] > '9')
+		if (name[j] < '0' || name[j] > '9') {
 			return;
+		}
 
 		val += (name[j] - '0') * mult;
 		mult *= (hrtime_t)10;
 	}
 
-	if (val == 0)
+	if (val == 0) {
 		return;
+	}
 
 	/*
 	 * Look-up the suffix to determine the multiplier.
@@ -376,8 +463,9 @@ profile_provide(void *arg, const dtrace_probedesc_t *desc)
 		}
 	}
 
-	if (suffixes[i].name == NULL && *suffix != '\0')
+	if (suffixes[i].name == NULL && *suffix != '\0') {
 		return;
+	}
 
 	if (mult == 0) {
 		/*
@@ -400,13 +488,14 @@ profile_destroy(void *arg, dtrace_id_t id, void *parg)
 
 	ASSERT(prof->prof_cyclic == CYCLIC_NONE);
 
-	if (prof->prof_kind == PROF_TICK)
-		kmem_free(prof, sizeof (profile_probe_t));
-	else
-		kmem_free(prof, sizeof (profile_probe_t) + NCPU*sizeof(profile_probe_percpu_t));
+	if (prof->prof_kind == PROF_TICK) {
+		kmem_free(prof, sizeof(profile_probe_t));
+	} else {
+		kmem_free(prof, sizeof(profile_probe_t) + NCPU * sizeof(profile_probe_percpu_t));
+	}
 
 	ASSERT(profile_total >= 1);
-	atomic_add_32(&profile_total, -1);
+	os_atomic_dec(&profile_total, relaxed);
 }
 
 /*ARGSUSED*/
@@ -478,7 +567,7 @@ profile_enable(void *arg, dtrace_id_t id, void *parg)
 		prof->prof_cyclic = (cyclic_id_t)cyclic_add_omni(&omni); /* cast puns cyclic_id_list_t with cyclic_id_t */
 	}
 
-	return(0);
+	return 0;
 }
 
 /*ARGSUSED*/
@@ -499,6 +588,45 @@ profile_disable(void *arg, dtrace_id_t id, void *parg)
 	prof->prof_cyclic = CYCLIC_NONE;
 }
 
+static uint64_t
+profile_getarg(void *arg, dtrace_id_t id, void *parg, int argno, int aframes)
+{
+#pragma unused(arg, id, parg, argno, aframes)
+	/*
+	 * All the required arguments for the profile probe are passed directly
+	 * to dtrace_probe, and we do not go through dtrace_getarg which doesn't
+	 * know how to hop to the kernel stack from the interrupt stack like
+	 * dtrace_getpcstack
+	 */
+	return 0;
+}
+
+static void
+profile_getargdesc(void *arg, dtrace_id_t id, void *parg, dtrace_argdesc_t *desc)
+{
+#pragma unused(arg, id)
+	profile_probe_t *prof = parg;
+	const char *argdesc = NULL;
+	switch (desc->dtargd_ndx) {
+	case 0:
+		argdesc = "void*";
+		break;
+	case 1:
+		argdesc = "user_addr_t";
+		break;
+	case 2:
+		if (prof->prof_kind == PROF_PROFILE) {
+			argdesc = "hrtime_t";
+		}
+		break;
+	}
+	if (argdesc) {
+		strlcpy(desc->dtargd_native, argdesc, DTRACE_ARGTYPELEN);
+	} else {
+		desc->dtargd_ndx = DTRACE_ARGNONE;
+	}
+}
+
 /*
  * APPLE NOTE:  profile_usermode call not supported.
  */
@@ -510,52 +638,41 @@ profile_usermode(void *arg, dtrace_id_t id, void *parg)
 }
 
 static dtrace_pattr_t profile_attr = {
-{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
-{ DTRACE_STABILITY_UNSTABLE, DTRACE_STABILITY_UNSTABLE, DTRACE_CLASS_UNKNOWN },
-{ DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_UNKNOWN },
-{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
-{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
+	{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
+	{ DTRACE_STABILITY_UNSTABLE, DTRACE_STABILITY_UNSTABLE, DTRACE_CLASS_UNKNOWN },
+	{ DTRACE_STABILITY_PRIVATE, DTRACE_STABILITY_PRIVATE, DTRACE_CLASS_UNKNOWN },
+	{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
+	{ DTRACE_STABILITY_EVOLVING, DTRACE_STABILITY_EVOLVING, DTRACE_CLASS_COMMON },
 };
 
 static dtrace_pops_t profile_pops = {
-	profile_provide,
-	NULL,
-	profile_enable,
-	profile_disable,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	profile_usermode,
-	profile_destroy
+	.dtps_provide =         profile_provide,
+	.dtps_provide_module =  NULL,
+	.dtps_enable =          profile_enable,
+	.dtps_disable =         profile_disable,
+	.dtps_suspend =         NULL,
+	.dtps_resume =          NULL,
+	.dtps_getargdesc =      profile_getargdesc,
+	.dtps_getargval =       profile_getarg,
+	.dtps_usermode =        profile_usermode,
+	.dtps_destroy =         profile_destroy
 };
 
 static int
-profile_attach(dev_info_t *devi, ddi_attach_cmd_t cmd)
+profile_attach(dev_info_t *devi)
 {
-	switch (cmd) {
-	case DDI_ATTACH:
-		break;
-	case DDI_RESUME:
-		return (DDI_SUCCESS);
-	default:
-		return (DDI_FAILURE);
-	}
-
 	if (ddi_create_minor_node(devi, "profile", S_IFCHR, 0,
 	    DDI_PSEUDO, 0) == DDI_FAILURE ||
 	    dtrace_register("profile", &profile_attr,
 	    DTRACE_PRIV_KERNEL | DTRACE_PRIV_USER, NULL,
 	    &profile_pops, NULL, &profile_id) != 0) {
 		ddi_remove_minor_node(devi, NULL);
-		return (DDI_FAILURE);
+		return DDI_FAILURE;
 	}
 
 	profile_max = PROFILE_MAX_DEFAULT;
 
-	ddi_report_dev(devi);
-	profile_devi = devi;
-	return (DDI_SUCCESS);
+	return DDI_SUCCESS;
 }
 
 /*
@@ -569,22 +686,24 @@ profile_detach(dev_info_t *devi, ddi_detach_cmd_t cmd)
 	case DDI_DETACH:
 		break;
 	case DDI_SUSPEND:
-		return (DDI_SUCCESS);
+		return DDI_SUCCESS;
 	default:
-		return (DDI_FAILURE);
+		return DDI_FAILURE;
 	}
 
-	if (dtrace_unregister(profile_id) != 0)
-		return (DDI_FAILURE);
+	if (dtrace_unregister(profile_id) != 0) {
+		return DDI_FAILURE;
+	}
 
 	ddi_remove_minor_node(devi, NULL);
-	return (DDI_SUCCESS);
+	return DDI_SUCCESS;
 }
 #endif /* __APPLE__ */
 
 d_open_t _profile_open;
 
-int _profile_open(dev_t dev, int flags, int devtype, struct proc *p)
+int
+_profile_open(dev_t dev, int flags, int devtype, struct proc *p)
 {
 #pragma unused(dev,flags,devtype,p)
 	return 0;
@@ -598,40 +717,32 @@ int _profile_open(dev_t dev, int flags, int devtype, struct proc *p)
  */
 static struct cdevsw profile_cdevsw =
 {
-	_profile_open,		/* open */
-	eno_opcl,			/* close */
-	eno_rdwrt,			/* read */
-	eno_rdwrt,			/* write */
-	eno_ioctl,			/* ioctl */
+	_profile_open,          /* open */
+	eno_opcl,                       /* close */
+	eno_rdwrt,                      /* read */
+	eno_rdwrt,                      /* write */
+	eno_ioctl,                      /* ioctl */
 	(stop_fcn_t *)nulldev, /* stop */
 	(reset_fcn_t *)nulldev, /* reset */
-	NULL,				/* tty's */
-	eno_select,			/* select */
-	eno_mmap,			/* mmap */
-	eno_strat,			/* strategy */
-	eno_getc,			/* getc */
-	eno_putc,			/* putc */
-	0					/* type */
+	NULL,                           /* tty's */
+	eno_select,                     /* select */
+	eno_mmap,                       /* mmap */
+	eno_strat,                      /* strategy */
+	eno_getc,                       /* getc */
+	eno_putc,                       /* putc */
+	0                                       /* type */
 };
 
-static int gProfileInited = 0;
-
-void profile_init( void )
+void
+profile_init( void )
 {
-	if (0 == gProfileInited)
-	{
-		int majdevno = cdevsw_add(PROFILE_MAJOR, &profile_cdevsw);
-		
-		if (majdevno < 0) {
-			printf("profile_init: failed to allocate a major number!\n");
-			gProfileInited = 0;
-			return;
-		}
+	int majdevno = cdevsw_add(PROFILE_MAJOR, &profile_cdevsw);
 
-		profile_attach( (dev_info_t	*)(uintptr_t)majdevno, DDI_ATTACH );
+	if (majdevno < 0) {
+		printf("profile_init: failed to allocate a major number!\n");
+		return;
+	}
 
-		gProfileInited = 1;
-	} else
-		panic("profile_init: called twice!\n");
+	profile_attach((dev_info_t*)(uintptr_t)majdevno);
 }
 #undef PROFILE_MAJOR

@@ -64,6 +64,10 @@ subsystem
 #if	KERNEL_USER
 	  KernelUser
 #endif
+#if	KERNEL_SERVER
+	  KernelServer
+#endif	/* KERNEL_SERVER */
+
 		     mach_exc 2405;
 
 #include <mach/std_types.defs>
@@ -75,45 +79,55 @@ type mach_exception_data_t	= array[*:2] of int64_t;
 type exception_type_t		= int;
 
 routine		mach_exception_raise(
-#if	KERNEL_USER
-			exception_port	: mach_port_move_send_t;
-			thread		: mach_port_move_send_t;
-			task		: mach_port_move_send_t;
-#else	/* KERNEL_USER */
 			exception_port	: mach_port_t;
 			thread		: mach_port_t;
 			task		: mach_port_t;
-#endif	/* KERNEL_USER */
 			exception	: exception_type_t;
 			code		: mach_exception_data_t
+#if MACH_EXC_SERVER_SECTOKEN
+ ;
+ ServerSecToken stoken	: security_token_t
+#endif
+#if MACH_EXC_SERVER_AUDITTOKEN
+ ;
+ ServerAuditToken atoken: audit_token_t
+#endif
 			);
 
 routine		mach_exception_raise_state(
-#if	KERNEL_USER
-			exception_port	: mach_port_move_send_t;
-#else	/* KERNEL_USER */
 			exception_port	: mach_port_t;
-#endif	/* KERNEL_USER */
 			exception	: exception_type_t;
 			code		: mach_exception_data_t, const;
 		  inout flavor		: int;
 			old_state	: thread_state_t, const;
-		    out new_state	: thread_state_t);
+		    out new_state	: thread_state_t
+#if MACH_EXC_SERVER_SECTOKEN
+ ;
+ ServerSecToken stoken	: security_token_t
+#endif
+#if MACH_EXC_SERVER_AUDITTOKEN
+ ;
+ ServerAuditToken atoken: audit_token_t
+#endif
+			);
 
 routine		mach_exception_raise_state_identity(
-#if	KERNEL_USER
-			exception_port  : mach_port_move_send_t;
-			thread		: mach_port_move_send_t;
-			task		: mach_port_move_send_t;
-#else	/* KERNEL_USER */
 			exception_port  : mach_port_t;
 			thread          : mach_port_t;
 			task            : mach_port_t;
-#endif	/* KERNEL_USER */
 			exception       : exception_type_t;
 			code            : mach_exception_data_t;
 		  inout flavor          : int;
 			old_state       : thread_state_t;
-		    out new_state       : thread_state_t);
+		    out new_state       : thread_state_t
+#if MACH_EXC_SERVER_SECTOKEN
+ ;
+ ServerSecToken stoken	: security_token_t
+#endif
+#if MACH_EXC_SERVER_AUDITTOKEN
+ ;
+ ServerAuditToken atoken: audit_token_t
+#endif
+			);
 
 /* vim: set ft=c : */

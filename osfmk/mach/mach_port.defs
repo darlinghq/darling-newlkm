@@ -248,7 +248,7 @@ routine mach_port_set_mscount(
  */
 
 routine mach_port_get_set_status(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 		name		: mach_port_name_t;
 	out	members		: mach_port_name_array_t);
 
@@ -354,7 +354,7 @@ routine mach_port_set_seqno(
  */
 
 routine mach_port_get_attributes(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 		name		: mach_port_name_t;
 		flavor		: mach_port_flavor_t;
 	out	port_info_out	: mach_port_info_t, CountInOut);
@@ -425,7 +425,7 @@ routine	mach_port_get_srights(
  *      Otherwise, KERN_FAILURE is returned.
  */
 routine mach_port_space_info(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 	out	space_info	: ipc_info_space_t;
 	out	table_info	: ipc_info_name_array_t;
 	out	tree_info	: ipc_info_tree_name_array_t);
@@ -452,7 +452,7 @@ routine mach_port_dnrequest_info(
  *	mach_port_kernel_object64() call (see below).
  */
 routine	mach_port_kernel_object(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 		name		: mach_port_name_t;
 	out	object_type	: unsigned;
 	out	object_addr	: unsigned);
@@ -503,7 +503,7 @@ routine mach_port_extract_member(
  */
 
 routine mach_port_get_context(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 		name		: mach_port_name_t;
 #ifdef LIBSYSCALL_INTERFACE
 	out context		: mach_port_context_t
@@ -534,7 +534,7 @@ routine mach_port_set_context(
  *      Otherwise, KERN_FAILURE is returned.
  */
 routine	mach_port_kobject(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 		name		: mach_port_name_t;
 	out	object_type	: natural_t;
 	out	object_addr	: mach_vm_address_t);
@@ -608,7 +608,54 @@ routine mach_port_unguard(
  *      Otherwise, KERN_FAILURE is returned.
  */
 routine mach_port_space_basic_info(
-		task		: ipc_space_t;
+		task		: ipc_space_inspect_t;
 	out	basic_info	: ipc_info_space_basic_t);
+
+#if KERNEL || !LIBSYSCALL_INTERFACE
+/*
+ *	Returns sync ipc turnstile link status
+ *	for special reply ports.
+ */
+routine mach_port_special_reply_port_reset_link(
+		task            : ipc_space_t;
+		name            : mach_port_name_t;
+	out	srp_lost_link	: boolean_t);
+#else
+skip;
+#endif
+
+/*
+ *	Guard an already existing port. Allows guarding
+ *	receive rights only. Uses the context field in the
+ *	port structure to store the guard.
+ */
+routine mach_port_guard_with_flags(
+		task		: ipc_space_t;
+		name		: mach_port_name_t;
+#ifdef LIBSYSCALL_INTERFACE
+		guard		: mach_port_context_t;
+#else
+		guard		: uint64_t;
+#endif
+		flags		: uint64_t);
+
+/*
+ *	Swap guard value of an existing guarded port. Works
+ *	only if it is not a strict guard.
+ */
+routine mach_port_swap_guard(
+		task		: ipc_space_t;
+		name		: mach_port_name_t;
+#ifdef LIBSYSCALL_INTERFACE
+		old_guard	: mach_port_context_t;
+#else
+		old_guard	: uint64_t;
+#endif
+
+#ifdef LIBSYSCALL_INTERFACE
+		new_guard	: mach_port_context_t);
+#else
+		new_guard	: uint64_t);
+#endif
 
 /* vim: set ft=c : */

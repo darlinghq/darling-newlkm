@@ -5,42 +5,38 @@ import struct
 from xnu import *
 from core.operating_system import Armv8_RegisterSet, Armv7_RegisterSet, I386_RegisterSet, X86_64RegisterSet
 
+""" these defines should come from an authoritative header file """
 CPU_TYPE_I386 = 0x00000007
 CPU_TYPE_X86_64 = 0x01000007
 CPU_TYPE_ARM = 0x0000000c
 CPU_TYPE_ARM64 = 0x0100000c
-
-
-CPU_SUBTYPE_X86_64_ALL = 3
-CPU_SUBTYPE_X86_64_H = 8
-CPU_SUBTYPE_ARMV8 = 13
-CPU_SUBTYPE_ARM_V7 = 9
-CPU_SUBTYPE_ARM_V7S = 11
-CPU_SUBTYPE_ARM_V7K = 12
-
+CPU_TYPE_ARM64_32 = 0x0200000c
 
 def GetRegisterSetForCPU(cputype, subtype):
-    retval = X86_64RegisterSet
-    if cputype in (CPU_TYPE_ARM, CPU_TYPE_ARM64):
-        if subtype == CPU_SUBTYPE_ARMV8:
-            retval = Armv8_RegisterSet
-        else:
-            retval = Armv7_RegisterSet
+    if cputype == CPU_TYPE_ARM64:
+        retval = Armv8_RegisterSet
+    elif cputype == CPU_TYPE_ARM64_32:
+        retval = Armv8_RegisterSet
+    elif cputype == CPU_TYPE_ARM:
+        retval = Armv7_RegisterSet
     elif cputype == CPU_TYPE_I386:
         retval = I386_RegisterSet
+    elif cputype == CPU_TYPE_X86_64:
+        retval = X86_64RegisterSet
+    
+    """ crash if unknown cputype """
 
     return retval.register_info['registers']
 
 
 class UserThreadObject(object):
     """representation of userspace thread"""
-    def __init__(self, thr_obj, cputype, cpusubtype, kern_cputype):
+    def __init__(self, thr_obj, cputype, cpusubtype, is_kern_64bit):
         super(UserThreadObject, self).__init__()
         self.thread = thr_obj
         self.registerset = GetRegisterSetForCPU(cputype, cpusubtype)
         self.thread_id = unsigned(self.thread.thread_id)
         self.is64Bit = bool(cputype & 0x01000000)
-        isKern64Bit = bool(kern_cputype & 0x01000000)
 
         if self.is64Bit:
             if cputype == CPU_TYPE_X86_64:
@@ -55,12 +51,16 @@ class UserThreadObject(object):
                 self.saved_state = Cast(self.thread.machine.iss, 'x86_saved_state_t *').uss.ss_32
             if cputype == CPU_TYPE_ARM:
                 self.reg_type = "arm"
-                if not isKern64Bit:
+                if not is_kern_64bit:
                     self.saved_state = self.thread.machine.PcbData
                 else:
                     self.saved_state = self.thread.machine.contextData.ss.uss.ss_32
-        logging.debug("created thread id 0x%x of type %s, kern_cputype 0x%x cputype 0x%x"
-                      % (self.thread_id, self.reg_type, kern_cputype, cputype))
+            if cputype == CPU_TYPE_ARM64_32:
+                self.reg_type = "arm64"
+                self.saved_state = self.thread.machine.upcb.uss.ss_64
+
+        logging.debug("created thread id 0x%x of type %s, is_kern_64bit 0x%x cputype 0x%x"
+                      % (self.thread_id, self.reg_type, is_kern_64bit, cputype))
 
     def getRegisterValueByName(self, name):
         if self.reg_type == 'arm64':
@@ -105,27 +105,20 @@ class UserProcess(target.Process):
         if task.t_flags & 0x1:
             ptrsize = 8
         if task.t_flags & 0x2:
-            dataregisters64bit = 8
+            dataregisters64bit = True
 
-        cputype = CPU_TYPE_X86_64
-        cpusubtype = CPU_SUBTYPE_X86_64_ALL
-
-        if kern.arch in ('arm'):
-            cputype = CPU_TYPE_ARM
-            cpusubtype = CPU_SUBTYPE_ARM_V7
-        elif kern.arch in ('armv8', 'arm64'):
-            cputype = CPU_TYPE_ARM64
-            cpusubtype = CPU_SUBTYPE_ARMV8
-
-        super(UserProcess, self).__init__(cputype, cpusubtype, ptrsize)
-
-        self.hinfo['ostype'] = 'macosx'
-        if cputype != CPU_TYPE_X86_64:
-            self.hinfo['ostype'] = 'ios'
+        is_kern_64bit = kern.arch in ['x86_64', 'x86_64h', 'arm64', 'arm64e']
 
         self.cputype = unsigned(self.proc.p_cputype)
         self.cpusubtype = unsigned(self.proc.p_cpusubtype)
-        self.registerset = GetRegisterSetForCPU(cputype, cpusubtype)
+
+        super(UserProcess, self).__init__(self.cputype, self.cpusubtype, ptrsize)
+
+        self.hinfo['ostype'] = 'macosx'
+        if self.cputype != CPU_TYPE_X86_64 and self.cputype != CPU_TYPE_I386:
+            self.hinfo['ostype'] = 'ios'
+
+        self.registerset = GetRegisterSetForCPU(self.cputype, self.cpusubtype)
         logging.debug("process %s is64bit: %d ptrsize: %d cputype: %d  cpusubtype:%d",
                       hex(self.proc), int(dataregisters64bit), ptrsize,
                       self.cputype, self.cpusubtype
@@ -134,7 +127,7 @@ class UserProcess(target.Process):
         self.threads_ids_list = []
         logging.debug("iterating over threads in process")
         for thval in IterateQueue(task.threads, 'thread *', 'task_threads'):
-            self.threads[unsigned(thval.thread_id)] = UserThreadObject(thval, self.cputype, self.cpusubtype, cputype)
+            self.threads[unsigned(thval.thread_id)] = UserThreadObject(thval, self.cputype, self.cpusubtype, is_kern_64bit)
             self.threads_ids_list.append(unsigned(thval.thread_id))
 
     def getRegisterDataForThread(self, th_id, reg_num):

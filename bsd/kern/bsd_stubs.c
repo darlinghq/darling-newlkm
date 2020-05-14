@@ -45,7 +45,7 @@
 
 /* XXX these should be in a common header somwhere, but aren't */
 extern int chrtoblk_set(int, int);
-extern vm_offset_t kmem_mb_alloc(vm_map_t, int, int);
+extern vm_offset_t kmem_mb_alloc(vm_map_t, int, int, kern_return_t *);
 
 /* XXX most of these just exist to export; there's no good header for them*/
 void pcb_synch(void);
@@ -58,18 +58,23 @@ lck_grp_t * devsw_lock_grp;
 int dmmin, dmmax, dmtext;
 
 vm_offset_t
-kmem_mb_alloc(vm_map_t mbmap, int size, int physContig)
+kmem_mb_alloc(vm_map_t mbmap, int size, int physContig, kern_return_t *err)
 {
 	vm_offset_t addr = 0;
 	kern_return_t kr = KERN_SUCCESS;
 
-	if (!physContig)
-		kr = kernel_memory_allocate(mbmap, &addr, size, 0, KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_MBUF);
-	else
-		kr = kmem_alloc_contig(mbmap, &addr, size, PAGE_MASK, 0xfffff, 0, KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_MBUF);
+	if (!physContig) {
+		kr = kernel_memory_allocate(mbmap, &addr, size, 0, KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_MBUF);
+	} else {
+		kr = kmem_alloc_contig(mbmap, &addr, size, PAGE_MASK, 0xfffff, 0, KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_MBUF);
+	}
 
-	if (kr != KERN_SUCCESS)
+	if (kr != KERN_SUCCESS) {
 		addr = 0;
+	}
+	if (err) {
+		*err = kr;
+	}
 
 	return addr;
 }
@@ -93,19 +98,22 @@ current_proc(void)
 	ut = (struct uthread *)get_bsdthread_info(thread);
 	if (ut && (ut->uu_flag & UT_VFORK) && ut->uu_proc) {
 		p = ut->uu_proc;
-		if ((p->p_lflag & P_LINVFORK) == 0)
+		if ((p->p_lflag & P_LINVFORK) == 0) {
 			panic("returning child proc not under vfork");
-		if (p->p_vforkact != (void *)thread)
+		}
+		if (p->p_vforkact != (void *)thread) {
 			panic("returning child proc which is not cur_act");
-		return (p);
+		}
+		return p;
 	}
 
 	p = (struct proc *)get_bsdtask_info(current_task());
 
-	if (p == NULL)
-		return (kernproc);
+	if (p == NULL) {
+		return kernproc;
+	}
 
-	return (p);
+	return p;
 }
 
 /* Device switch add delete routines */
@@ -127,25 +135,28 @@ bdevsw_isfree(int index)
 	struct bdevsw * devsw;
 
 	if (index < 0) {
-		if (index == -1)
+		if (index == -1) {
 			index = 1; /* start at 1 to avoid collision with volfs (Radar 2842228) */
-		else
+		} else {
 			index = -index; /* start at least this far up in the table */
+		}
 		devsw = &bdevsw[index];
 		for (; index < nblkdev; index++, devsw++) {
-			if (memcmp((char *)devsw, (char *)&nobdev, sizeof(struct bdevsw)) == 0)
+			if (memcmp((char *)devsw, (char *)&nobdev, sizeof(struct bdevsw)) == 0) {
 				break;
+			}
 		}
 	}
 
-	if (index < 0 || index >= nblkdev)
-		return (-1);
+	if (index < 0 || index >= nblkdev) {
+		return -1;
+	}
 
 	devsw = &bdevsw[index];
 	if ((memcmp((char *)devsw, (char *)&nobdev, sizeof(struct bdevsw)) != 0)) {
-		return (-1);
+		return -1;
 	}
-	return (index);
+	return index;
 }
 
 /*
@@ -168,7 +179,7 @@ bdevsw_add(int index, struct bdevsw * bsw)
 		bdevsw[index] = *bsw;
 	}
 	lck_mtx_unlock(&devsw_lock_list_mtx);
-	return (index);
+	return index;
 }
 /*
  *	if the slot has the same bsw, then remove
@@ -179,8 +190,9 @@ bdevsw_remove(int index, struct bdevsw * bsw)
 {
 	struct bdevsw * devsw;
 
-	if (index < 0 || index >= nblkdev)
-		return (-1);
+	if (index < 0 || index >= nblkdev) {
+		return -1;
+	}
 
 	devsw = &bdevsw[index];
 	lck_mtx_lock_spin(&devsw_lock_list_mtx);
@@ -190,7 +202,7 @@ bdevsw_remove(int index, struct bdevsw * bsw)
 		bdevsw[index] = nobdev;
 	}
 	lck_mtx_unlock(&devsw_lock_list_mtx);
-	return (index);
+	return index;
 }
 
 /*
@@ -208,25 +220,28 @@ cdevsw_isfree(int index)
 	struct cdevsw * devsw;
 
 	if (index < 0) {
-		if (index == -1)
+		if (index == -1) {
 			index = 0;
-		else
+		} else {
 			index = -index; /* start at least this far up in the table */
+		}
 		devsw = &cdevsw[index];
 		for (; index < nchrdev; index++, devsw++) {
-			if (memcmp((char *)devsw, (char *)&nocdev, sizeof(struct cdevsw)) == 0)
+			if (memcmp((char *)devsw, (char *)&nocdev, sizeof(struct cdevsw)) == 0) {
 				break;
+			}
 		}
 	}
 
-	if (index < 0 || index >= nchrdev)
-		return (-1);
+	if (index < 0 || index >= nchrdev) {
+		return -1;
+	}
 
 	devsw = &cdevsw[index];
 	if ((memcmp((char *)devsw, (char *)&nocdev, sizeof(struct cdevsw)) != 0)) {
-		return (-1);
+		return -1;
 	}
-	return (index);
+	return index;
 }
 
 /*
@@ -254,7 +269,7 @@ cdevsw_add(int index, struct cdevsw * csw)
 		cdevsw[index] = *csw;
 	}
 	lck_mtx_unlock(&devsw_lock_list_mtx);
-	return (index);
+	return index;
 }
 /*
  *	if the slot has the same csw, then remove
@@ -265,8 +280,9 @@ cdevsw_remove(int index, struct cdevsw * csw)
 {
 	struct cdevsw * devsw;
 
-	if (index < 0 || index >= nchrdev)
-		return (-1);
+	if (index < 0 || index >= nchrdev) {
+		return -1;
+	}
 
 	devsw = &cdevsw[index];
 	lck_mtx_lock_spin(&devsw_lock_list_mtx);
@@ -277,13 +293,13 @@ cdevsw_remove(int index, struct cdevsw * csw)
 		cdevsw_flags[index] = 0;
 	}
 	lck_mtx_unlock(&devsw_lock_list_mtx);
-	return (index);
+	return index;
 }
 
 static int
 cdev_set_bdev(int cdev, int bdev)
 {
-	return (chrtoblk_set(cdev, bdev));
+	return chrtoblk_set(cdev, bdev);
 }
 
 int
@@ -291,34 +307,33 @@ cdevsw_add_with_bdev(int index, struct cdevsw * csw, int bdev)
 {
 	index = cdevsw_add(index, csw);
 	if (index < 0) {
-		return (index);
+		return index;
 	}
 	if (cdev_set_bdev(index, bdev) < 0) {
 		cdevsw_remove(index, csw);
-		return (-1);
+		return -1;
 	}
-	return (index);
+	return index;
 }
 
 int
-cdevsw_setkqueueok(int index, struct cdevsw * csw, int use_offset)
+cdevsw_setkqueueok(int maj, struct cdevsw * csw, int extra_flags)
 {
 	struct cdevsw * devsw;
 	uint64_t flags = CDEVSW_SELECT_KQUEUE;
 
-	if (index < 0 || index >= nchrdev)
-		return (-1);
+	if (maj < 0 || maj >= nchrdev) {
+		return -1;
+	}
 
-	devsw = &cdevsw[index];
+	devsw = &cdevsw[maj];
 	if ((memcmp((char *)devsw, (char *)csw, sizeof(struct cdevsw)) != 0)) {
-		return (-1);
+		return -1;
 	}
 
-	if (use_offset) {
-		flags |= CDEVSW_USE_OFFSET;
-	}
+	flags |= extra_flags;
 
-	cdevsw_flags[index] = flags;
+	cdevsw_flags[maj] = flags;
 	return 0;
 }
 
@@ -333,16 +348,21 @@ cdevsw_setkqueueok(int index, struct cdevsw * csw, int use_offset)
 int
 bsd_hostname(char * buf, int bufsize, int * len)
 {
+	int ret, hnlen;
 	/*
-	 * "hostname" is null-terminated, and "hostnamelen" is equivalent to strlen(hostname).
+	 * "hostname" is null-terminated
 	 */
-	if (hostnamelen < bufsize) {
+	lck_mtx_lock(&hostname_lock);
+	hnlen = strlen(hostname);
+	if (hnlen < bufsize) {
 		strlcpy(buf, hostname, bufsize);
-		*len = hostnamelen;
-		return 0;
+		*len = hnlen;
+		ret = 0;
 	} else {
-		return ENAMETOOLONG;
+		ret = ENAMETOOLONG;
 	}
+	lck_mtx_unlock(&hostname_lock);
+	return ret;
 }
 
 void

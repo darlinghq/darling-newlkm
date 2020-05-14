@@ -56,8 +56,12 @@ endif
 # Kernel Configuration options
 #
 
+DEFAULT_PRODUCT_CONFIGS :=
+
 ifeq ($(RC_ProjectName),xnu_debug)
 override DEFAULT_KERNEL_CONFIG := DEBUG
+else ifeq ($(RC_ProjectName),xnu_kasan)
+override KERNEL_CONFIGS := KASAN
 else ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
 override DEFAULT_KERNEL_CONFIG := DEVELOPMENT
 else ifeq ($(PLATFORM),MacOSX)
@@ -71,6 +75,11 @@ ifndef KERNEL_CONFIGS
 KERNEL_CONFIGS := DEFAULT
 endif
 
+# If PRODUCT_CONFIGS is specified it should override default
+ifndef PRODUCT_CONFIGS
+PRODUCT_CONFIGS := $(DEFAULT_PRODUCT_CONFIGS)
+endif
+
 #
 # Machine Configuration options
 #
@@ -78,7 +87,8 @@ endif
 override DEFAULT_I386_MACHINE_CONFIG := NONE
 override DEFAULT_X86_64_MACHINE_CONFIG := NONE
 override DEFAULT_X86_64H_MACHINE_CONFIG := NONE
-
+override DEFAULT_ARM_MACHINE_CONFIG	:= T8002
+override DEFAULT_ARM64_MACHINE_CONFIG	:= T7000
 
 # This is typically never specified (TARGET_CONFIGS is used)
 ifndef MACHINE_CONFIGS
@@ -105,6 +115,76 @@ endif
 # default kernel configuration = DEFAULT_KERNEL_CONFIG
 # default architecture configuration = system architecture where you are running make.
 
+ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
+
+# Defaults for "make all_embedded"
+ifeq ($(KERNEL_CONFIGS),DEFAULT)
+KERNEL_CONFIGS_EMBEDDED := RELEASE DEVELOPMENT
+else
+KERNEL_CONFIGS_EMBEDDED := $(KERNEL_CONFIGS)
+endif
+
+ifeq ($(ARCH_CONFIGS),DEFAULT)
+ARCH_CONFIGS_EMBEDDED := ARM ARM64
+else
+ARCH_CONFIGS_EMBEDDED := $(strip $(shell echo $(ARCH_CONFIGS) | $(TR) a-z A-Z))
+endif
+
+# Find supported products from the device map
+DEVICEMAP_PRODUCTS_ARMV7  := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "armv7"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_ARMV7S := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "armv7s"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_ARMV7K := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "armv7k"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_ARM := $(DEVICEMAP_PRODUCTS_ARMV7) $(DEVICEMAP_PRODUCTS_ARMV7S) $(DEVICEMAP_PRODUCTS_ARMV7K)
+
+
+DEVICEMAP_PRODUCTS_ARM64 := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "arm64"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+
+
+# Generate a list of mappings of the form "n75:arm;t8002" based on the device map
+DEVICEMAP_PRODUCT_SOC_MAPPINGS := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform FROM Targets | awk -F\| '{ if ($$2 ~ /armv[0-9][a-z]?/) { print $$1 ":arm;" $$3 } else if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
+
+# Map a product like "n75" to "arm;t8002"
+# $(1) is a product name in lower case
+function_lookup_product = $(call function_substitute_word_with_replacement,	\
+				 $(1),						\
+				 $(DEVICEMAP_PRODUCT_SOC_MAPPINGS),		\
+				 unknown_arch_for_$(1);unknown_platform_for_$(1) \
+			   )
+
+# Generate a list of mappings for products that use a different platform for their kernel configuration than their true platform
+# of the form "n71m:arm64;s8000;s8003". The 4th element is the true SoC platform, which will get an on-disk copy, while the
+# kernel's recursive build system will build the 3rd element as the KernelPlatform
+DEVICEMAP_PRODUCT_SOC_ALIASES := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform, Platform FROM Targets WHERE KernelPlatform "!=" Platform | awk -F\| '{ if ($$2 ~ /armv[0-9][a-z]?/) { print $$1 ":arm;" $$3 ";" $$4} else if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
+
+function_lookup_product_alias = $(call function_substitute_word_with_replacement,	\
+					$(1),						\
+					$(DEVICEMAP_PRODUCT_SOC_ALIASES),		\
+				 )
+endif
 
 ifeq ($(PLATFORM),MacOSX)
 
@@ -158,7 +238,7 @@ TARGET_CONFIGS_ALIASES_UC := $(strip $(shell printf "%s" "$(TARGET_CONFIGS_ALIAS
 # TARGET_CONFIGS is unwieldy for use in Makefiles. Convert them to
 # "build configurations" which are tuples joined by "^". For
 # example, "RELEASE I386 DEFAULT DEVELOPMENT ARM DEFAULT" becomes
-# "RELEASE^I386^NONE DEVELOPMENT^ARM^S5L8920X", which can be looped
+# "RELEASE^I386^NONE DEVELOPMENT^ARM^T8002", which can be looped
 # over trivially. PRIMARY_BUILD_CONFIGS is the first config
 # for each architecture, used primarily for machine-dependent recursion.
 
@@ -342,6 +422,9 @@ exporthdrs_md: build_exporthdrs_md_bootstrap
 ifeq ($(RC_ProjectName),xnu_debug)
 installhdrs:
 	@:
+else ifeq ($(RC_ProjectName),xnu_kasan)
+installhdrs:
+	@:
 else
 
 installhdrs: installhdrs_mi installhdrs_md
@@ -469,11 +552,18 @@ final_touch_config_timestamps: config_install_bootstrap
 
 ifeq ($(RC_ProjectName),xnu_debug)
 install: install_kernels
+else ifeq ($(RC_ProjectName),xnu_kasan)
+install: install_config install_kernels
 else ifeq ($(RC_ProjectName),xnu_headers_Sim)
 install: installhdrs
+else ifeq ($(RC_ProjectName),xnu_headers_host)
+install: installhdrs
+export INSTALLHDRS_SKIP_HOST=YES
+else ifeq ($(RC_ProjectName),xnu_headers_driverkit)
+install: installhdrs_desktop
 else
 
-install: installhdrs install_textfiles install_config install_kernels install_aliases
+install: installhdrs install_textfiles install_config install_kernels install_aliases checkstyle
 endif
 
 .PHONY: install_embedded install_release_embedded install_development_embedded install_desktop
@@ -518,11 +608,38 @@ installsrc:
 #
 .PHONY: clean
 
+CLEAN_RM_DIRS= $(OBJROOT) $(SYMROOT) $(DSTROOT) \
+		$(SRCROOT)/tools/test/BUILD \
+		$(SRCROOT)/tools/tests/darwintests/build \
+		$(SRCROOT)/tools/tests/testkext/build \
+		$(SRCROOT)/libkdd/build \
+		$(SRCROOT)/tools/tests/unit_tests/BUILD \
+		$(SRCROOT)/tools/tests/execperf/BUILD \
+		$(SRCROOT)/tools/tests/packetdrill/BUILD \
+		$(SRCROOT)/tools/tests/perf_index/BUILD
+
+CLEAN_ACTION_DIRS= $(SRCROOT)/tools/tests/MPMMTest \
+		$(SRCROOT)/tools/tests/TLBcoherency \
+		$(SRCROOT)/tools/tests/kqueue_tests \
+		$(SRCROOT)/tools/tests/mktimer \
+		$(SRCROOT)/tools/tests/zero-to-n \
+		$(SRCROOT)/tools/tests/personas
+
 clean:
 	@:
-	@rm -f cscope.* 2> /dev/null
-	@rm -f $(OBJROOT)/cscope.genhdrs/* 2> /dev/null  || true
-	@rm -f TAGS 2> /dev/null
+	$(_v)rm -f cscope.* 2> /dev/null
+	$(_v)rm -f TAGS 2> /dev/null
+	$(_v)for cdir in $(CLEAN_RM_DIRS); do \
+		if [ -d $${cdir} ] ; then \
+			echo "Removing $${cdir}"; \
+			rm -fr $${cdir} 2> /dev/null  || true ; \
+		fi ; \
+	done
+
+	$(_v)for mcdir in $(CLEAN_ACTION_DIRS); do \
+		make -C $${mcdir} clean; \
+	done
+
 
 #
 # Build source file list for cscope database and tags
@@ -564,12 +681,19 @@ TAGS: cscope.files
 	@rm -f cscope.files 2> /dev/null
 
 #
-# Re-indent source code using xnu clang-format style
+# Check or reformat source code for official xnu code style
 #
-.PHONY: reindent
+.PHONY: checkstyle restyle check_uncrustify uncrustify
 
-reindent:
-	$(_v)$(SRCROOT)/tools/reindent.sh
+# User-friendly aliases for those who prefer to remember the name of the tool.
+check_uncrustify: checkstyle
+uncrustify: restyle
+
+checkstyle:
+	${_V}$(SRCROOT)/tools/uncrustify.sh
+
+restyle:
+	${_V}$(SRCROOT)/tools/uncrustify.sh -f
 
 .PHONY: help
 

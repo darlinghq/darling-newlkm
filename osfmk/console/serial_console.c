@@ -44,8 +44,20 @@
 #include <kern/kalloc.h>
 #include <kern/thread.h>
 #include <kern/cpu_data.h>
+#include <libkern/section_keywords.h>
 
+#if __arm__ || __arm64__
+#include <machine/machine_routines.h>
+#include <arm/cpu_data_internal.h>
+#endif
 
+#ifdef CONFIG_XNUPOST
+#include <tests/xnupost.h>
+kern_return_t console_serial_test(void);
+kern_return_t console_serial_alloc_rel_tests(void);
+kern_return_t console_serial_parallel_log_tests(void);
+#define MAX_CPU_SLOTS (MAX_CPUS + 2)
+#endif
 
 #ifndef MAX_CPU_SLOTS
 #define MAX_CPU_SLOTS (MAX_CPUS)
@@ -109,21 +121,47 @@ extern void serial_putc(char);
 
 static void _serial_putc(int, int, int);
 
-struct console_ops cons_ops[] = {
-    {
-        .putc = _serial_putc, .getc = _serial_getc,
-    },
-    {
-        .putc = vcputc, .getc = vcgetc,
-    },
+SECURITY_READ_ONLY_EARLY(struct console_ops) cons_ops[] = {
+	{
+		.putc = _serial_putc, .getc = _serial_getc,
+	},
+	{
+		.putc = vcputc, .getc = vcgetc,
+	},
 };
 
-uint32_t nconsops = (sizeof cons_ops / sizeof cons_ops[0]);
+SECURITY_READ_ONLY_EARLY(uint32_t) nconsops = (sizeof cons_ops / sizeof cons_ops[0]);
 
 uint32_t cons_ops_index = VC_CONS_OPS;
 
+#if defined(__x86_64__) || defined(__arm__)
+// NMI static variables
+#define NMI_STRING_SIZE 32
+char nmi_string[NMI_STRING_SIZE] = "afDIGHr84A84jh19Kphgp428DNPdnapq";
+static int nmi_counter           = 0;
+#endif /* __arm__ */
 
 static bool console_suspended = false;
+
+/* Wrapper for ml_set_interrupts_enabled */
+static void
+console_restore_interrupts_state(boolean_t state)
+{
+#if INTERRUPT_MASKED_DEBUG
+	/*
+	 * Serial console holds interrupts disabled for far too long
+	 * and would trip the spin-debugger.  If we are about to reenable
+	 * interrupts then clear the timer and avoid panicking on the delay.
+	 * Otherwise, let the code that printed with interrupt disabled
+	 * take the panic when it reenables interrupts.
+	 * Hopefully one day this is fixed so that this workaround is unnecessary.
+	 */
+	if (state == TRUE) {
+		ml_spin_debug_clear_self();
+	}
+#endif /* INTERRUPT_MASKED_DEBUG */
+	ml_set_interrupts_enabled(state);
+}
 
 static void
 console_ring_lock_init(void)
@@ -138,8 +176,9 @@ console_init(void)
 	int ret, i;
 	uint32_t * p;
 
-	if (!OSCompareAndSwap(0, KERN_CONSOLE_RING_SIZE, (UInt32 *)&console_ring.len))
+	if (!OSCompareAndSwap(0, KERN_CONSOLE_RING_SIZE, (UInt32 *)&console_ring.len)) {
 		return;
+	}
 
 	assert(console_ring.len > 0);
 
@@ -166,7 +205,7 @@ console_cpu_alloc(__unused boolean_t boot_processor)
 {
 	console_buf_t * cbp;
 	int i;
-	uint32_t * p;
+	uint32_t * p = NULL;
 
 	console_init();
 	assert(console_ring.buffer != NULL);
@@ -174,8 +213,9 @@ console_cpu_alloc(__unused boolean_t boot_processor)
 	/* select the next slot from the per cpu buffers at end of console_ring.buffer */
 	for (i = 0; i < MAX_CPU_SLOTS; i++) {
 		p = (uint32_t *)((uintptr_t)console_ring.buffer + console_ring.len + (i * sizeof(console_buf_t)));
-		if (OSCompareAndSwap(CPU_BUF_FREE_HEX, 0, (UInt32 *)p))
+		if (OSCompareAndSwap(CPU_BUF_FREE_HEX, 0, (UInt32 *)p)) {
 			break;
+		}
 	}
 	assert(i < MAX_CPU_SLOTS);
 
@@ -196,8 +236,9 @@ console_cpu_free(void * buf)
 {
 	assert((uintptr_t)buf > (uintptr_t)console_ring.buffer);
 	assert((uintptr_t)buf < (uintptr_t)console_ring.buffer + KERN_CONSOLE_BUF_SIZE);
-	if (buf != NULL)
+	if (buf != NULL) {
 		*(uint32_t *)buf = CPU_BUF_FREE_HEX;
+	}
 }
 
 static inline int
@@ -212,8 +253,9 @@ console_ring_put(char ch)
 	if (console_ring.used < console_ring.len) {
 		console_ring.used++;
 		*console_ring.write_ptr++ = ch;
-		if (console_ring.write_ptr - console_ring.buffer == console_ring.len)
+		if (console_ring.write_ptr - console_ring.buffer == console_ring.len) {
 			console_ring.write_ptr = console_ring.buffer;
+		}
 		return TRUE;
 	} else {
 		return FALSE;
@@ -246,31 +288,32 @@ _cnputs(char * c, int size)
 #ifdef __x86_64__
 	uint32_t lock_timeout_ticks = UINT32_MAX;
 #else
-	uint32_t lock_timeout_ticks = LockTimeOut;
+	uint32_t lock_timeout_ticks = LockTimeOut * 2; // 250ms is not enough, 500 is just right
 #endif
 
 	mp_disable_preemption();
-	if (!hw_lock_to(&cnputc_lock, lock_timeout_ticks)) {
+	if (!hw_lock_to(&cnputc_lock, lock_timeout_ticks, LCK_GRP_NULL)) {
 		/* If we timed out on the lock, and we're in the debugger,
 		 * copy lock data for debugging and break the lock.
 		 */
 		hw_lock_data_t _shadow_lock;
 		memcpy(&_shadow_lock, &cnputc_lock, sizeof(cnputc_lock));
-		if (debug_mode) {
+		if (kernel_debugger_entry_count) {
 			/* Since hw_lock_to takes a pre-emption count...*/
 			mp_enable_preemption();
 			hw_lock_init(&cnputc_lock);
-			hw_lock_lock(&cnputc_lock);
+			hw_lock_lock(&cnputc_lock, LCK_GRP_NULL);
 		} else {
 			panic("Lock acquire timeout in _cnputs() lock=%p, lock owner thread=0x%lx, current_thread: %p\n", &_shadow_lock,
-			      _shadow_lock.lock_data, current_thread());
+			    _shadow_lock.lock_data, current_thread());
 		}
 	}
 
 	while (size-- > 0) {
-		cons_ops[cons_ops_index].putc(0, 0, *c);
-		if (*c == '\n')
+		if (*c == '\n') {
 			cons_ops[cons_ops_index].putc(0, 0, '\r');
+		}
+		cons_ops[cons_ops_index].putc(0, 0, *c);
 		c++;
 	}
 
@@ -284,9 +327,21 @@ cnputc_unbuffered(char c)
 	_cnputs(&c, 1);
 }
 
+
 void
 cnputcusr(char c)
 {
+	cnputsusr(&c, 1);
+}
+
+void
+cnputsusr(char *s, int size)
+{
+	if (size > 1) {
+		console_write(s, size);
+		return;
+	}
+
 	boolean_t state;
 
 	/* Spin (with pre-emption enabled) waiting for console_ring_try_empty()
@@ -301,8 +356,9 @@ cnputcusr(char c)
 	 * interrupts off); we don't want to disable pre-emption indefinitely
 	 * here, and spinlocks and mutexes are inappropriate.
 	 */
-	while (console_output != 0)
-		;
+	while (console_output != 0) {
+		delay(1);
+	}
 
 	/*
 	 * We disable interrupts to avoid issues caused by rendevous IPIs
@@ -310,8 +366,8 @@ cnputcusr(char c)
 	 * core wants it.  Stackshot is the prime example of this.
 	 */
 	state = ml_set_interrupts_enabled(FALSE);
-	_cnputs(&c, 1);
-	ml_set_interrupts_enabled(state);
+	_cnputs(s, 1);
+	console_restore_interrupts_state(state);
 }
 
 static void
@@ -327,15 +383,16 @@ console_ring_try_empty(void)
 
 	do {
 #ifdef __x86_64__
-		if (handle_tlb_flushes)
+		if (handle_tlb_flushes) {
 			handle_pending_TLB_flushes();
+		}
 #endif /* __x86_64__ */
 
 		/*
 		 * Try to get the read lock on the ring buffer to empty it.
 		 * If this fails someone else is already emptying...
 		 */
-		if (!simple_lock_try(&console_ring.read_lock)) {
+		if (!simple_lock_try(&console_ring.read_lock, LCK_GRP_NULL)) {
 			/*
 			 * If multiple cores are spinning trying to empty the buffer,
 			 * we may suffer lock starvation (get the read lock, but
@@ -350,17 +407,18 @@ console_ring_try_empty(void)
 		boolean_t state = ml_set_interrupts_enabled(FALSE);
 
 		/* Indicate that we're in the process of writing a block of data to the console. */
-		(void)hw_atomic_add(&console_output, 1);
+		os_atomic_inc(&console_output, relaxed);
 
-		simple_lock_try_lock_loop(&console_ring.write_lock);
+		simple_lock_try_lock_loop(&console_ring.write_lock, LCK_GRP_NULL);
 
 		/* try small chunk at a time, so we allow writes from other cpus into the buffer */
 		nchars_out = MIN(console_ring.used, MAX_INT_DISABLED_FLUSH_SIZE);
 
 		/* account for data to be read before wrap around */
 		size_before_wrap = (int)((console_ring.buffer + console_ring.len) - console_ring.read_ptr);
-		if (nchars_out > size_before_wrap)
+		if (nchars_out > size_before_wrap) {
 			nchars_out = size_before_wrap;
+		}
 
 		if (nchars_out > 0) {
 			_cnputs(console_ring.read_ptr, nchars_out);
@@ -372,20 +430,20 @@ console_ring_try_empty(void)
 
 		simple_unlock(&console_ring.write_lock);
 
-		(void)hw_atomic_sub(&console_output, 1);
+		os_atomic_dec(&console_output, relaxed);
 
 		simple_unlock(&console_ring.read_lock);
 
-		ml_set_interrupts_enabled(state);
+		console_restore_interrupts_state(state);
 
 		/*
 		 * In case we end up being the console drain thread
 		 * for far too long, break out. Except in panic/suspend cases
 		 * where we should clear out full buffer.
 		 */
-		if (debug_mode == 0 && !console_suspended && (total_chars_out >= MAX_TOTAL_FLUSH_SIZE))
+		if (!kernel_debugger_entry_count && !console_suspended && (total_chars_out >= MAX_TOTAL_FLUSH_SIZE)) {
 			break;
-
+		}
 	} while (nchars_out > 0);
 }
 
@@ -410,30 +468,32 @@ console_write(char * str, int size)
 	int chunk_size = size;
 	int i          = 0;
 
-	if (size > console_ring.len)
+	if (size > console_ring.len) {
 		chunk_size = CPU_CONS_BUF_SIZE;
+	}
 
 	while (size > 0) {
 		boolean_t state = ml_set_interrupts_enabled(FALSE);
 
-		simple_lock_try_lock_loop(&console_ring.write_lock);
+		simple_lock_try_lock_loop(&console_ring.write_lock, LCK_GRP_NULL);
 		while (chunk_size > console_ring_space()) {
 			simple_unlock(&console_ring.write_lock);
-			ml_set_interrupts_enabled(state);
+			console_restore_interrupts_state(state);
 
 			console_ring_try_empty();
 
 			state = ml_set_interrupts_enabled(FALSE);
-			simple_lock_try_lock_loop(&console_ring.write_lock);
+			simple_lock_try_lock_loop(&console_ring.write_lock, LCK_GRP_NULL);
 		}
 
-		for (i = 0; i < chunk_size; i++)
+		for (i = 0; i < chunk_size; i++) {
 			console_ring_put(str[i]);
+		}
 
 		str = &str[i];
 		size -= chunk_size;
 		simple_unlock(&console_ring.write_lock);
-		ml_set_interrupts_enabled(state);
+		console_restore_interrupts_state(state);
 	}
 
 	console_ring_try_empty();
@@ -486,19 +546,20 @@ restart:
 	 * it.
 	 */
 	if (needs_print && !cpu_buffer_put(cbp, c)) {
-		simple_lock_try_lock_loop(&console_ring.write_lock);
+		simple_lock_try_lock_loop(&console_ring.write_lock, LCK_GRP_NULL);
 
 		if (cpu_buffer_size(cbp) > console_ring_space()) {
 			simple_unlock(&console_ring.write_lock);
-			ml_set_interrupts_enabled(state);
+			console_restore_interrupts_state(state);
 			mp_enable_preemption();
 
 			console_ring_try_empty();
 			goto restart;
 		}
 
-		for (cp = cbp->buf_base; cp < cbp->buf_ptr; cp++)
+		for (cp = cbp->buf_base; cp < cbp->buf_ptr; cp++) {
 			console_ring_put(*cp);
+		}
 		cbp->buf_ptr = cbp->buf_base;
 		simple_unlock(&console_ring.write_lock);
 
@@ -508,13 +569,13 @@ restart:
 	needs_print = FALSE;
 
 	if (c != '\n') {
-		ml_set_interrupts_enabled(state);
+		console_restore_interrupts_state(state);
 		mp_enable_preemption();
 		return;
 	}
 
 	/* We printed a newline, time to flush the CPU buffer to the global buffer */
-	simple_lock_try_lock_loop(&console_ring.write_lock);
+	simple_lock_try_lock_loop(&console_ring.write_lock, LCK_GRP_NULL);
 
 	/*
 	 * Is there enough space in the shared ring buffer?
@@ -525,7 +586,7 @@ restart:
 
 	if (cpu_buffer_size(cbp) > console_ring_space()) {
 		simple_unlock(&console_ring.write_lock);
-		ml_set_interrupts_enabled(state);
+		console_restore_interrupts_state(state);
 		mp_enable_preemption();
 
 		console_ring_try_empty();
@@ -533,12 +594,14 @@ restart:
 		goto restart;
 	}
 
-	for (cp = cbp->buf_base; cp < cbp->buf_ptr; cp++)
+	for (cp = cbp->buf_base; cp < cbp->buf_ptr; cp++) {
 		console_ring_put(*cp);
+	}
 
 	cbp->buf_ptr = cbp->buf_base;
 	simple_unlock(&console_ring.write_lock);
-	ml_set_interrupts_enabled(state);
+
+	console_restore_interrupts_state(state);
 	mp_enable_preemption();
 
 	console_ring_try_empty();
@@ -554,6 +617,20 @@ _serial_getc(__unused int a, __unused int b, boolean_t wait, __unused boolean_t 
 		c = serial_getc();
 	} while (wait && c < 0);
 
+#if defined(__x86_64__) || defined(__arm__)
+	// Check for the NMI string
+	if (c == nmi_string[nmi_counter]) {
+		nmi_counter++;
+		if (nmi_counter == NMI_STRING_SIZE) {
+			// We've got the NMI string, now do an NMI
+			Debugger("Automatic NMI");
+			nmi_counter = 0;
+			return '\n';
+		}
+	} else if (c != -1) {
+		nmi_counter = 0;
+	}
+#endif
 
 	return c;
 }
@@ -581,16 +658,182 @@ vcgetc(__unused int l, __unused int u, __unused boolean_t wait, __unused boolean
 {
 	char c;
 
-	if (0 == (*PE_poll_input)(0, &c))
+	if (0 == PE_stub_poll_input(0, &c)) {
 		return c;
-	else
+	} else {
 		return 0;
+	}
 }
 
-/* So we can re-write the serial device functions at boot-time */
-void
-console_set_serial_ops(struct console_ops * newops)
+#ifdef CONFIG_XNUPOST
+static uint32_t cons_test_ops_count = 0;
+
+/*
+ * Try to do multiple cpu buffer allocs and free and intentionally
+ * allow for pre-emption.
+ */
+static void
+alloc_free_func(void * arg, wait_result_t wres __unused)
 {
-	cons_ops[SERIAL_CONS_OPS] = *newops;
+	console_buf_t * cbp = NULL;
+	int count           = (int)arg;
+
+	T_LOG("Doing %d iterations of console cpu alloc and free.", count);
+
+	while (count-- > 0) {
+		os_atomic_inc(&cons_test_ops_count, relaxed);
+		cbp = (console_buf_t *)console_cpu_alloc(0);
+		if (cbp == NULL) {
+			T_ASSERT_NOTNULL(cbp, "cpu allocation failed");
+		}
+		console_cpu_free(cbp);
+		cbp = NULL;
+		/* give chance to another thread to come in */
+		delay(10);
+	}
 }
 
+/*
+ * Log to console by multiple methods - printf, unbuffered write, console_write()
+ */
+static void
+log_to_console_func(void * arg __unused, wait_result_t wres __unused)
+{
+	uint64_t thread_id = current_thread()->thread_id;
+	char somedata[10] = "123456789";
+	for (int i = 0; i < 26; i++) {
+		os_atomic_inc(&cons_test_ops_count, relaxed);
+		printf(" thid: %llu printf iteration %d\n", thread_id, i);
+		cnputc_unbuffered((char)('A' + i));
+		cnputc_unbuffered('\n');
+		console_write((char *)somedata, sizeof(somedata));
+		delay(10);
+	}
+	printf("finished the log_to_console_func operations\n\n");
+}
+
+kern_return_t
+console_serial_parallel_log_tests(void)
+{
+	thread_t thread;
+	kern_return_t kr;
+	cons_test_ops_count = 0;
+
+	kr = kernel_thread_start(log_to_console_func, NULL, &thread);
+	T_ASSERT_EQ_INT(kr, KERN_SUCCESS, "kernel_thread_start returned successfully");
+
+	delay(100);
+
+	log_to_console_func(NULL, 0);
+
+	/* wait until other thread has also finished */
+	while (cons_test_ops_count < 52) {
+		delay(1000);
+	}
+
+	thread_deallocate(thread);
+	T_LOG("parallel_logging tests is now complete. From this point forward we expect full lines\n");
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+console_serial_alloc_rel_tests(void)
+{
+	unsigned long i, free_buf_count = 0;
+	uint32_t * p;
+	console_buf_t * cbp;
+	thread_t thread;
+	kern_return_t kr;
+
+	T_LOG("doing alloc/release tests");
+
+	for (i = 0; i < MAX_CPU_SLOTS; i++) {
+		p   = (uint32_t *)((uintptr_t)console_ring.buffer + console_ring.len + (i * sizeof(console_buf_t)));
+		cbp = (console_buf_t *)(void *)p;
+		/* p should either be allocated cpu buffer or have CPU_BUF_FREE_HEX in it */
+		T_ASSERT(*p == CPU_BUF_FREE_HEX || cbp->buf_base == &cbp->buf[0], "");
+		if (*p == CPU_BUF_FREE_HEX) {
+			free_buf_count++;
+		}
+	}
+
+	T_ASSERT_GE_ULONG(free_buf_count, 2, "At least 2 buffers should be free");
+	cons_test_ops_count = 0;
+
+	kr = kernel_thread_start(alloc_free_func, (void *)1000, &thread);
+	T_ASSERT_EQ_INT(kr, KERN_SUCCESS, "kernel_thread_start returned successfully");
+
+	/* yeild cpu to give other thread chance to get on-core */
+	delay(100);
+
+	alloc_free_func((void *)1000, 0);
+
+	/* wait until other thread finishes its tasks */
+	while (cons_test_ops_count < 2000) {
+		delay(1000);
+	}
+
+	thread_deallocate(thread);
+	/* verify again that atleast 2 slots are free */
+	free_buf_count = 0;
+	for (i = 0; i < MAX_CPU_SLOTS; i++) {
+		p   = (uint32_t *)((uintptr_t)console_ring.buffer + console_ring.len + (i * sizeof(console_buf_t)));
+		cbp = (console_buf_t *)(void *)p;
+		/* p should either be allocated cpu buffer or have CPU_BUF_FREE_HEX in it */
+		T_ASSERT(*p == CPU_BUF_FREE_HEX || cbp->buf_base == &cbp->buf[0], "");
+		if (*p == CPU_BUF_FREE_HEX) {
+			free_buf_count++;
+		}
+	}
+	T_ASSERT_GE_ULONG(free_buf_count, 2, "At least 2 buffers should be free after alloc free tests");
+
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+console_serial_test(void)
+{
+	unsigned long i;
+	char buffer[CPU_BUFFER_LEN];
+	uint32_t * p;
+	console_buf_t * cbp;
+
+	T_LOG("Checking console_ring status.");
+	T_ASSERT_EQ_INT(console_ring.len, KERN_CONSOLE_RING_SIZE, "Console ring size is not correct.");
+	T_ASSERT_GT_INT(KERN_CONSOLE_BUF_SIZE, KERN_CONSOLE_RING_SIZE, "kernel console buffer size is < allocation.");
+
+	/* select the next slot from the per cpu buffers at end of console_ring.buffer */
+	for (i = 0; i < MAX_CPU_SLOTS; i++) {
+		p   = (uint32_t *)((uintptr_t)console_ring.buffer + console_ring.len + (i * sizeof(console_buf_t)));
+		cbp = (console_buf_t *)(void *)p;
+		/* p should either be allocated cpu buffer or have CPU_BUF_FREE_HEX in it */
+		T_ASSERT(*p == CPU_BUF_FREE_HEX || cbp->buf_base == &cbp->buf[0], "verified initialization of cpu buffers p=%p", (void *)p);
+	}
+
+	/* setup buffer to be chars */
+	for (i = 0; i < CPU_BUFFER_LEN; i++) {
+		buffer[i] = (char)('0' + (i % 10));
+	}
+	buffer[CPU_BUFFER_LEN - 1] = '\0';
+
+	T_LOG("Printing %d char string to serial one char at a time.", CPU_BUFFER_LEN);
+	for (i = 0; i < CPU_BUFFER_LEN; i++) {
+		printf("%c", buffer[i]);
+	}
+	printf("End\n");
+	T_LOG("Printing %d char string to serial as a whole", CPU_BUFFER_LEN);
+	printf("%s\n", buffer);
+
+	T_LOG("Using console_write call repeatedly for 100 iterations");
+	for (i = 0; i < 100; i++) {
+		console_write(&buffer[0], 14);
+		if ((i % 6) == 0) {
+			printf("\n");
+		}
+	}
+	printf("\n");
+
+	T_LOG("Using T_LOG to print buffer %s", buffer);
+	return KERN_SUCCESS;
+}
+#endif

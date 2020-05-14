@@ -29,7 +29,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <mach/mach_time.h>
-#include <sys/proc_info.h>
 
 /*!
  * @function kcdata_get_typedescription
@@ -64,7 +63,7 @@ struct kcdata_type_definition * kcdata_get_typedescription(unsigned type_id, uin
 static uint32_t get_kctype_subtype_size(kctype_subtype_t type);
 static void setup_subtype_description(kcdata_subtype_descriptor_t desc, kctype_subtype_t type, uint32_t offset, char * name);
 static void setup_subtype_array_description(
-    kcdata_subtype_descriptor_t desc, kctype_subtype_t type, uint32_t offset, uint32_t count, char * name);
+	kcdata_subtype_descriptor_t desc, kctype_subtype_t type, uint32_t offset, uint32_t count, char * name);
 static void setup_type_definition(struct kcdata_type_definition * d, uint32_t type, uint32_t num_elems, char * name);
 
 struct kcdata_type_definition *
@@ -76,8 +75,9 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 #define _SUBTYPE_ARRAY(t, s, f, c) setup_subtype_array_description(&subtypes[i++], (t), offsetof(s, f), (c), _STR_VALUE(f))
 #define _STRINGTYPE(f) setup_subtype_array_description(&subtypes[i++], KC_ST_CHAR, 0, UINT16_MAX, f)
 
-	if (buffer_size < sizeof(struct kcdata_type_definition) || buffer == NULL)
+	if (buffer_size < sizeof(struct kcdata_type_definition) || buffer == NULL) {
 		return NULL;
+	}
 
 	struct kcdata_type_definition * retval = (struct kcdata_type_definition *)&buffer[0];
 	kcdata_subtype_descriptor_t subtypes = (kcdata_subtype_descriptor_t)&buffer[sizeof(struct kcdata_type_definition)];
@@ -121,16 +121,16 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		setup_type_definition(retval, type_id, i, "int64_desc");
 		break;
 	}
-    
-        case KCDATA_TYPE_TYPEDEFINTION: {
-            i = 0;
-            setup_subtype_description(&subtypes[i++], KC_ST_UINT32, offsetof(struct kcdata_type_definition, kct_type_identifier), "typeID");
-            setup_subtype_description(&subtypes[i++], KC_ST_UINT32, offsetof(struct kcdata_type_definition, kct_num_elements), "numOfFields");
-            setup_subtype_array_description(&subtypes[i++], KC_ST_CHAR, offsetof(struct kcdata_type_definition, kct_name), KCDATA_DESC_MAXLEN, "name");
-            // Note "fields" is an array of run time defined length. So we populate fields at parsing time.
-            setup_type_definition(retval, type_id, i, "typedef");
-            break;
-        }
+
+	case KCDATA_TYPE_TYPEDEFINTION: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT32, offsetof(struct kcdata_type_definition, kct_type_identifier), "typeID");
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT32, offsetof(struct kcdata_type_definition, kct_num_elements), "numOfFields");
+		setup_subtype_array_description(&subtypes[i++], KC_ST_CHAR, offsetof(struct kcdata_type_definition, kct_name), KCDATA_DESC_MAXLEN, "name");
+		// Note "fields" is an array of run time defined length. So we populate fields at parsing time.
+		setup_type_definition(retval, type_id, i, "typedef");
+		break;
+	}
 
 	case KCDATA_TYPE_CONTAINER_BEGIN: {
 		i = 0;
@@ -325,6 +325,8 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE(KC_ST_UINT8, struct thread_snapshot_v3, ths_rqos_override);
 		_SUBTYPE(KC_ST_UINT8, struct thread_snapshot_v3, ths_io_tier);
 		_SUBTYPE(KC_ST_UINT64, struct thread_snapshot_v3, ths_thread_t);
+		_SUBTYPE(KC_ST_UINT64, struct thread_snapshot_v4, ths_requested_policy);
+		_SUBTYPE(KC_ST_UINT64, struct thread_snapshot_v4, ths_effective_policy);
 
 		setup_type_definition(retval, type_id, i, "thread_snapshot");
 		break;
@@ -345,6 +347,8 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE(KC_ST_UINT8, struct thread_delta_snapshot_v2, tds_rqos);
 		_SUBTYPE(KC_ST_UINT8, struct thread_delta_snapshot_v2, tds_rqos_override);
 		_SUBTYPE(KC_ST_UINT8, struct thread_delta_snapshot_v2, tds_io_tier);
+		_SUBTYPE(KC_ST_UINT64, struct thread_delta_snapshot_v3, tds_requested_policy);
+		_SUBTYPE(KC_ST_UINT64, struct thread_delta_snapshot_v3, tds_effective_policy);
 
 		setup_type_definition(retval, type_id, i, "thread_delta_snapshot");
 
@@ -442,6 +446,13 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		break;
 	}
 
+	case STACKSHOT_KCTYPE_THREAD_POLICY_VERSION: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT32, 0, "thread_policy_version");
+		setup_type_definition(retval, type_id, i, "thread_policy_version");
+		break;
+	}
+
 	case STACKSHOT_KCTYPE_JETSAM_LEVEL: {
 		i = 0;
 		setup_subtype_description(&subtypes[i++], KC_ST_UINT32, 0, "jetsam_level");
@@ -459,9 +470,9 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 	/* crashinfo types */
 	case TASK_CRASHINFO_BSDINFOWITHUNIQID: {
 		i = 0;
-		_SUBTYPE_ARRAY(KC_ST_UINT8, struct proc_uniqidentifierinfo, p_uuid, 16);
-		_SUBTYPE(KC_ST_UINT64, struct proc_uniqidentifierinfo, p_uniqueid);
-		_SUBTYPE(KC_ST_UINT64, struct proc_uniqidentifierinfo, p_puniqueid);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct crashinfo_proc_uniqidentifierinfo, p_uuid, 16);
+		_SUBTYPE(KC_ST_UINT64, struct crashinfo_proc_uniqidentifierinfo, p_uniqueid);
+		_SUBTYPE(KC_ST_UINT64, struct crashinfo_proc_uniqidentifierinfo, p_puniqueid);
 		/* Ignore the p_reserve fields */
 		setup_type_definition(retval, type_id, i, "proc_uniqidentifierinfo");
 		break;
@@ -480,14 +491,14 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 	}
 
 	/* case TASK_CRASHINFO_RUSAGE: { */
-	/* 	/\* */
-	/* 	 * rusage is a complex structure and is only for legacy use for crashed processes rusage info. */
-	/* 	 * So we just consider it as opaque data. */
-	/* 	 *\/ */
-	/* 	i = 0; */
-	/* 	setup_subtype_array_description(&subtypes[i++], KC_ST_UINT8, 0, sizeof(struct rusage), "rusage"); */
-	/* 	setup_type_definition(retval, type_id, i, "rusage"); */
-	/* 	break; */
+	/*      /\* */
+	/*       * rusage is a complex structure and is only for legacy use for crashed processes rusage info. */
+	/*       * So we just consider it as opaque data. */
+	/*       *\/ */
+	/*      i = 0; */
+	/*      setup_subtype_array_description(&subtypes[i++], KC_ST_UINT8, 0, sizeof(struct rusage), "rusage"); */
+	/*      setup_type_definition(retval, type_id, i, "rusage"); */
+	/*      break; */
 	/* } */
 
 	case TASK_CRASHINFO_RUSAGE_INFO: {
@@ -526,8 +537,9 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_CPU_TIMES: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_cpu_times, user_usec);
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_cpu_times, system_usec);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_cpu_times_v2, user_usec);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_cpu_times_v2, system_usec);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_cpu_times_v2, runnable_usec);
 		setup_type_definition(retval, type_id, i, "cpu_times");
 		break;
 	}
@@ -550,6 +562,65 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE(KC_ST_UINT8, struct stackshot_fault_stats, sfs_stopped_faulting);
 
 		setup_type_definition(retval, type_id, i, "stackshot_fault_stats");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_THREAD_WAITINFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo, owner);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo, waiter);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo, context);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_waitinfo, wait_type);
+		setup_type_definition(retval, type_id, i, "thread_waitinfo");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_THREAD_GROUP_SNAPSHOT: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct thread_group_snapshot_v2, tgs_id);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct thread_group_snapshot_v2, tgs_name, 16);
+		_SUBTYPE(KC_ST_UINT64, struct thread_group_snapshot_v2, tgs_flags);
+		setup_type_definition(retval, type_id, i, "thread_group_snapshot");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_THREAD_GROUP: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT64, 0, "thread_group");
+		setup_type_definition(retval, type_id, i, "thread_group");
+		break;
+	};
+
+	case STACKSHOT_KCTYPE_JETSAM_COALITION_SNAPSHOT: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct jetsam_coalition_snapshot, jcs_id);
+		_SUBTYPE(KC_ST_UINT64, struct jetsam_coalition_snapshot, jcs_flags);
+		_SUBTYPE(KC_ST_UINT64, struct jetsam_coalition_snapshot, jcs_thread_group);
+		_SUBTYPE(KC_ST_UINT64, struct jetsam_coalition_snapshot, jcs_leader_task_uniqueid);
+		setup_type_definition(retval, type_id, i, "jetsam_coalition_snapshot");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_JETSAM_COALITION: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT64, 0, "jetsam_coalition");
+		setup_type_definition(retval, type_id, i, "jetsam_coalition");
+		break;
+	};
+
+	case STACKSHOT_KCTYPE_INSTRS_CYCLES: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot, ics_instructions);
+		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot, ics_cycles);
+		setup_type_definition(retval, type_id, i, "instrs_cycles_snapshot");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_USER_STACKTOP: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stack_snapshot_stacktop, sp);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct stack_snapshot_stacktop, stack_contents, 8);
+		setup_type_definition(retval, type_id, i, "user_stacktop");
 		break;
 	}
 
@@ -685,7 +756,6 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		setup_type_definition(retval, type_id, i, "exit_reason_basic_info");
 
 		break;
-
 	}
 
 	case EXIT_REASON_USER_DESC: {
@@ -723,9 +793,61 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE(KC_ST_UINT8, struct codesigning_exit_reason_info, ceri_page_dirty);
 		_SUBTYPE(KC_ST_UINT32, struct codesigning_exit_reason_info, ceri_page_shadow_depth);
 		setup_type_definition(retval, type_id, i, "exit_reason_codesigning_info");
-
 		break;
+	}
 
+	case EXIT_REASON_WORKLOOP_ID: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT64, 0, "exit_reason_workloop_id");
+		setup_type_definition(retval, type_id, i, "exit_reason_workloop_id");
+		break;
+	}
+
+	case EXIT_REASON_DISPATCH_QUEUE_NO: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT64, 0, "exit_reason_dispatch_queue_no");
+		setup_type_definition(retval, type_id, i, "exit_reason_dispatch_queue_no");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_ASID: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT32, 0, "ts_asid");
+		setup_type_definition(retval, type_id, i, "ts_asid");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_PAGE_TABLES: {
+		i = 0;
+		setup_subtype_description(&subtypes[i++], KC_ST_UINT64, 0, "ts_pagetable");
+		setup_type_definition(retval, type_id, i, "ts_pagetable");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_SYS_SHAREDCACHE_LAYOUT: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct user64_dyld_uuid_info, imageLoadAddress);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct user64_dyld_uuid_info, imageUUID, 16);
+		setup_type_definition(retval, type_id, i, "system_shared_cache_layout");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_THREAD_DISPATCH_QUEUE_LABEL: {
+		i = 0;
+		_STRINGTYPE("dispatch_queue_label");
+		setup_type_definition(retval, type_id, i, "dispatch_queue_label");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_THREAD_TURNSTILEINFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, waiter);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, turnstile_context);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo, turnstile_priority);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo, number_of_hops);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, turnstile_flags);
+		setup_type_definition(retval, type_id, i, "thread_turnstileinfo");
+		break;
 	}
 
 	default:
@@ -734,7 +856,7 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 	}
 
 	assert(retval == NULL || (buffer_size > sizeof(struct kcdata_type_definition) +
-	                                            (retval->kct_num_elements * sizeof(struct kcdata_subtype_descriptor))));
+	    (retval->kct_num_elements * sizeof(struct kcdata_subtype_descriptor))));
 	return retval;
 }
 
@@ -778,7 +900,7 @@ get_kctype_subtype_size(kctype_subtype_t type)
 
 static void
 setup_subtype_array_description(
-    kcdata_subtype_descriptor_t desc, kctype_subtype_t type, uint32_t offset, uint32_t count, char * name)
+	kcdata_subtype_descriptor_t desc, kctype_subtype_t type, uint32_t offset, uint32_t count, char * name)
 {
 	desc->kcs_flags       = KCS_SUBTYPE_FLAGS_ARRAY;
 	desc->kcs_elem_type   = type;
@@ -798,4 +920,3 @@ setup_subtype_description(kcdata_subtype_descriptor_t desc, kctype_subtype_t typ
 	memcpy(desc->kcs_name, name, sizeof(desc->kcs_name));
 	desc->kcs_name[sizeof(desc->kcs_name) - 1] = '\0';
 }
-

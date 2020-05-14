@@ -14,6 +14,9 @@ LLDBMACROS_SOURCE:=$(SRCROOT)/tools/lldbmacros/
 LLDBMACROS_BOOTSTRAP_DEST:=$(OBJPATH)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)
 LLDBMACROS_DEST:=$(LLDBMACROS_BOOTSTRAP_DEST)/lldbmacros/
 LLDBMACROS_USERDEBUG_FILES=
+ifeq ($(BUILD_STATIC_LINK),1)
+KERNEL_STATIC_DSYM_LLDBMACROS := $(OBJPATH)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros/
+endif
 
 LLDBMACROS_USERDEBUG_FILES:= \
 	usertaskdebugging/__init__.py \
@@ -35,14 +38,20 @@ LLDBMACROS_PYTHON_FILES = $(LLDBMACROS_USERDEBUG_FILES) \
 	core/xnu_lldb_init.py \
 	plugins/__init__.py \
 	plugins/zprint_perf_log.py \
+	sysregdoc/AArch64-esr_el1.xml \
 	atm.py \
 	bank.py \
+	turnstile.py \
+	kevent.py \
+	workqueue.py \
+	ulock.py \
 	xnu.py \
 	xnudefines.py \
 	ktrace.py \
 	macho.py \
 	mbufdefines.py \
 	netdefines.py \
+	ntstat.py \
 	routedefines.py \
 	ipc.py \
 	ipcimportancedetail.py \
@@ -53,6 +62,7 @@ LLDBMACROS_PYTHON_FILES = $(LLDBMACROS_USERDEBUG_FILES) \
 	memory.py \
 	mbufs.py \
 	net.py \
+	skywalk.py \
 	ioreg.py \
 	utils.py \
 	kdp.py \
@@ -61,11 +71,14 @@ LLDBMACROS_PYTHON_FILES = $(LLDBMACROS_USERDEBUG_FILES) \
 	pci.py \
 	misc.py \
 	apic.py \
+	kasan.py \
 	kauth.py \
 	usertaskgdbserver.py \
 	waitq.py \
 	pgtrace.py \
-	xnutriage.py
+	xnutriage.py \
+	zonetriage.py \
+	sysreg.py
 
 ifneq ($(PLATFORM),MacOSX)
 	LLDBMACROS_PYTHON_FILES+= \
@@ -73,20 +86,27 @@ ifneq ($(PLATFORM),MacOSX)
 		plugins/iosspeedtracer.sh
 endif
 
-INSTALL_LLDBMACROS_PYTHON_FILES=$(addprefix $(LLDBMACROS_DEST), $(LLDBMACROS_PYTHON_FILES))
-
-$(INSTALL_LLDBMACROS_PYTHON_FILES): $(LLDBMACROS_DEST)% : $(LLDBMACROS_SOURCE)%
-	$(_v)$(MKDIR) $(dir $@)
-	$(_v)$(PYTHON) $(LLDBMACROS_SOURCE)/core/syntax_checker.py $< $(_vstdout)
-	$(_v)$(INSTALL) $(DATA_INSTALL_FLAGS) $< $@
-	$(_v)$(TOUCH) $(LLDBMACROS_DEST)
-
-$(LLDBMACROS_BOOTSTRAP_DEST)/$(KERNEL_LLDBBOOTSTRAP_NAME): $(LLDBMACROS_SOURCE)/core/xnu_lldb_init.py
-	$(_v)$(MKDIR) $(dir $@)
-	$(_v)$(PYTHON) $(LLDBMACROS_SOURCE)/core/syntax_checker.py $< $(_vstdout)
-	$(_v)$(INSTALL) $(DATA_INSTALL_FLAGS) $< $@
-
-lldbmacros_install: $(INSTALL_LLDBMACROS_PYTHON_FILES) $(LLDBMACROS_BOOTSTRAP_DEST)/$(KERNEL_LLDBBOOTSTRAP_NAME)
-
 include $(MakeInc_rule)
 include $(MakeInc_dir)
+
+INSTALL_LLDBMACROS_PYTHON_FILES=$(addprefix $(LLDBMACROS_DEST), $(LLDBMACROS_PYTHON_FILES))
+$(eval $(call INSTALLPYTHON_RULE_template,$(INSTALL_LLDBMACROS_PYTHON_FILES),$(LLDBMACROS_SOURCE)%,pydir,$(DATA_UNIFDEF),$(LLDBMACROS_DEST)))
+$(eval $(call INSTALLPYTHON_RULE_template,$(LLDBMACROS_BOOTSTRAP_DEST)/$(KERNEL_LLDBBOOTSTRAP_NAME),$(LLDBMACROS_SOURCE)/core/xnu_lldb_init.py,kbpydir,$(DATA_UNIFDEF),$(LLDBMACROS_BOOTSTRAP_DEST)/))
+
+ifeq ($(BUILD_STATIC_LINK),1)
+INSTALL_STATIC_DSYM_LLDBMACROS_PYTHON_FILES=$(addprefix $(KERNEL_STATIC_DSYM_LLDBMACROS), $(LLDBMACROS_PYTHON_FILES))
+$(eval $(call INSTALLPYTHON_RULE_template,$(INSTALL_STATIC_DSYM_LLDBMACROS_PYTHON_FILES),$(LLDBMACROS_SOURCE)%,sdpydir,$(DATA_UNIFDEF),$(KERNEL_STATIC_DSYM_LLDBMACROS)))
+$(eval $(call INSTALLPYTHON_RULE_template,$(KERNEL_STATIC_DSYM_LLDBMACROS)/../$(KERNEL_LLDBBOOTSTRAP_NAME),$(LLDBMACROS_SOURCE)/core/xnu_lldb_init.py,kbsdpydir,$(DATA_UNIFDEF),$(KERNEL_STATIC_DSYM_LLDBMACROS)/../))
+endif
+
+ifeq ($(BUILD_STATIC_LINK),1)
+STATIC_DSYM_LLDBMACROS_INSTALL_TARGETS := \
+	$(INSTALL_STATIC_DSYM_LLDBMACROS_PYTHON_FILES) \
+	$(KERNEL_STATIC_DSYM_LLDBMACROS)/../$(KERNEL_LLDBBOOTSTRAP_NAME)
+endif
+
+lldbmacros_install: $(INSTALL_LLDBMACROS_PYTHON_FILES) $(LLDBMACROS_BOOTSTRAP_DEST)/$(KERNEL_LLDBBOOTSTRAP_NAME) $(STATIC_DSYM_LLDBMACROS_INSTALL_TARGETS)
+	$(_v)$(MKDIR) $(LLDBMACROS_DEST)/builtinkexts
+ifeq ($(BUILD_STATIC_LINK),1)
+	$(_v)$(MKDIR) $(KERNEL_STATIC_DSYM_LLDBMACROS)/builtinkexts
+endif

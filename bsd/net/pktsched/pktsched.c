@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -37,6 +37,7 @@
 #include <sys/mcache.h>
 #include <sys/sysctl.h>
 
+#include <dev/random/randomdev.h>
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_dl.h>
@@ -46,31 +47,21 @@
 #include <net/pktsched/pktsched_tcq.h>
 #include <net/pktsched/pktsched_qfq.h>
 #include <net/pktsched/pktsched_fq_codel.h>
-#if PKTSCHED_PRIQ
-#include <net/pktsched/pktsched_priq.h>
-#endif /* PKTSCHED_PRIQ */
-#if PKTSCHED_FAIRQ
-#include <net/pktsched/pktsched_fairq.h>
-#endif /* PKTSCHED_FAIRQ */
-#if PKTSCHED_CBQ
-#include <net/pktsched/pktsched_cbq.h>
-#endif /* PKTSCHED_CBQ */
-#if PKTSCHED_HFSC
-#include <net/pktsched/pktsched_hfsc.h>
-#endif /* PKTSCHED_HFSC */
+#include <net/pktsched/pktsched_netem.h>
 
 #include <pexpert/pexpert.h>
 
+
 u_int32_t machclk_freq = 0;
 u_int64_t machclk_per_sec = 0;
-u_int32_t pktsched_verbose;	/* more noise if greater than 1 */
+u_int32_t pktsched_verbose = 0; /* more noise if greater than 1 */
 
 static void init_machclk(void);
 
-SYSCTL_NODE(_net, OID_AUTO, pktsched, CTLFLAG_RW|CTLFLAG_LOCKED, 0, "pktsched");
+SYSCTL_NODE(_net, OID_AUTO, pktsched, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "pktsched");
 
-SYSCTL_UINT(_net_pktsched, OID_AUTO, verbose, CTLFLAG_RW|CTLFLAG_LOCKED,
-	&pktsched_verbose, 0, "Packet scheduler verbosity level");
+SYSCTL_UINT(_net_pktsched, OID_AUTO, verbose, CTLFLAG_RW | CTLFLAG_LOCKED,
+    &pktsched_verbose, 0, "Packet scheduler verbosity level");
 
 void
 pktsched_init(void)
@@ -83,18 +74,7 @@ pktsched_init(void)
 
 	tcq_init();
 	qfq_init();
-#if PKTSCHED_PRIQ
-	priq_init();
-#endif /* PKTSCHED_PRIQ */
-#if PKTSCHED_FAIRQ
-	fairq_init();
-#endif /* PKTSCHED_FAIRQ */
-#if PKTSCHED_CBQ
-	cbq_init();
-#endif /* PKTSCHED_CBQ */
-#if PKTSCHED_HFSC
-	hfsc_init();
-#endif /* PKTSCHED_HFSC */
+	netem_init();
 }
 
 static void
@@ -116,7 +96,7 @@ pktsched_abs_to_nsecs(u_int64_t abstime)
 	u_int64_t nsecs;
 
 	absolutetime_to_nanoseconds(abstime, &nsecs);
-	return (nsecs);
+	return nsecs;
 }
 
 u_int64_t
@@ -125,14 +105,14 @@ pktsched_nsecs_to_abstime(u_int64_t nsecs)
 	u_int64_t abstime;
 
 	nanoseconds_to_absolutetime(nsecs, &abstime);
-	return (abstime);
+	return abstime;
 }
 
 int
-pktsched_setup(struct ifclassq *ifq, u_int32_t scheduler, u_int32_t sflags)
+pktsched_setup(struct ifclassq *ifq, u_int32_t scheduler, u_int32_t sflags,
+    classq_pkt_type_t ptype)
 {
 	int error = 0;
-	u_int32_t qflags = sflags;
 	u_int32_t rflags;
 
 	IFCQ_LOCK_ASSERT_HELD(ifq);
@@ -140,18 +120,8 @@ pktsched_setup(struct ifclassq *ifq, u_int32_t scheduler, u_int32_t sflags)
 	VERIFY(machclk_freq != 0);
 
 	/* Nothing to do unless the scheduler type changes */
-	if (ifq->ifcq_type == scheduler)
-		return (0);
-
-	qflags &= (PKTSCHEDF_QALG_RED | PKTSCHEDF_QALG_RIO |
-	    PKTSCHEDF_QALG_BLUE | PKTSCHEDF_QALG_SFB);
-
-	/* These are mutually exclusive */
-	if (qflags != 0 &&
-	    qflags != PKTSCHEDF_QALG_RED && qflags != PKTSCHEDF_QALG_RIO &&
-	    qflags != PKTSCHEDF_QALG_BLUE && qflags != PKTSCHEDF_QALG_SFB) {
-		panic("%s: RED|RIO|BLUE|SFB mutually exclusive\n", __func__);
-		/* NOTREACHED */
+	if (ifq->ifcq_type == scheduler) {
+		return 0;
 	}
 
 	/*
@@ -173,31 +143,26 @@ pktsched_setup(struct ifclassq *ifq, u_int32_t scheduler, u_int32_t sflags)
 	}
 
 	switch (scheduler) {
-#if PKTSCHED_PRIQ
-	case PKTSCHEDT_PRIQ:
-		error = priq_setup_ifclassq(ifq, sflags);
-		break;
-#endif /* PKTSCHED_PRIQ */
-
 	case PKTSCHEDT_TCQ:
-		error = tcq_setup_ifclassq(ifq, sflags);
+		error = tcq_setup_ifclassq(ifq, sflags, ptype);
 		break;
 
 	case PKTSCHEDT_QFQ:
-		error = qfq_setup_ifclassq(ifq, sflags);
+		error = qfq_setup_ifclassq(ifq, sflags, ptype);
 		break;
 	case PKTSCHEDT_FQ_CODEL:
-		error = fq_if_setup_ifclassq(ifq, sflags);
+		error = fq_if_setup_ifclassq(ifq, sflags, ptype);
 		break;
 	default:
 		error = ENXIO;
 		break;
 	}
 
-	if (error == 0)
+	if (error == 0) {
 		ifq->ifcq_flags |= rflags;
+	}
 
-	return (error);
+	return error;
 }
 
 int
@@ -216,12 +181,6 @@ pktsched_teardown(struct ifclassq *ifq)
 	case PKTSCHEDT_NONE:
 		break;
 
-#if PKTSCHED_PRIQ
-	case PKTSCHEDT_PRIQ:
-		error = priq_teardown_ifclassq(ifq);
-		break;
-#endif /* PKTSCHED_PRIQ */
-
 	case PKTSCHEDT_TCQ:
 		error = tcq_teardown_ifclassq(ifq);
 		break;
@@ -237,7 +196,7 @@ pktsched_teardown(struct ifclassq *ifq)
 		error = ENXIO;
 		break;
 	}
-	return (error);
+	return error;
 }
 
 int
@@ -249,12 +208,6 @@ pktsched_getqstats(struct ifclassq *ifq, u_int32_t qid,
 	IFCQ_LOCK_ASSERT_HELD(ifq);
 
 	switch (ifq->ifcq_type) {
-#if PKTSCHED_PRIQ
-	case PKTSCHEDT_PRIQ:
-		error = priq_getqstats_ifclassq(ifq, qid, ifqs);
-		break;
-#endif /* PKTSCHED_PRIQ */
-
 	case PKTSCHEDT_TCQ:
 		error = tcq_getqstats_ifclassq(ifq, qid, ifqs);
 		break;
@@ -271,5 +224,226 @@ pktsched_getqstats(struct ifclassq *ifq, u_int32_t qid,
 		break;
 	}
 
-	return (error);
+	return error;
+}
+
+void
+pktsched_pkt_encap(pktsched_pkt_t *pkt, classq_pkt_t *cpkt)
+{
+	pkt->pktsched_pkt = *cpkt;
+
+	switch (cpkt->cp_ptype) {
+	case QP_MBUF:
+		pkt->pktsched_plen =
+		    (uint32_t)m_pktlen(pkt->pktsched_pkt_mbuf);
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+}
+
+int
+pktsched_clone_pkt(pktsched_pkt_t *pkt1, pktsched_pkt_t *pkt2)
+{
+	struct mbuf *m1, *m2;
+
+	ASSERT(pkt1 != NULL);
+	ASSERT(pkt1->pktsched_pkt_mbuf != NULL);
+	/* allow in place clone, but make sure pkt2->pktsched_pkt won't leak */
+	ASSERT((pkt1 == pkt2 && pkt1->pktsched_pkt_mbuf ==
+	    pkt2->pktsched_pkt_mbuf) || (pkt1 != pkt2 &&
+	    pkt2->pktsched_pkt_mbuf == NULL));
+
+	switch (pkt1->pktsched_ptype) {
+	case QP_MBUF:
+		m1 = (struct mbuf *)pkt1->pktsched_pkt_mbuf;
+		m2 = m_dup(m1, M_NOWAIT);
+		if (__improbable(m2 == NULL)) {
+			return ENOBUFS;
+		}
+		pkt2->pktsched_pkt_mbuf = m2;
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	pkt2->pktsched_plen = pkt1->pktsched_plen;
+	pkt2->pktsched_ptype = pkt1->pktsched_ptype;
+	return 0;
+}
+
+void
+pktsched_corrupt_packet(pktsched_pkt_t *pkt)
+{
+	struct mbuf *m = NULL;
+	uint8_t *data = NULL;
+	uint32_t data_len = 0;
+	uint32_t rand32, rand_off, rand_bit;
+
+	switch (pkt->pktsched_ptype) {
+	case QP_MBUF:
+		m = pkt->pktsched_pkt_mbuf;
+		data = mtod(m, uint8_t *);
+		data_len = m->m_pkthdr.len;
+		break;
+
+	default:
+		/* NOTREACHED */
+		VERIFY(0);
+		__builtin_unreachable();
+	}
+
+	read_frandom(&rand32, sizeof(rand32));
+	rand_bit = rand32 & 0x8;
+	rand_off = (rand32 >> 3) % data_len;
+	data[rand_off] ^= 1 << rand_bit;
+}
+
+void
+pktsched_free_pkt(pktsched_pkt_t *pkt)
+{
+	switch (pkt->pktsched_ptype) {
+	case QP_MBUF:
+		m_freem(pkt->pktsched_pkt_mbuf);
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	pkt->pktsched_pkt = CLASSQ_PKT_INITIALIZER(pkt->pktsched_pkt);
+	pkt->pktsched_plen = 0;
+}
+
+mbuf_svc_class_t
+pktsched_get_pkt_svc(pktsched_pkt_t *pkt)
+{
+	mbuf_svc_class_t svc = MBUF_SC_UNSPEC;
+
+	switch (pkt->pktsched_ptype) {
+	case QP_MBUF:
+		svc = m_get_service_class(pkt->pktsched_pkt_mbuf);
+		break;
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	return svc;
+}
+
+void
+pktsched_get_pkt_vars(pktsched_pkt_t *pkt, volatile uint32_t **flags,
+    uint64_t **timestamp, uint32_t *flowid, uint8_t *flowsrc, uint8_t *proto,
+    uint32_t *tcp_start_seq)
+{
+	switch (pkt->pktsched_ptype) {
+	case QP_MBUF: {
+		struct pkthdr *pkth = &(pkt->pktsched_pkt_mbuf->m_pkthdr);
+
+		if (flags != NULL) {
+			*flags = &pkth->pkt_flags;
+		}
+		if (timestamp != NULL) {
+			*timestamp = &pkth->pkt_timestamp;
+		}
+		if (flowid != NULL) {
+			*flowid = pkth->pkt_flowid;
+		}
+		if (flowsrc != NULL) {
+			*flowsrc = pkth->pkt_flowsrc;
+		}
+		if (proto != NULL) {
+			*proto = pkth->pkt_proto;
+		}
+		/*
+		 * caller should use this value only if PKTF_START_SEQ
+		 * is set in the mbuf packet flags
+		 */
+		if (tcp_start_seq != NULL) {
+			*tcp_start_seq = pkth->tx_start_seq;
+		}
+
+		break;
+	}
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+}
+
+struct flowadv_fcentry *
+pktsched_alloc_fcentry(pktsched_pkt_t *pkt, struct ifnet *ifp, int how)
+{
+#pragma unused(ifp)
+	struct flowadv_fcentry *fce = NULL;
+
+	switch (pkt->pktsched_ptype) {
+	case QP_MBUF: {
+		struct mbuf *m = pkt->pktsched_pkt_mbuf;
+
+		fce = flowadv_alloc_entry(how);
+		if (fce == NULL) {
+			break;
+		}
+
+		_CASSERT(sizeof(m->m_pkthdr.pkt_flowid) ==
+		    sizeof(fce->fce_flowid));
+
+		fce->fce_flowsrc_type = m->m_pkthdr.pkt_flowsrc;
+		fce->fce_flowid = m->m_pkthdr.pkt_flowid;
+		break;
+	}
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	return fce;
+}
+
+uint32_t *
+pktsched_get_pkt_sfb_vars(pktsched_pkt_t *pkt, uint32_t **sfb_flags)
+{
+	uint32_t *hashp = NULL;
+
+	switch (pkt->pktsched_ptype) {
+	case QP_MBUF: {
+		struct pkthdr *pkth = &(pkt->pktsched_pkt_mbuf->m_pkthdr);
+
+		_CASSERT(sizeof(pkth->pkt_mpriv_hash) == sizeof(uint32_t));
+		_CASSERT(sizeof(pkth->pkt_mpriv_flags) == sizeof(uint32_t));
+		*sfb_flags = &pkth->pkt_mpriv_flags;
+		hashp = &pkth->pkt_mpriv_hash;
+		break;
+	}
+
+
+	default:
+		VERIFY(0);
+		/* NOTREACHED */
+		__builtin_unreachable();
+	}
+
+	return hashp;
 }

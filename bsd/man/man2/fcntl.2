@@ -56,7 +56,7 @@
 .\"
 .\"     @(#)fcntl.2	8.2 (Berkeley) 1/12/94
 .\"
-.Dd February 17, 2011
+.Dd August 8, 2018
 .Dt FCNTL 2
 .Os BSD 4.2
 .Sh NAME
@@ -146,15 +146,25 @@ as negative, otherwise
 .Fa arg
 is interpreted as a process ID.
 .It Dv F_GETPATH
-Get the path of the file descriptor 
+Get the path of the file descriptor
+.It Dv F_GETPATH_NOFIRMLINK
+Get the non firmlinked path of the file descriptor
 .Fa Fildes .  
 The argument must be a buffer of size
 .Sy MAXPATHLEN
 or greater.
 .It Dv F_PREALLOCATE
 Preallocate file storage space. Note: upon success, 
-the space that is allocated can be the same size or 
-larger than the space requested.
+the space that is allocated can be the size requested,
+larger than the size requested, or (if the
+.Dv F_ALLOCATEALL
+flag is not provided) smaller than the space requested.
+.It Dv F_PUNCHHOLE
+Deallocate a region and replace it with a hole. Subsequent reads of the
+affected region will return bytes of zeros that are usually not backed by
+physical blocks. This will not change the actual file size. Holes must be
+aligned to file system block boundaries. This will fail on
+file systems that do not support this interface.
 .It Dv F_SETSIZE
 Truncate a file without zeroing space.
 The calling process must have root privileges.
@@ -168,11 +178,6 @@ disables read ahead.
 A non-zero value in
 .Fa arg
 turns read ahead on.
-.It Dv F_READBOOTSTRAP
-Read bootstrap from disk.
-.It Dv F_WRITEBOOTSTRAP
-Write bootstrap on disk.
-The calling process must have root privileges.
 .It Dv F_NOCACHE
 Turns data caching off/on. A non-zero value in
 .Fa arg
@@ -182,15 +187,38 @@ A value of zero in
 turns data caching on.
 .It Dv F_LOG2PHYS
 Get disk device information.
-Currently this only includes the
+Currently this only returns the
 disk device address that corresponds
-to the current file offset. Note that if the
-file offset is not backed by physical blocks
-we can return -1 as the offset. This is subject
+to the current file offset. Note that the system 
+may return -1 as the disk device address if the file is not 
+backed by physical blocks. This is subject
 to change.
 .It Dv F_LOG2PHYS_EXT
 Variant of F_LOG2PHYS that uses the passed in
 file offset and length.
+.It Dv F_BARRIERFSYNC
+Does the same thing as
+.Xr fsync 2
+then issues a barrier command to the drive
+.Fa ( arg
+is ignored).
+The barrier applies to I/O that have been flushed with
+.Xr fsync 2
+on the same device before.  These operations are guaranteed to
+be persisted before any other I/O that would follow the barrier,
+although no assumption should be made on what has been persisted
+or not when this call returns.  After the barrier has been issued,
+operations on other FDs that have been fsync'd before can still be
+re-ordered by the device, but not after the barrier.  This is
+typically useful to guarantee valid state on disk when ordering is a
+concern but durability is not.  A barrier can be used to order two phases of operations on
+a set of file descriptors and ensure that no file can possibly get persisted
+with the effect of the second phase without the effect of the first one. To do so,
+execute operations of phase one, then
+.Xr fsync 2
+each FD and issue a single barrier.  Finally execute operations of phase two.
+This is currently implemented on HFS and APFS. It requires hardware support,
+which Apple SSDs are guaranteed to provide.
 .It Dv F_FULLFSYNC
 Does the same thing as
 .Xr fsync 2
@@ -199,8 +227,11 @@ flush all buffered data to
 the permanent storage device
 .Fa ( arg
 is ignored).
+As this drains the entire queue of the device and acts as a
+barrier, data that had been fsync'd on the same device before
+is guaranteed to be persisted when this call returns.
 This is currently implemented on HFS, MS-DOS (FAT),
-and Universal Disk Format (UDF) file systems.
+Universal Disk Format (UDF) and APFS file systems.
 The operation may take quite a while to complete.
 Certain FireWire drives have also been known
 to ignore the request to flush their buffered data.
@@ -486,9 +517,25 @@ The modes are as follows:
 .Bl -tag -width F_PEOFPOSMODEX -offset indent
 .It Dv F_PEOFPOSMODE
 Allocate from the physical end of file.
+In this case,
+.Fa fst_length
+indicates the number of newly allocated bytes desired.
 .It Dv F_VOLPOSMODE
 Allocate from the volume offset.
 .El
+.Pp
+The
+.Dv F_PUNCHHOLE
+command operates on the following structure:
+.ne 7v
+.Bd -literal
+        typedef struct fpunchhole {
+            u_int32_t fp_flags;     /* unused */
+            u_int32_t reserved;     /* (to maintain 8-byte alignment) */
+            off_t     fp_offset;    /* IN: start of the region */
+            off_t     fp_length;    /* IN: size of the region */
+        } fpunchhole_t;
+.Ed
 .Pp
 The
 .Dv F_RDADVISE
@@ -711,6 +758,21 @@ is a negative or zero value.
 .Pp
 The argument
 .Fa cmd
+is
+.Dv F_PUNCHHOLE
+and
+either
+.Fa fp_offset
+or
+.Fa fp_length
+are negative, or both
+.Fa fp_offset
+and
+.Fa fp_length
+are not multiples of the file system block size.
+.Pp
+The argument
+.Fa cmd
 is either
 .Dv F_READBOOTSTRAP
 or
@@ -745,6 +807,31 @@ or
 and satisfying the lock or unlock request would result in the
 number of locked regions in the system exceeding a system-imposed limit.
 .\" ==========
+.It Bq Er ENOSPC
+The argument
+.Fa cmd
+is
+.Dv F_PREALLOCATE
+and either there is no space available on the volume containing
+.Fa fildes
+or
+.Fa fst_flags
+contains
+.Dv F_ALLOCATEALL
+and there is not enough space available on the volume containing
+.Fa fildes
+to satisfy the entire request.
+.Pp
+The argument
+.Fa cmd
+is
+.Dv F_PUNCHHOLE
+and there is not enough space available on the volume containing
+.Fa fildes
+to satisfy the request. As an example, a filesystem that supports
+cloned files may return this error if punching a hole requires the
+creation of a clone and there is not enough space available to do so.
+.\" ==========
 .It Bq Er EOVERFLOW
 A return value would overflow its representation.
 For example,
@@ -753,6 +840,11 @@ is F_GETLK, F_SETLK, or F_SETLKW
 and the smallest (or, if l_len is non-zero, the largest) offset
 of a byte in the requested segment
 will not fit in an object of type off_t.
+.\" ==========
+.It Bq Er EPERM
+The argument cmd is
+.Dv F_PUNCHHOLE
+and the calling process does not have file write permission.
 .\" ==========
 .It Bq Er ESRCH
 .Fa Cmd

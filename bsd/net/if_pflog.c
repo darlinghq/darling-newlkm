@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2018 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -30,10 +30,10 @@
 /*	$OpenBSD: if_pflog.c,v 1.22 2006/12/15 09:31:20 otto Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
- * Angelos D. Keromytis (kermit@csd.uch.gr) and 
+ * Angelos D. Keromytis (kermit@csd.uch.gr) and
  * Niels Provos (provos@physnet.uni-hamburg.de).
  *
- * This code was written by John Ioannidis for BSD/OS in Athens, Greece, 
+ * This code was written by John Ioannidis for BSD/OS in Athens, Greece,
  * in November 1995.
  *
  * Ported to OpenBSD and NetBSD, with additional transforms, in December 1996,
@@ -49,7 +49,7 @@
  * Permission to use, copy, and modify this software with or without fee
  * is hereby granted, provided that this entire notice is included in
  * all copies of any software which is or includes a copy or
- * modification of this software. 
+ * modification of this software.
  * You may use this code under the GNU public license if you so wish. Please
  * contribute changes back to the authors under this freer than GPL license
  * so that we may further the use of strong encryption without limitations to
@@ -69,6 +69,8 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/mcache.h>
+
+#include <kern/zalloc.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -93,8 +95,8 @@
 #include <net/pfvar.h>
 #include <net/if_pflog.h>
 
-#define	PFLOGNAME	"pflog"
-#define PFLOGMTU	(32768 + MHLEN + MLEN)
+#define PFLOGNAME       "pflog"
+#define PFLOGMTU        (32768 + MHLEN + MLEN)
 
 #ifdef PFLOGDEBUG
 #define DPRINTF(x)    do { if (pflogdebug) printf x ; } while (0)
@@ -102,6 +104,7 @@
 #define DPRINTF(x)
 #endif
 
+static int pflog_remove(struct ifnet *);
 static int pflog_clone_create(struct if_clone *, u_int32_t, void *);
 static int pflog_clone_destroy(struct ifnet *);
 static errno_t pflogoutput(struct ifnet *, struct mbuf *);
@@ -113,12 +116,12 @@ static errno_t pflogaddproto(struct ifnet *, protocol_family_t,
 static errno_t pflogdelproto(struct ifnet *, protocol_family_t);
 static void pflogfree(struct ifnet *);
 
-static LIST_HEAD(, pflog_softc)	pflogif_list;
+static LIST_HEAD(, pflog_softc) pflogif_list;
 static struct if_clone pflog_cloner =
     IF_CLONE_INITIALIZER(PFLOGNAME, pflog_clone_create, pflog_clone_destroy,
-        0, (PFLOGIFS_MAX - 1));
+    0, (PFLOGIFS_MAX - 1), PFLOGIF_ZONE_MAX_ELEM, sizeof(struct pflog_softc));
 
-struct ifnet *pflogifs[PFLOGIFS_MAX];	/* for fast access */
+struct ifnet *pflogifs[PFLOGIFS_MAX];   /* for fast access */
 
 void
 pfloginit(void)
@@ -126,8 +129,9 @@ pfloginit(void)
 	int i;
 
 	LIST_INIT(&pflogif_list);
-	for (i = 0; i < PFLOGIFS_MAX; i++)
+	for (i = 0; i < PFLOGIFS_MAX; i++) {
 		pflogifs[i] = NULL;
+	}
 
 	(void) if_clone_attach(&pflog_cloner);
 }
@@ -136,7 +140,7 @@ static int
 pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 {
 	struct pflog_softc *pflogif;
-	struct ifnet_init_params pf_init;
+	struct ifnet_init_eparams pf_init;
 	int error = 0;
 
 	if (unit >= PFLOGIFS_MAX) {
@@ -146,13 +150,15 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 		/* NOTREACHED */
 	}
 
-	if ((pflogif = _MALLOC(sizeof (*pflogif),
-	    M_DEVBUF, M_WAITOK|M_ZERO)) == NULL) {
+	if ((pflogif = if_clone_softc_allocate(&pflog_cloner)) == NULL) {
 		error = ENOMEM;
 		goto done;
 	}
 
-	bzero(&pf_init, sizeof (pf_init));
+	bzero(&pf_init, sizeof(pf_init));
+	pf_init.ver = IFNET_INIT_CURRENT_VERSION;
+	pf_init.len = sizeof(pf_init);
+	pf_init.flags = IFNET_INIT_LEGACY;
 	pf_init.name = ifc->ifc_name;
 	pf_init.unit = unit;
 	pf_init.type = IFT_PFLOG;
@@ -165,13 +171,14 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	pf_init.ioctl = pflogioctl;
 	pf_init.detach = pflogfree;
 
-	bzero(pflogif, sizeof (*pflogif));
+	bzero(pflogif, sizeof(*pflogif));
 	pflogif->sc_unit = unit;
+	pflogif->sc_flags |= IFPFLF_DETACHING;
 
-	error = ifnet_allocate(&pf_init, &pflogif->sc_if);
+	error = ifnet_allocate_extended(&pf_init, &pflogif->sc_if);
 	if (error != 0) {
 		printf("%s: ifnet_allocate failed - %d\n", __func__, error);
-		_FREE(pflogif, M_DEVBUF);
+		if_clone_softc_deallocate(&pflog_cloner, pflogif);
 		goto done;
 	}
 
@@ -182,7 +189,7 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	if (error != 0) {
 		printf("%s: ifnet_attach failed - %d\n", __func__, error);
 		ifnet_release(pflogif->sc_if);
-		_FREE(pflogif, M_DEVBUF);
+		if_clone_softc_deallocate(&pflog_cloner, pflogif);
 		goto done;
 	}
 
@@ -194,29 +201,50 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	lck_mtx_lock(pf_lock);
 	LIST_INSERT_HEAD(&pflogif_list, pflogif, sc_list);
 	pflogifs[unit] = pflogif->sc_if;
+	pflogif->sc_flags &= ~IFPFLF_DETACHING;
 	lck_mtx_unlock(pf_lock);
 	lck_rw_done(pf_perim_lock);
 
 done:
-	return (error);
+	return error;
+}
+
+static int
+pflog_remove(struct ifnet *ifp)
+{
+	int error = 0;
+	struct pflog_softc *pflogif = NULL;
+
+	lck_rw_lock_shared(pf_perim_lock);
+	lck_mtx_lock(pf_lock);
+	pflogif = ifp->if_softc;
+
+	if (pflogif == NULL ||
+	    (pflogif->sc_flags & IFPFLF_DETACHING) != 0) {
+		error = EINVAL;
+		goto done;
+	}
+
+	pflogif->sc_flags |= IFPFLF_DETACHING;
+	LIST_REMOVE(pflogif, sc_list);
+done:
+	lck_mtx_unlock(pf_lock);
+	lck_rw_done(pf_perim_lock);
+	return error;
 }
 
 static int
 pflog_clone_destroy(struct ifnet *ifp)
 {
-	struct pflog_softc *pflogif = ifp->if_softc;
+	int error = 0;
 
-	lck_rw_lock_shared(pf_perim_lock);
-	lck_mtx_lock(pf_lock);
-	pflogifs[pflogif->sc_unit] = NULL;
-	LIST_REMOVE(pflogif, sc_list);
-	lck_mtx_unlock(pf_lock);
-	lck_rw_done(pf_perim_lock);
-
+	if ((error = pflog_remove(ifp)) != 0) {
+		goto done;
+	}
 	/* bpfdetach() is taken care of as part of interface detach */
-	(void) ifnet_detach(ifp);
-
-	return 0;
+	(void)ifnet_detach(ifp);
+done:
+	return error;
 }
 
 static errno_t
@@ -224,7 +252,7 @@ pflogoutput(struct ifnet *ifp, struct mbuf *m)
 {
 	printf("%s: freeing data for %s\n", __func__, if_name(ifp));
 	m_freem(m);
-	return (ENOTSUP);
+	return ENOTSUP;
 }
 
 static errno_t
@@ -236,16 +264,17 @@ pflogioctl(struct ifnet *ifp, unsigned long cmd, void *data)
 	case SIOCAIFADDR:
 	case SIOCSIFDSTADDR:
 	case SIOCSIFFLAGS:
-		if (ifnet_flags(ifp) & IFF_UP)
+		if (ifnet_flags(ifp) & IFF_UP) {
 			ifnet_set_flags(ifp, IFF_RUNNING, IFF_RUNNING);
-		else
+		} else {
 			ifnet_set_flags(ifp, 0, IFF_RUNNING);
+		}
 		break;
 	default:
-		return (ENOTTY);
+		return ENOTTY;
 	}
 
-	return (0);
+	return 0;
 }
 
 static errno_t
@@ -254,7 +283,7 @@ pflogdemux(struct ifnet *ifp, struct mbuf *m, char *h, protocol_family_t *ppf)
 #pragma unused(h, ppf)
 	printf("%s: freeing data for %s\n", __func__, if_name(ifp));
 	m_freem(m);
-	return (EJUSTRETURN);
+	return EJUSTRETURN;
 }
 
 static errno_t
@@ -262,49 +291,55 @@ pflogaddproto(struct ifnet *ifp, protocol_family_t pf,
     const struct ifnet_demux_desc *d, u_int32_t cnt)
 {
 #pragma unused(ifp, pf, d, cnt)
-	return (0);
+	return 0;
 }
 
 static errno_t
 pflogdelproto(struct ifnet *ifp, protocol_family_t pf)
 {
 #pragma unused(ifp, pf)
-	return (0);
+	return 0;
 }
 
 static void
 pflogfree(struct ifnet *ifp)
 {
-	_FREE(ifp->if_softc, M_DEVBUF);
+	if_clone_softc_deallocate(&pflog_cloner, ifp->if_softc);
 	ifp->if_softc = NULL;
 	(void) ifnet_release(ifp);
 }
 
 int
-pflog_packet(struct pfi_kif *kif, struct mbuf *m, sa_family_t af, u_int8_t dir,
+pflog_packet(struct pfi_kif *kif, pbuf_t *pbuf, sa_family_t af, u_int8_t dir,
     u_int8_t reason, struct pf_rule *rm, struct pf_rule *am,
     struct pf_ruleset *ruleset, struct pf_pdesc *pd)
 {
 #if NBPFILTER > 0
 	struct ifnet *ifn;
 	struct pfloghdr hdr;
+	struct mbuf *m;
 
-	lck_mtx_assert(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
 
-	if (kif == NULL || m == NULL || rm == NULL || pd == NULL)
-		return (-1);
+	if (kif == NULL || !pbuf_is_valid(pbuf) || rm == NULL || pd == NULL) {
+		return -1;
+	}
 
 	if (rm->logif >= PFLOGIFS_MAX ||
 	    (ifn = pflogifs[rm->logif]) == NULL || !ifn->if_bpf) {
-		return (0);
+		return 0;
 	}
 
-	bzero(&hdr, sizeof (hdr));
+	if ((m = pbuf_to_mbuf(pbuf, FALSE)) == NULL) {
+		return 0;
+	}
+
+	bzero(&hdr, sizeof(hdr));
 	hdr.length = PFLOG_REAL_HDRLEN;
 	hdr.af = af;
 	hdr.action = rm->action;
 	hdr.reason = reason;
-	memcpy(hdr.ifname, kif->pfik_name, sizeof (hdr.ifname));
+	memcpy(hdr.ifname, kif->pfik_name, sizeof(hdr.ifname));
 
 	if (am == NULL) {
 		hdr.rulenr = htonl(rm->nr);
@@ -312,12 +347,14 @@ pflog_packet(struct pfi_kif *kif, struct mbuf *m, sa_family_t af, u_int8_t dir,
 	} else {
 		hdr.rulenr = htonl(am->nr);
 		hdr.subrulenr = htonl(rm->nr);
-		if (ruleset != NULL && ruleset->anchor != NULL)
+		if (ruleset != NULL && ruleset->anchor != NULL) {
 			strlcpy(hdr.ruleset, ruleset->anchor->name,
-			    sizeof (hdr.ruleset));
+			    sizeof(hdr.ruleset));
+		}
 	}
-	if (rm->log & PF_LOG_SOCKET_LOOKUP && !pd->lookup.done)
+	if (rm->log & PF_LOG_SOCKET_LOOKUP && !pd->lookup.done) {
 		pd->lookup.done = pf_socket_lookup(dir, pd);
+	}
 	if (pd->lookup.done > 0) {
 		hdr.uid = pd->lookup.uid;
 		hdr.pid = pd->lookup.pid;
@@ -355,5 +392,5 @@ pflog_packet(struct pfi_kif *kif, struct mbuf *m, sa_family_t af, u_int8_t dir,
 		break;
 	}
 #endif /* NBPFILTER > 0 */
-	return (0);
+	return 0;
 }

@@ -17,13 +17,12 @@ include $(MakeInc_def)
 # XXX: CFLAGS
 #
 CFLAGS+= -include meta_features.h -DMACH_KERNEL_PRIVATE -DMACH_KERNEL
+SFLAGS+= -include meta_features.h
 
 # Objects that don't want -Wcast-align warning (8474835)
 OBJS_NO_CAST_ALIGN =			\
 		atm_notification_user.o \
 		model_dep.o		\
-		chud_thread.o		\
-		chud_thread_arm.o	\
 		video_console.o		\
 		kdp_udp.o		\
 		kdp_machdep.o		\
@@ -41,14 +40,12 @@ OBJS_NO_CAST_ALIGN =			\
 		cpu_threads.o		\
 		cpuid.o			\
 		locks_i386.o		\
+		locks_i386_opt.o	\
 		machine_task.o		\
 		mp_desc.o		\
 		pcb.o			\
 		pcb_native.o		\
 		kdp_x86_common.o	\
-		memory_object.o		\
-		vm_apple_protect.o	\
-		vm_map.o		\
 		startup64.o		\
 		affinity.o		\
 		sched_grrr.o		\
@@ -61,9 +58,6 @@ OBJS_NO_CAST_ALIGN =			\
 		status.o		\
 		machine_routines.o	\
 		loose_ends.o		\
-		fips_sha1.o		\
-		prng_yarrow.o		\
-		sha1mod.o		\
 		sleh.o			\
 		ccdigest_final_64be.o	\
 		ccdigest_init.o		\
@@ -73,12 +67,7 @@ OBJS_NO_CAST_ALIGN =			\
 		ccsha1.o		\
 		ipc_object.o		\
 		ipc_kmsg.o		\
-		ipc_right.o		\
-		bsd_vm.o		\
-		vm_map_store.o		\
-		vm_map_store_ll.o	\
-		vm_map_store_rb.o	\
-		vm_debug.o
+		ipc_right.o
 
 # Objects that don't want -Wsign-compare warning (15294427)
 OBJS_NO_SIGN_COMPARE =		\
@@ -87,10 +76,13 @@ OBJS_NO_SIGN_COMPARE =		\
 $(foreach file,$(OBJS_NO_CAST_ALIGN),$(eval $(call add_perfile_cflags,$(file),-Wno-cast-align)))
 $(foreach file,$(OBJS_NO_SIGN_COMPARE),$(eval $(call add_perfile_cflags,$(file),-Wno-sign-compare)))
 
-#
-# Do not provide CTF symbolic these files
-#
-chud_glue.o_SKIP_CTFCONVERT = 1
+ifeq ($(KSANCOV),1)
+# Don't instrument functions called by the ksancov runtime. SanitizeCoverage does
+# not support blacklists, so exclude the whole file.
+machine_routines.o_CFLAGS_RM = $(KSANCOV_CFLAGS)
+machine_routines_common.o_CFLAGS_RM = $(KSANCOV_CFLAGS)
+pcb_native.o_CFLAGS_RM = $(KSANCOV_CFLAGS)
+endif
 
 #
 # XXX: INCFLAGS to include libsa prototypes
@@ -154,9 +146,9 @@ $(COMPONENT).filelist: $(OBJS)
                 $(SEG_HACK) -n __HIB -o $${hib_file}__ $${hib_file} || exit 1; \
                 mv $${hib_file}__ $${hib_file} || exit 1; \
 	done
-	@echo "$(ColorL)LDFILELIST$(Color0) $(ColorLF)$(COMPONENT)$(Color0)"
+	$(call makelog,$(ColorL)LDFILELIST$(Color0) $(ColorLF)$(COMPONENT)$(Color0))
 	$(_v)for obj in ${OBJS}; do	\
-		 echo $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+		 $(ECHO) $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
 	done > $(COMPONENT).filelist
 
 do_all: $(COMPONENT).filelist
@@ -178,7 +170,7 @@ endif
 -include genassym.d
 genassym.o: .CFLAGS $(firstword $(MAKEFILE_LIST))
 genassym.o: $(SOURCE_DIR)/$(COMPONENT)/$(GENASSYM_LOCATION)/genassym.c
-	@echo "[$(CMD_MC)] $(ColorH)GENASSYM$(Color0)      $(ColorLF)$<$(Color0)"
+	$(call makelog,[$(CMD_MC)] $(ColorH)GENASSYM$(Color0)      $(ColorLF)$<$(Color0))
 	$(_v)${GENASSYM_KCC} ${CFLAGS} ${CFLAGS_NOLTO_FLAG} -MD -S -o ${@} ${INCFLAGS} $<
 
 assym.s: genassym.o

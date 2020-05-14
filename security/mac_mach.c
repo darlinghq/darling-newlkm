@@ -54,8 +54,9 @@
 static struct proc *
 mac_task_get_proc(struct task *task)
 {
-	if (task == current_task())
+	if (task == current_task()) {
 		return proc_self();
+	}
 
 	/*
 	 * Tasks don't really hold a reference on a proc unless the
@@ -65,8 +66,9 @@ mac_task_get_proc(struct task *task)
 	struct proc *p = proc_find(pid);
 
 	if (p != NULL) {
-		if (proc_task(p) == task)
+		if (proc_task(p) == task) {
 			return p;
+		}
 		proc_rele(p);
 	}
 	return NULL;
@@ -78,13 +80,14 @@ mac_task_check_expose_task(struct task *task)
 	int error;
 
 	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL)
+	if (p == NULL) {
 		return ESRCH;
+	}
 
 	struct ucred *cred = kauth_cred_get();
 	MAC_CHECK(proc_check_expose_task, cred, p);
 	proc_rele(p);
-	return (error);
+	return error;
 }
 
 int
@@ -93,14 +96,15 @@ mac_task_check_set_host_special_port(struct task *task, int id, struct ipc_port 
 	int error;
 
 	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL)
+	if (p == NULL) {
 		return ESRCH;
+	}
 
 	kauth_cred_t cred = kauth_cred_proc_ref(p);
 	MAC_CHECK(proc_check_set_host_special_port, cred, id, port);
 	kauth_cred_unref(&cred);
 	proc_rele(p);
-	return (error);
+	return error;
 }
 
 int
@@ -109,14 +113,15 @@ mac_task_check_set_host_exception_port(struct task *task, unsigned int exception
 	int error;
 
 	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL)
+	if (p == NULL) {
 		return ESRCH;
+	}
 
 	kauth_cred_t cred = kauth_cred_proc_ref(p);
 	MAC_CHECK(proc_check_set_host_exception_port, cred, exception);
 	kauth_cred_unref(&cred);
 	proc_rele(p);
-	return (error);
+	return error;
 }
 
 int
@@ -126,103 +131,147 @@ mac_task_check_set_host_exception_ports(struct task *task, unsigned int exceptio
 	int exception;
 
 	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL)
+	if (p == NULL) {
 		return ESRCH;
+	}
 
 	kauth_cred_t cred = kauth_cred_proc_ref(p);
 	for (exception = FIRST_EXCEPTION; exception < EXC_TYPES_COUNT; exception++) {
 		if (exception_mask & (1 << exception)) {
 			MAC_CHECK(proc_check_set_host_exception_port, cred, exception);
-			if (error)
+			if (error) {
 				break;
+			}
 		}
 	}
 	kauth_cred_unref(&cred);
 	proc_rele(p);
-	return (error);
+	return error;
 }
 
 void
 mac_thread_userret(struct thread *td)
 {
-
 	MAC_PERFORM(thread_userret, td);
 }
 
-static struct label *
-mac_exc_action_label_alloc(void)
+void
+mac_proc_notify_exec_complete(struct proc *proc)
+{
+	thread_t thread = current_thread();
+
+	/*
+	 * Since this MAC hook was designed to support upcalls, make sure the hook
+	 * is called with kernel importance propagation enabled so any daemons
+	 * can get any appropriate importance donations.
+	 */
+	thread_enable_send_importance(thread, TRUE);
+	MAC_PERFORM(proc_notify_exec_complete, proc);
+	thread_enable_send_importance(thread, FALSE);
+}
+
+/**** Exception Policy
+ *
+ * Note that the functions below do not fully follow the usual convention for mac policy functions
+ * in the kernel. Besides avoiding confusion in how the mac function names are mixed with the actual
+ * policy function names, we diverge because the exception policy is somewhat special:
+ * It is used in places where allocation and association must be separate, and its labels do not
+ * only belong to one type of object as usual, but to two (on exception actions and on tasks as
+ * crash labels).
+ */
+
+// Label allocation and deallocation, may sleep.
+
+struct label *
+mac_exc_create_label(void)
 {
 	struct label *label = mac_labelzone_alloc(MAC_WAITOK);
 
+	if (label == NULL) {
+		return NULL;
+	}
+
+	// Policy initialization of the label, typically performs allocations as well.
+	// (Unless the policy's full data really fits into a pointer size.)
 	MAC_PERFORM(exc_action_label_init, label);
+
 	return label;
 }
 
-static void
-mac_exc_action_label_free(struct label *label)
+void
+mac_exc_free_label(struct label *label)
 {
 	MAC_PERFORM(exc_action_label_destroy, label);
 	mac_labelzone_free(label);
 }
 
+// Action label initialization and teardown, may sleep.
+
 void
-mac_exc_action_label_init(struct exception_action *action)
+mac_exc_associate_action_label(struct exception_action *action, struct label *label)
 {
-	action->label = mac_exc_action_label_alloc();
+	action->label = label;
 	MAC_PERFORM(exc_action_label_associate, action, action->label);
 }
 
 void
-mac_exc_action_label_inherit(struct exception_action *parent, struct exception_action *child)
+mac_exc_free_action_label(struct exception_action *action)
 {
-	mac_exc_action_label_init(child);
-	MAC_PERFORM(exc_action_label_copy, parent->label, child->label);
-}
-
-void
-mac_exc_action_label_destroy(struct exception_action *action)
-{
-	struct label *label = action->label;
+	mac_exc_free_label(action->label);
 	action->label = NULL;
-	mac_exc_action_label_free(label);
 }
 
-int mac_exc_action_label_update(struct task *task, struct exception_action *action) {
-	if (task == kernel_task) {
-		// The kernel may set exception ports without any check.
-		return 0;
-	}
+// Action label update and inheritance, may NOT sleep and must be quick.
 
-	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL)
-		return ESRCH;
+int
+mac_exc_update_action_label(struct exception_action *action,
+    struct label *newlabel)
+{
+	int error;
 
-	MAC_PERFORM(exc_action_label_update, p, action->label);
-	proc_rele(p);
-	return 0;
+	MAC_CHECK(exc_action_label_update, action, action->label, newlabel);
+
+	return error;
 }
 
-void mac_exc_action_label_reset(struct exception_action *action) {
-	struct label *old_label = action->label;
-	mac_exc_action_label_init(action);
-	mac_exc_action_label_free(old_label);
+int
+mac_exc_inherit_action_label(struct exception_action *parent,
+    struct exception_action *child)
+{
+	return mac_exc_update_action_label(child, parent->label);
 }
 
-void mac_exc_action_label_task_update(struct task *task, struct proc *proc) {
-	if (get_task_crash_label(task) != NULL) {
-		MAC_MACH_UNEXPECTED("task already has a crash_label attached to it");
-		return;
-	}
+int
+mac_exc_update_task_crash_label(struct task *task, struct label *label)
+{
+	int error;
 
-	struct label *label = mac_exc_action_label_alloc();
-	MAC_PERFORM(exc_action_label_update, proc, label);
-	set_task_crash_label(task, label);
+	assert(task != kernel_task);
+
+	struct label *crash_label = get_task_crash_label(task);
+
+	MAC_CHECK(exc_action_label_update, NULL, crash_label, label);
+
+	return error;
 }
 
-void mac_exc_action_label_task_destroy(struct task *task) {
-	mac_exc_action_label_free(get_task_crash_label(task));
-	set_task_crash_label(task, NULL);
+// Process label creation, may sleep.
+
+struct label *
+mac_exc_create_label_for_proc(struct proc *proc)
+{
+	struct label *label = mac_exc_create_label();
+	MAC_PERFORM(exc_action_label_populate, label, proc);
+	return label;
 }
+
+struct label *
+mac_exc_create_label_for_current_proc(void)
+{
+	return mac_exc_create_label_for_proc(current_proc());
+}
+
+// Exception handler policy checking, may sleep.
 
 int
 mac_exc_action_check_exception_send(struct task *victim_task, struct exception_action *action)
@@ -235,23 +284,22 @@ mac_exc_action_check_exception_send(struct task *victim_task, struct exception_a
 
 	if (p != NULL) {
 		// Create a label from the still existing bsd process...
-		label = bsd_label = mac_exc_action_label_alloc();
-		MAC_PERFORM(exc_action_label_update, p, bsd_label);
+		label = bsd_label = mac_exc_create_label_for_proc(p);
 	} else {
 		// ... otherwise use the crash label on the task.
 		label = get_task_crash_label(victim_task);
 	}
 
 	if (label == NULL) {
-		MAC_MACH_UNEXPECTED("mac_exc_action_check_exception_send: no exc_action label for proc %p", p);
+		MAC_MACH_UNEXPECTED("mac_exc_action_check_exception_send: no exc_action label for process");
 		return EPERM;
 	}
 
 	MAC_CHECK(exc_action_check_exception_send, label, action, action->label);
 
 	if (bsd_label != NULL) {
-		mac_exc_action_label_free(bsd_label);
+		mac_exc_free_label(bsd_label);
 	}
 
-	return (error);
+	return error;
 }

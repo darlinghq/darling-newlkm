@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2012 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -55,7 +55,7 @@
  */
 
 #ifndef _NET_PKTSCHED_PKTSCHED_PRIQ_H_
-#define	_NET_PKTSCHED_PKTSCHED_PRIQ_H_
+#define _NET_PKTSCHED_PKTSCHED_PRIQ_H_
 
 #ifdef PRIVATE
 #include <net/pktsched/pktsched.h>
@@ -69,122 +69,55 @@
 extern "C" {
 #endif
 
-#define	PRIQ_MAXPRI	16	/* upper limit of the number of priorities */
+#define PRIQ_MAXPRI     16      /* upper limit of the number of priorities */
 
 /* priq class flags */
-#define	PRCF_RED		0x0001	/* use RED */
-#define	PRCF_ECN		0x0002  /* use ECN with RED/BLUE/SFB */
-#define	PRCF_RIO		0x0004  /* use RIO */
-#define	PRCF_CLEARDSCP		0x0010  /* clear diffserv codepoint */
-#define	PRCF_BLUE		0x0100	/* use BLUE */
-#define	PRCF_SFB		0x0200	/* use SFB */
-#define	PRCF_FLOWCTL		0x0400	/* enable flow control advisories */
-#define	PRCF_DEFAULTCLASS	0x1000	/* default class */
+#define PRCF_RED                0x0001  /* use RED */
+#define PRCF_ECN                0x0002  /* use ECN with RED/BLUE/SFB */
+#define PRCF_RIO                0x0004  /* use RIO */
+#define PRCF_CLEARDSCP          0x0010  /* clear diffserv codepoint */
+#define PRCF_BLUE               0x0100  /* use BLUE */
+#define PRCF_SFB                0x0200  /* use SFB */
+#define PRCF_FLOWCTL            0x0400  /* enable flow control advisories */
+#define PRCF_DEFAULTCLASS       0x1000  /* default class */
 #ifdef BSD_KERNEL_PRIVATE
-#define	PRCF_LAZY		0x10000000 /* on-demand resource allocation */
+#define PRCF_LAZY               0x10000000 /* on-demand resource allocation */
 #endif /* BSD_KERNEL_PRIVATE */
 
-#define	PRCF_USERFLAGS							\
-	(PRCF_RED | PRCF_ECN | PRCF_RIO | PRCF_CLEARDSCP | PRCF_BLUE |	\
+#define PRCF_USERFLAGS                                                  \
+	(PRCF_RED | PRCF_ECN | PRCF_RIO | PRCF_CLEARDSCP | PRCF_BLUE |  \
 	PRCF_SFB | PRCF_FLOWCTL | PRCF_DEFAULTCLASS)
 
 #ifdef BSD_KERNEL_PRIVATE
-#define	PRCF_BITS \
+#define PRCF_BITS \
 	"\020\1RED\2ECN\3RIO\5CLEARDSCP\11BLUE\12SFB\13FLOWCTL\15DEFAULT" \
 	"\35LAZY"
 #else
-#define	PRCF_BITS \
+#define PRCF_BITS \
 	"\020\1RED\2ECN\3RIO\5CLEARDSCP\11BLUE\12SFB\13FLOWCTL\15DEFAULT"
 #endif /* !BSD_KERNEL_PRIVATE */
 
 struct priq_classstats {
-	u_int32_t		class_handle;
-	u_int32_t		priority;
+	u_int32_t               class_handle;
+	u_int32_t               priority;
 
-	u_int32_t		qlength;
-	u_int32_t		qlimit;
-	u_int32_t		period;
-	struct pktcntr		xmitcnt;  /* transmitted packet counter */
-	struct pktcntr		dropcnt;  /* dropped packet counter */
+	u_int32_t               qlength;
+	u_int32_t               qlimit;
+	u_int32_t               period;
+	struct pktcntr          xmitcnt;  /* transmitted packet counter */
+	struct pktcntr          dropcnt;  /* dropped packet counter */
 
 	/* RED, RIO, BLUE, SFB related info */
-	classq_type_t		qtype;
+	classq_type_t           qtype;
 	union {
 		/* RIO has 3 red stats */
-		struct red_stats	red[RIO_NDROPPREC];
-		struct blue_stats	blue;
-		struct sfb_stats	sfb;
+		struct red_stats        red[RIO_NDROPPREC];
+		struct blue_stats       blue;
+		struct sfb_stats        sfb;
 	};
-	classq_state_t		qstate;
+	classq_state_t          qstate;
 };
 
-#ifdef BSD_KERNEL_PRIVATE
-struct priq_class {
-	u_int32_t	cl_handle;	/* class handle */
-	class_queue_t	cl_q;		/* class queue structure */
-	u_int32_t	cl_qflags;	/* class queue flags */
-	union {
-		void		*ptr;
-		struct red	*red;	/* RED state */
-		struct rio	*rio;	/* RIO state */
-		struct blue	*blue;	/* BLUE state */
-		struct sfb	*sfb;	/* SFB state */
-	} cl_qalg;
-	int32_t		cl_pri;		/* priority */
-	u_int32_t	cl_flags;	/* class flags */
-	struct priq_if	*cl_pif;	/* back pointer to pif */
-
-	/* statistics */
-	u_int32_t	cl_period;	/* backlog period */
-	struct pktcntr  cl_xmitcnt;	/* transmitted packet counter */
-	struct pktcntr  cl_dropcnt;	/* dropped packet counter */
-};
-
-#define	cl_red	cl_qalg.red
-#define	cl_rio	cl_qalg.rio
-#define	cl_blue	cl_qalg.blue
-#define	cl_sfb	cl_qalg.sfb
-
-/* priq_if flags */
-#define	PRIQIFF_ALTQ		0x1	/* configured via PF/ALTQ */
-
-/*
- * priq interface state
- */
-struct priq_if {
-	struct ifclassq		*pif_ifq;	/* backpointer to ifclassq */
-	int			pif_maxpri;	/* max priority in use */
-	u_int32_t		pif_flags;	/* flags */
-	u_int32_t		pif_throttle;	/* throttling level */
-	pktsched_bitmap_t	pif_bitmap;	/* active class bitmap */
-	struct priq_class	*pif_default;	/* default class */
-	struct priq_class	*pif_classes[PRIQ_MAXPRI]; /* classes */
-};
-
-#define	PRIQIF_IFP(_pif)	((_pif)->pif_ifq->ifcq_ifp)
-
-struct if_ifclassq_stats;
-
-extern void priq_init(void);
-extern struct priq_if *priq_alloc(struct ifnet *, int, boolean_t);
-extern int priq_destroy(struct priq_if *);
-extern void priq_purge(struct priq_if *);
-extern void priq_event(struct priq_if *, cqev_t);
-extern int priq_add_queue(struct priq_if *, int, u_int32_t, int, u_int32_t,
-    struct priq_class **);
-extern int priq_remove_queue(struct priq_if *, u_int32_t);
-extern int priq_get_class_stats(struct priq_if *, u_int32_t,
-    struct priq_classstats *);
-extern int priq_enqueue(struct priq_if *, struct priq_class *, struct mbuf *,
-    struct pf_mtag *);
-extern struct mbuf *priq_dequeue(struct priq_if *, cqdq_op_t);
-extern int priq_setup_ifclassq(struct ifclassq *, u_int32_t);
-extern int priq_teardown_ifclassq(struct ifclassq *ifq);
-extern int priq_getqstats_ifclassq(struct ifclassq *, u_int32_t,
-    struct if_ifclassq_stats *);
-extern int priq_set_throttle(struct ifclassq *, u_int32_t);
-extern int priq_get_throttle(struct ifclassq *, u_int32_t *);
-#endif /* BSD_KERNEL_PRIVATE */
 #ifdef __cplusplus
 }
 #endif

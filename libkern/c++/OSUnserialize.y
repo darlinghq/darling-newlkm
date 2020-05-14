@@ -99,11 +99,7 @@ static OSObject	*parsedObject;
 
 #define YYSTYPE object_t *
 
-extern "C" {
-extern void *kern_os_malloc(size_t size);
-extern void *kern_os_realloc(void * addr, size_t size);
-extern void kern_os_free(void * addr);
-} /* extern "C" */
+#include <libkern/OSRuntime.h>
 
 #define malloc(s) kern_os_malloc(s)
 #define realloc(a, s) kern_os_realloc(a, s)
@@ -296,7 +292,7 @@ yylex()
 
 		/* copy to null terminated buffer */
 		tempString = (char *)malloc(length + 1);
-		if (tempString == 0) {
+		if (tempString == NULL) {
 			printf("OSUnserialize: can't alloc temp memory\n");
 			return 0;
 		}
@@ -324,7 +320,7 @@ yylex()
 		(void)nextChar();
 		/* copy to null terminated buffer */
 		tempString = (char *)malloc(length + 1);
-		if (tempString == 0) {
+		if (tempString == NULL) {
 			printf("OSUnserialize: can't alloc temp memory\n");
 			return 0;
 		}
@@ -630,9 +626,9 @@ OSUnserialize(const char *buffer, OSString **errorString)
 	tags = OSDictionary::withCapacity(128);
 	if (yyparse() == 0) {
 		object = parsedObject;
-		if (errorString) *errorString = 0;
+		if (errorString) *errorString = NULL;
 	} else {
-		object = 0;
+		object = NULL;
 		if (errorString)
 			*errorString = OSString::withCString(yyerror_message);
 	}

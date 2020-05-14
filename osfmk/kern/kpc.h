@@ -56,20 +56,20 @@ __BEGIN_DECLS
 #define KPC_ALL_CPUS (1u << 31)
 
 /* action id setters/getters */
-#define FIXED_ACTIONID(ctr)			(kpc_actionid[(ctr)])
-#define CONFIGURABLE_ACTIONID(ctr)		(kpc_actionid[(ctr) + kpc_fixed_count()])
+#define FIXED_ACTIONID(ctr)                     (kpc_actionid[(ctr)])
+#define CONFIGURABLE_ACTIONID(ctr)              (kpc_actionid[(ctr) + kpc_fixed_count()])
 
 /* reload counter setters/getters */
-#define FIXED_RELOAD(ctr)			(current_cpu_datap()->cpu_kpc_reload[(ctr)])
-#define FIXED_RELOAD_CPU(cpu, ctr)		(cpu_datap(cpu)->cpu_kpc_reload[(ctr)])
-#define CONFIGURABLE_RELOAD(ctr)		(current_cpu_datap()->cpu_kpc_reload[(ctr) + kpc_fixed_count()])
-#define CONFIGURABLE_RELOAD_CPU(cpu, ctr)	(cpu_datap(cpu)->cpu_kpc_reload[(ctr) + kpc_fixed_count()])
+#define FIXED_RELOAD(ctr)                       (current_cpu_datap()->cpu_kpc_reload[(ctr)])
+#define FIXED_RELOAD_CPU(cpu, ctr)              (cpu_datap(cpu)->cpu_kpc_reload[(ctr)])
+#define CONFIGURABLE_RELOAD(ctr)                (current_cpu_datap()->cpu_kpc_reload[(ctr) + kpc_fixed_count()])
+#define CONFIGURABLE_RELOAD_CPU(cpu, ctr)       (cpu_datap(cpu)->cpu_kpc_reload[(ctr) + kpc_fixed_count()])
 
 /* shadow counter setters/getters */
-#define FIXED_SHADOW(ctr)			(current_cpu_datap()->cpu_kpc_shadow[(ctr)])
-#define FIXED_SHADOW_CPU(cpu, ctr)		(cpu_datap(cpu)->cpu_kpc_shadow[(ctr)])
-#define CONFIGURABLE_SHADOW(ctr) 		(current_cpu_datap()->cpu_kpc_shadow[(ctr) + kpc_fixed_count()])
-#define CONFIGURABLE_SHADOW_CPU(cpu, ctr) 	(cpu_datap(cpu)->cpu_kpc_shadow[(ctr) + kpc_fixed_count()])
+#define FIXED_SHADOW(ctr)                       (current_cpu_datap()->cpu_kpc_shadow[(ctr)])
+#define FIXED_SHADOW_CPU(cpu, ctr)              (cpu_datap(cpu)->cpu_kpc_shadow[(ctr)])
+#define CONFIGURABLE_SHADOW(ctr)                (current_cpu_datap()->cpu_kpc_shadow[(ctr) + kpc_fixed_count()])
+#define CONFIGURABLE_SHADOW_CPU(cpu, ctr)       (cpu_datap(cpu)->cpu_kpc_shadow[(ctr) + kpc_fixed_count()])
 
 /**
  * Callback for notification when PMCs are acquired/released by a task. The
@@ -90,6 +90,8 @@ typedef void (*kpc_pm_handler_t)(boolean_t);
 struct cpu_data;
 extern boolean_t kpc_register_cpu(struct cpu_data *cpu_data);
 extern void kpc_unregister_cpu(struct cpu_data *cpu_data);
+
+extern bool kpc_supported;
 
 /* bootstrap */
 extern void kpc_init(void);
@@ -118,12 +120,12 @@ extern int kpc_get_pmu_version(void);
 extern int kpc_set_running(uint32_t classes);
 
 /* Read CPU counters */
-extern int kpc_get_cpu_counters(boolean_t all_cpus, uint32_t classes, 
-                                int *curcpu, uint64_t *buf);
+extern int kpc_get_cpu_counters(boolean_t all_cpus, uint32_t classes,
+    int *curcpu, uint64_t *buf);
 
 /* Read shadow counters */
 extern int kpc_get_shadow_counters( boolean_t all_cpus, uint32_t classes,
-                                    int *curcpu, uint64_t *buf );
+    int *curcpu, uint64_t *buf );
 
 /* Read current thread's counter accumulations */
 extern int kpc_get_curthread_counters(uint32_t *inoutcount, uint64_t *buf);
@@ -155,6 +157,7 @@ extern void kpc_thread_destroy(thread_t thread);
 /* allocate a buffer big enough for all counters */
 extern uint64_t *kpc_counterbuf_alloc(void);
 extern void      kpc_counterbuf_free(uint64_t*);
+extern uint32_t  kpc_get_counterbuf_size(void);
 
 /* whether we're currently accounting into threads */
 extern int kpc_threads_counting;
@@ -200,9 +203,9 @@ extern int kpc_disable_whitelist( int val );
  * This is a deprecated function used by old Power Managers, new Power Managers
  * should use the @em kpc_reserve_pm_counters() function. This function actually
  * calls @em kpc_reserve_pm_counters() with the following arguments:
- * 	- handler	= handler
- * 	- pmc_mask	= 0x83
- * 	- custom_config	= TRUE
+ *      - handler	= handler
+ *      - pmc_mask	= 0x83
+ *      - custom_config	= TRUE
  *
  * See @em kpc_reserve_pm_counters() for more details about the return value.
  */
@@ -213,6 +216,7 @@ extern boolean_t kpc_register_pm_handler(void (*handler)(boolean_t));
  *
  * @param handler
  * Notification callback to use when PMCs are acquired/released by a task.
+ * Power management must acknowledge the change using kpc_pm_acknowledge.
  *
  * @param pmc_mask
  * Bitmask of the configurable PMCs used by the Power Manager. The number of bits
@@ -229,13 +233,23 @@ extern boolean_t kpc_register_pm_handler(void (*handler)(boolean_t));
  * Manager can start using the reserved PMCs.
  */
 extern boolean_t kpc_reserve_pm_counters(uint64_t pmc_mask, kpc_pm_handler_t handler,
-                                         boolean_t custom_config);
+    boolean_t custom_config);
 
 /*
  * Unregister the Power Manager as a PMCs user, and release the previously
  * reserved counters.
  */
 extern void kpc_release_pm_counters(void);
+
+/*
+ * Acknowledge the callback that PMCs are available to power management.
+ *
+ * @param available_to_pm Whether the counters were made available to power
+ * management in the callback.  Pass in whatever was passed into the handler
+ * function.  After this point, power management is able to use POWER_CLASS
+ * counters.
+ */
+extern void kpc_pm_acknowledge(boolean_t available_to_pm);
 
 /*
  * Is the PMU used by both the power manager and userspace?
@@ -279,9 +293,9 @@ struct kpc_config_remote {
 
 /* handler for mp operations */
 struct kpc_running_remote {
-	uint32_t	classes;		/* classes to run */
-	uint64_t	cfg_target_mask;	/* configurable counters selected */
-	uint64_t	cfg_state_mask;		/* configurable counters new state */
+	uint32_t        classes;                /* classes to run */
+	uint64_t        cfg_target_mask;        /* configurable counters selected */
+	uint64_t        cfg_state_mask;         /* configurable counters new state */
 };
 
 /* handler for mp operations */
@@ -326,13 +340,12 @@ extern uint64_t kpc_get_configurable_pmc_mask(uint32_t classes);
 
 
 /* Interface for kexts to publish a kpc interface */
-struct kpc_driver
-{
+struct kpc_driver {
 	uint32_t (*get_classes)(void);
 	uint32_t (*get_running)(void);
 	int      (*set_running)(uint32_t classes);
-	int      (*get_cpu_counters)(boolean_t all_cpus, uint32_t classes, 
-	                             int *curcpu, uint64_t *buf);
+	int      (*get_cpu_counters)(boolean_t all_cpus, uint32_t classes,
+	    int *curcpu, uint64_t *buf);
 	int      (*get_curthread_counters)(uint32_t *inoutcount, uint64_t *buf);
 	uint32_t (*get_counter_count)(uint32_t classes);
 	uint32_t (*get_config_count)(uint32_t classes);

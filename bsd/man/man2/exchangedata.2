@@ -73,6 +73,16 @@ Programs that reference the file via an object identifier will continue to
 reference the original file, but now it has the new data.
 .Pp
 .
+WARNING: This system call is largely supported only by HFS and AFP file systems.  Many other
+file systems, including APFS, do not support it.  Further, it is not supported on iOS, tvOS, or watchOS. 
+It is recommended that callers refer
+instead to 
+.Fn rename
+or
+.Fn renamex_np
+to conduct safe-save operations instead. 
+.Pp
+.
 .\" path1 and path2 parameters
 .
 The
@@ -115,6 +125,7 @@ is set to indicate the error.
 .Sh COMPATIBILITY
 Not all volumes support 
 .Fn exchangedata .
+This includes APFS volumes.
 You can test whether a volume supports 
 .Fn exchangedata 
 by using 
@@ -182,10 +193,12 @@ An I/O error occurred while reading from or writing to the file system.
 .
 .Sh SEE ALSO
 .
-.Xr getattrlist 2
+.Xr getattrlist 2 ,
+.Xr rename 2
 .
 .Sh HISTORY
 A
 .Fn exchangedata
 function call appeared in Darwin 1.3.1 (Mac OS X version 10.0).
 .
+It was deprecated in macOS 10.13.

@@ -54,7 +54,7 @@
  * the rights to redistribute these changes.
  */
 
-#include <mach_rt.h>
+#include <debug.h>
 #include <mach_kdp.h>
 #include <mach_assert.h>
 
@@ -62,6 +62,7 @@
 #include <i386/asm.h>
 #include <i386/cpuid.h>
 #include <i386/eflags.h>
+#include <i386/postcode.h>
 #include <i386/proc_reg.h>
 #include <i386/trap.h>
 #include <assym.s>
@@ -157,14 +158,28 @@ wrmsr_fail:
 	movl	$1, %eax
 	ret
 
+#if DEBUG
+#ifndef TERI
+#define TERI 1
+#endif
+#endif
+
+#if TERI
+.globl	EXT(thread_exception_return_internal)
+#else
 .globl	EXT(thread_exception_return)
+#endif
 .globl	EXT(thread_bootstrap_return)
 LEXT(thread_bootstrap_return)
 #if CONFIG_DTRACE
 	call EXT(dtrace_thread_bootstrap)
 #endif
 
+#if TERI
+LEXT(thread_exception_return_internal)
+#else
 LEXT(thread_exception_return)
+#endif
 	cli
 	xorl	%ecx, %ecx		/* don't check if we're in the PFZ */
 	jmp	EXT(return_from_trap)
@@ -304,35 +319,85 @@ _bcopystr_fail:
 	ret
 
 /*
- * Copyin 32 or 64 bit aligned word as a single transaction
+ * Copyin 32 bit aligned word as a single transaction
  * rdi: source address (user)
  * rsi: destination address (kernel)
- * rdx: size (4 or 8)
  */
-Entry(_copyin_word)
+Entry(_copyin_atomic32)
 	pushq	%rbp			/* Save registers */
 	movq	%rsp, %rbp
-	cmpl	$0x4, %edx		/* If size = 4 */
-	je	L_copyin_word_4		/* 	handle 32-bit load */
-	movl	$(EINVAL), %eax		/* Set up error status */
-	cmpl	$0x8, %edx		/* If size != 8 */
-	jne	L_copyin_word_exit	/*	exit with error */
 	RECOVERY_SECTION
-	RECOVER(L_copyin_word_fail)	/* Set up recovery handler for next instruction*/
-	movq	(%rdi), %rax		/* Load quad from user */
-	jmp	L_copyin_word_store
-L_copyin_word_4:
-	RECOVERY_SECTION
-	RECOVER(L_copyin_word_fail)	/* Set up recovery handler for next instruction */
+	RECOVER(L_copyin_atomic32_fail)	/* Set up recovery handler for next instruction */
 	movl	(%rdi), %eax		/* Load long from user */
-L_copyin_word_store:
-	movq	%rax, (%rsi)		/* Store to kernel */
+	movl	%eax, (%rsi)		/* Store to kernel */
 	xorl	%eax, %eax		/* Return success */
-L_copyin_word_exit:
 	popq	%rbp			/* Restore registers */
 	retq				/* Return */
 
-L_copyin_word_fail:
+L_copyin_atomic32_fail:
+	movl	$(EFAULT), %eax		/* Return error for failure */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+/*
+ * Copyin 64 bit aligned word as a single transaction
+ * rdi: source address (user)
+ * rsi: destination address (kernel)
+ */
+Entry(_copyin_atomic64)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+	RECOVERY_SECTION
+	RECOVER(L_copyin_atomic64_fail)	/* Set up recovery handler for next instruction*/
+	movq	(%rdi), %rax		/* Load quad from user */
+	movq	%rax, (%rsi)		/* Store to kernel */
+	xorl	%eax, %eax		/* Return success */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+L_copyin_atomic64_fail:
+	movl	$(EFAULT), %eax		/* Return error for failure */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+/*
+ * Copyin 32 bit aligned word as a single transaction
+ * rdi: source address (kernel)
+ * rsi: destination address (user)
+ */
+Entry(_copyout_atomic32)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+	movl    (%rdi), %eax            /* Load long from kernel */
+	RECOVERY_SECTION
+	RECOVER(L_copyout_atomic32_fail)	/* Set up recovery handler for next instruction*/
+	movl	%eax, (%rsi)		/* Store long to user */
+	xorl	%eax, %eax		/* Return success */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+L_copyout_atomic32_fail:
+	movl	$(EFAULT), %eax		/* Return error for failure */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+/*
+ * Copyin 64 bit aligned word as a single transaction
+ * rdi: source address (kernel)
+ * rsi: destination address (user)
+ */
+Entry(_copyout_atomic64)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+	movq    (%rdi), %rax            /* Load quad from kernel */
+	RECOVERY_SECTION
+	RECOVER(L_copyout_atomic64_fail)	/* Set up recovery handler for next instruction*/
+	movq	%rax, (%rsi)		/* Store quad to user */
+	xorl	%eax, %eax		/* Return success */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+L_copyout_atomic64_fail:
 	movl	$(EFAULT), %eax		/* Return error for failure */
 	popq	%rbp			/* Restore registers */
 	retq				/* Return */
@@ -343,4 +408,13 @@ L_copyin_word_fail:
  */
 	RECOVERY_SECTION
 	RECOVER_TABLE_END
+
+
+/*
+ * Vector here on any exception at startup prior to switching to
+ * the kernel's idle page-tables and installing the kernel master IDT.
+ */
+Entry(vstart_trap_handler)
+	POSTCODE(BOOT_TRAP_HLT)
+	hlt
 

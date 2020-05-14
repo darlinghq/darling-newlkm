@@ -70,7 +70,8 @@ EXPINC_SUBDIRS = \
 	libsa \
 	console \
 	kperf \
-	prng
+	prng \
+	tests
 
 
 EXPINC_SUBDIRS_X86_64 = \

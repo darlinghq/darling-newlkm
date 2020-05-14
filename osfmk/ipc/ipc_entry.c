@@ -2,7 +2,7 @@
  * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,34 +22,34 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
  * @OSF_COPYRIGHT@
  */
-/* 
+/*
  * Mach Operating System
  * Copyright (c) 1991,1990,1989 Carnegie Mellon University
  * All Rights Reserved.
- * 
+ *
  * Permission to use, copy, modify and distribute this software and its
  * documentation is hereby granted, provided that both the copyright
  * notice and this permission notice appear in all copies of the
  * software, derivative works or modified versions, and any portions
  * thereof, and that both notices appear in supporting documentation.
- * 
+ *
  * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
  * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
  * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
- * 
+ *
  * Carnegie Mellon requests users of this software to return to
- * 
+ *
  *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
  *  School of Computer Science
  *  Carnegie Mellon University
  *  Pittsburgh PA 15213-3890
- * 
+ *
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
@@ -62,11 +62,6 @@
  *
  *	Primitive functions to manipulate translation entries.
  */
-
-#if defined (__DARLING__)
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
 
 #include <mach_debug.h>
 
@@ -84,11 +79,7 @@
 #include <ipc/ipc_table.h>
 #include <ipc/ipc_port.h>
 #include <string.h>
-
-#if defined (__DARLING__)
-#include <duct/duct_post_xnu.h>
-#endif
-
+#include <sys/kdebug.h>
 
 /*
  *	Routine:	ipc_entry_lookup
@@ -101,8 +92,8 @@
 
 ipc_entry_t
 ipc_entry_lookup(
-	ipc_space_t		space,
-	mach_port_name_t	name)
+	ipc_space_t             space,
+	mach_port_name_t        name)
 {
 	mach_port_index_t index;
 	ipc_entry_t entry;
@@ -110,13 +101,13 @@ ipc_entry_lookup(
 	assert(is_active(space));
 
 	index = MACH_PORT_INDEX(name);
-	if (index <  space->is_table_size) {
-                entry = &space->is_table[index];
+	if (index < space->is_table_size) {
+		entry = &space->is_table[index];
 		if (IE_BITS_GEN(entry->ie_bits) != MACH_PORT_GEN(name) ||
-		    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_NONE)
-			entry = IE_NULL;		
-	}
-	else {
+		    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_NONE) {
+			entry = IE_NULL;
+		}
+	} else {
 		entry = IE_NULL;
 	}
 
@@ -140,13 +131,21 @@ ipc_entry_lookup(
 
 kern_return_t
 ipc_entries_hold(
-	ipc_space_t		space,
-	uint32_t		entries_needed)
+	ipc_space_t             space,
+	uint32_t                entries_needed)
 {
-
 	ipc_entry_t table;
 	mach_port_index_t next_free = 0;
 	uint32_t i;
+
+	/*
+	 * Assume that all new entries will need hashing.
+	 * If the table is more than 87.5% full pretend we didn't have space.
+	 */
+	if (space->is_table_hashed + entries_needed >
+	    space->is_table_size * 7 / 8) {
+		return KERN_NO_SPACE;
+	}
 
 	assert(is_active(space));
 
@@ -171,15 +170,15 @@ ipc_entries_hold(
  *		The space is write-locked and active throughout.
  *		An object may be locked.  Will not allocate memory.
  *
- * 	Note: The returned entry must be marked as modified before
- * 	      releasing the space lock
+ *      Note: The returned entry must be marked as modified before
+ *            releasing the space lock
  */
 
 kern_return_t
 ipc_entry_claim(
-	ipc_space_t		space,
-	mach_port_name_t	*namep,
-	ipc_entry_t		*entryp)
+	ipc_space_t             space,
+	mach_port_name_t        *namep,
+	ipc_entry_t             *entryp)
 {
 	ipc_entry_t entry;
 	ipc_entry_t table;
@@ -199,10 +198,14 @@ ipc_entry_claim(
 	assert(table->ie_next < space->is_table_size);
 
 	/*
-	 *	Initialize the new entry.  We need only
-	 *	increment the generation number and clear ie_request.
+	 *	Initialize the new entry: increment gencount and reset
+	 *	rollover point if it rolled over, and clear ie_request.
 	 */
-	gen = IE_BITS_NEW_GEN(entry->ie_bits);
+	gen = ipc_entry_new_gen(entry->ie_bits);
+	if (__improbable(ipc_entry_gen_rolled(entry->ie_bits, gen))) {
+		ipc_entry_bits_t roll = ipc_space_get_rollpoint(space);
+		gen = ipc_entry_new_rollpoint(roll);
+	}
 	entry->ie_bits = gen;
 	entry->ie_request = IE_REQ_NONE;
 
@@ -234,15 +237,16 @@ ipc_entry_claim(
 
 kern_return_t
 ipc_entry_get(
-	ipc_space_t		space,
-	mach_port_name_t	*namep,
-	ipc_entry_t		*entryp)
+	ipc_space_t             space,
+	mach_port_name_t        *namep,
+	ipc_entry_t             *entryp)
 {
 	kern_return_t kr;
 
 	kr = ipc_entries_hold(space, 1);
-	if (KERN_SUCCESS != kr)
+	if (KERN_SUCCESS != kr) {
 		return kr;
+	}
 
 	return ipc_entry_claim(space, namep, entryp);
 }
@@ -263,9 +267,9 @@ ipc_entry_get(
 
 kern_return_t
 ipc_entry_alloc(
-	ipc_space_t		space,
-	mach_port_name_t	*namep,
-	ipc_entry_t		*entryp)
+	ipc_space_t             space,
+	mach_port_name_t        *namep,
+	ipc_entry_t             *entryp)
 {
 	kern_return_t kr;
 
@@ -278,12 +282,14 @@ ipc_entry_alloc(
 		}
 
 		kr = ipc_entry_get(space, namep, entryp);
-		if (kr == KERN_SUCCESS)
+		if (kr == KERN_SUCCESS) {
 			return kr;
+		}
 
 		kr = ipc_entry_grow_table(space, ITS_SIZE_NONE);
-		if (kr != KERN_SUCCESS)
+		if (kr != KERN_SUCCESS) {
 			return kr; /* space is unlocked */
+		}
 	}
 }
 
@@ -305,12 +311,16 @@ ipc_entry_alloc(
 
 kern_return_t
 ipc_entry_alloc_name(
-	ipc_space_t		space,
-	mach_port_name_t	name,
-	ipc_entry_t		*entryp)
+	ipc_space_t             space,
+	mach_port_name_t        name,
+	ipc_entry_t             *entryp)
 {
 	mach_port_index_t index = MACH_PORT_INDEX(name);
 	mach_port_gen_t gen = MACH_PORT_GEN(name);
+
+	if (index > ipc_table_max_entries()) {
+		return KERN_NO_SPACE;
+	}
 
 	assert(MACH_PORT_VALID(name));
 
@@ -344,7 +354,7 @@ ipc_entry_alloc_name(
 				/* case #1 - the entry is reserved */
 				assert(!IE_BITS_TYPE(entry->ie_bits));
 				assert(!IE_BITS_GEN(entry->ie_bits));
-				is_write_unlock(space);				
+				is_write_unlock(space);
 				return KERN_FAILURE;
 			} else if (IE_BITS_TYPE(entry->ie_bits)) {
 				if (IE_BITS_GEN(entry->ie_bits) == gen) {
@@ -354,7 +364,7 @@ ipc_entry_alloc_name(
 				} else {
 					/* case #3 -- the entry is inuse, for a different name. */
 					/* Collisions are not allowed */
-					is_write_unlock(space);					
+					is_write_unlock(space);
 					return KERN_FAILURE;
 				}
 			} else {
@@ -366,20 +376,21 @@ ipc_entry_alloc_name(
 				 */
 
 				for (free_index = 0;
-				     (next_index = table[free_index].ie_next)
-							!= index;
-				     free_index = next_index)
+				    (next_index = table[free_index].ie_next)
+				    != index;
+				    free_index = next_index) {
 					continue;
+				}
 
 				table[free_index].ie_next =
-					table[next_index].ie_next;
+				    table[next_index].ie_next;
 				space->is_table_free--;
 
 				/* mark the previous entry modified - reconstructing the name */
-				ipc_entry_modified(space, 
-						   MACH_PORT_MAKE(free_index, 
-						   	IE_BITS_GEN(table[free_index].ie_bits)),
-						   &table[free_index]);
+				ipc_entry_modified(space,
+				    MACH_PORT_MAKE(free_index,
+				    IE_BITS_GEN(table[free_index].ie_bits)),
+				    &table[free_index]);
 
 				entry->ie_bits = gen;
 				entry->ie_request = IE_REQ_NONE;
@@ -396,7 +407,7 @@ ipc_entry_alloc_name(
 		 *      Because the space will be unlocked,
 		 *      we must restart.
 		 */
-                kern_return_t kr;
+		kern_return_t kr;
 		kr = ipc_entry_grow_table(space, index + 1);
 		assert(kr != KERN_NO_SPACE);
 		if (kr != KERN_SUCCESS) {
@@ -418,9 +429,9 @@ ipc_entry_alloc_name(
 
 void
 ipc_entry_dealloc(
-	ipc_space_t		space,
-	mach_port_name_t	name,
-	ipc_entry_t		entry)
+	ipc_space_t             space,
+	mach_port_name_t        name,
+	ipc_entry_t             entry)
 {
 	ipc_entry_t table;
 	ipc_entry_num_t size;
@@ -431,8 +442,9 @@ ipc_entry_dealloc(
 	assert(entry->ie_request == IE_REQ_NONE);
 
 #if 1
-	if (entry->ie_request != IE_REQ_NONE)
+	if (entry->ie_request != IE_REQ_NONE) {
 		panic("ipc_entry_dealloc()\n");
+	}
 #endif
 
 	index = MACH_PORT_INDEX(name);
@@ -441,7 +453,7 @@ ipc_entry_dealloc(
 
 	if ((index < size) && (entry == &table[index])) {
 		assert(IE_BITS_GEN(entry->ie_bits) == MACH_PORT_GEN(name));
-		entry->ie_bits &= IE_BITS_GEN_MASK;
+		entry->ie_bits &= (IE_BITS_GEN_MASK | IE_BITS_ROLL_MASK);
 		entry->ie_next = table->ie_next;
 		table->ie_next = index;
 		space->is_table_free++;
@@ -450,7 +462,7 @@ ipc_entry_dealloc(
 		 * Nothing to do.  The entry does not match
 		 * so there is nothing to deallocate.
 		 */
-                assert(index < size);
+		assert(index < size);
 		assert(entry == &table[index]);
 		assert(IE_BITS_GEN(entry->ie_bits) == MACH_PORT_GEN(name));
 	}
@@ -469,8 +481,8 @@ ipc_entry_dealloc(
 
 void
 ipc_entry_modified(
-	ipc_space_t		space,
-	mach_port_name_t	name,
+	ipc_space_t             space,
+	mach_port_name_t        name,
 	__assert_only ipc_entry_t entry)
 {
 	ipc_entry_t table;
@@ -487,10 +499,20 @@ ipc_entry_modified(
 	assert(space->is_low_mod <= size);
 	assert(space->is_high_mod < size);
 
-	if (index < space->is_low_mod)
+	if (index < space->is_low_mod) {
 		space->is_low_mod = index;
-	if (index > space->is_high_mod)
+	}
+	if (index > space->is_high_mod) {
 		space->is_high_mod = index;
+	}
+
+	KERNEL_DEBUG_CONSTANT(
+		MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_PORT_ENTRY_MODIFY) | DBG_FUNC_NONE,
+		space->is_task ? task_pid(space->is_task) : 0,
+		name,
+		entry->ie_bits,
+		0,
+		0);
 }
 
 #define IPC_ENTRY_GROW_STATS 1
@@ -500,8 +522,8 @@ static uint64_t ipc_entry_grow_rescan = 0;
 static uint64_t ipc_entry_grow_rescan_max = 0;
 static uint64_t ipc_entry_grow_rescan_entries = 0;
 static uint64_t ipc_entry_grow_rescan_entries_max = 0;
-static uint64_t	ipc_entry_grow_freelist_entries = 0;
-static uint64_t	ipc_entry_grow_freelist_entries_max = 0;
+static uint64_t ipc_entry_grow_freelist_entries = 0;
+static uint64_t ipc_entry_grow_freelist_entries_max = 0;
 #endif
 
 /*
@@ -523,8 +545,8 @@ static uint64_t	ipc_entry_grow_freelist_entries_max = 0;
 
 kern_return_t
 ipc_entry_grow_table(
-	ipc_space_t		space,
-	ipc_table_elems_t	target_size)
+	ipc_space_t             space,
+	ipc_table_elems_t       target_size)
 {
 	ipc_entry_num_t osize, size, nsize, psize;
 
@@ -537,11 +559,6 @@ ipc_entry_grow_table(
 	uint64_t rescan_count = 0;
 #endif
 	assert(is_active(space));
-#if defined (__DARLING__)
-        lck_spin_unlock (& space->is_lock_data);
-        mutex_lock (& space->is_mutex_lock);
-        lck_spin_lock (& space->is_lock_data);
-#endif
 
 	if (is_growing(space)) {
 		/*
@@ -554,17 +571,17 @@ ipc_entry_grow_table(
 	}
 
 	otable = space->is_table;
-		
+
 	its = space->is_table_next;
 	size = its->its_size;
-		
+
 	/*
 	 * Since is_table_next points to the next natural size
 	 * we can identify the current size entry.
 	 */
 	oits = its - 1;
 	osize = oits->its_size;
-		
+
 	/*
 	 * If there is no target size, then the new size is simply
 	 * specified by is_table_next.  If there is a target
@@ -572,7 +589,7 @@ ipc_entry_grow_table(
 	 */
 	if (target_size != ITS_SIZE_NONE) {
 		if (target_size <= osize) {
-			/* the space is locked */			
+			/* the space is locked */
 			return KERN_SUCCESS;
 		}
 
@@ -592,7 +609,7 @@ ipc_entry_grow_table(
 		is_write_unlock(space);
 		return KERN_NO_SPACE;
 	}
- 
+
 	nits = its + 1;
 	nsize = nits->its_size;
 	assert((osize < size) && (size <= nsize));
@@ -619,30 +636,18 @@ ipc_entry_grow_table(
 		is_write_lock(space);
 		is_done_growing(space);
 		is_write_unlock(space);
-
-#if defined (__DARLING__)
-        mutex_unlock (& space->is_mutex_lock);
-#else
 		thread_wakeup((event_t) space);
-#endif
 		return KERN_RESOURCE_SHORTAGE;
 	}
 
-	/* initialize new entries (free chain in backwards order) */
-	for (i = osize; i < size; i++) {
-		table[i].ie_object = IO_NULL;
-		table[i].ie_bits = IE_BITS_GEN_MASK;
-		table[i].ie_index = 0;
-		table[i].ie_next = i + 1;
-	}
-	table[size-1].ie_next = 0;
+	ipc_space_rand_freelist(space, table, osize, size);
 
 	/* clear out old entries in new table */
 	memset((void *)table, 0, osize * sizeof(*table));
 
 	low_mod = 0;
 	hi_mod = osize - 1;
- rescan:	
+rescan:
 	/*
 	 * Within the range of the table that changed, determine what we
 	 * have to take action on. For each entry, take a snapshot of the
@@ -653,28 +658,28 @@ ipc_entry_grow_table(
 	 */
 	for (i = low_mod; i <= hi_mod; i++) {
 		ipc_entry_t entry = &table[i];
-		struct ipc_entry osnap = otable[i]; 
+		struct ipc_entry osnap = otable[i];
 
 		if (entry->ie_object != osnap.ie_object ||
 		    IE_BITS_TYPE(entry->ie_bits) != IE_BITS_TYPE(osnap.ie_bits)) {
-			
 			if (entry->ie_object != IO_NULL &&
-			    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_SEND)
+			    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_SEND) {
 				ipc_hash_table_delete(table, size, entry->ie_object, i, entry);
+			}
 
 			entry->ie_object = osnap.ie_object;
 			entry->ie_bits = osnap.ie_bits;
 			entry->ie_request = osnap.ie_request; /* or ie_next */
 
 			if (entry->ie_object != IO_NULL &&
-			    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_SEND)
+			    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_SEND) {
 				ipc_hash_table_insert(table, size, entry->ie_object, i, entry);
+			}
 		} else {
 			assert(entry->ie_object == osnap.ie_object);
 			entry->ie_bits = osnap.ie_bits;
 			entry->ie_request = osnap.ie_request; /* or ie_next */
 		}
-
 	}
 	table[0].ie_next = otable[0].ie_next;  /* always rebase the freelist */
 
@@ -685,19 +690,22 @@ ipc_entry_grow_table(
 	 */
 	free_index = 0;
 	for (sanity = 0; sanity < osize; sanity++) {
-		if (table[free_index].ie_object != IPC_OBJECT_NULL)
+		if (table[free_index].ie_object != IPC_OBJECT_NULL) {
 			break;
+		}
 		i = table[free_index].ie_next;
-		if (i == 0 || i >= osize)
+		if (i == 0 || i >= osize) {
 			break;
+		}
 		free_index = i;
 	}
 #if IPC_ENTRY_GROW_STATS
 	ipc_entry_grow_freelist_entries += sanity;
-	if (sanity > ipc_entry_grow_freelist_entries_max)
+	if (sanity > ipc_entry_grow_freelist_entries_max) {
 		ipc_entry_grow_freelist_entries_max = sanity;
+	}
 #endif
-		
+
 	is_write_lock(space);
 
 	/*
@@ -714,12 +722,7 @@ ipc_entry_grow_table(
 
 		is_done_growing(space);
 		is_write_unlock(space);
-
-#if defined (__DARLING__)
-        mutex_unlock (& space->is_mutex_lock);
-#else
 		thread_wakeup((event_t) space);
-#endif
 		it_entries_free(its, table);
 		is_write_lock(space);
 		return KERN_SUCCESS;
@@ -735,20 +738,22 @@ ipc_entry_grow_table(
 		is_write_unlock(space);
 #if IPC_ENTRY_GROW_STATS
 		rescan_count++;
-		if (rescan_count > ipc_entry_grow_rescan_max)
+		if (rescan_count > ipc_entry_grow_rescan_max) {
 			ipc_entry_grow_rescan_max = rescan_count;
+		}
 
 		ipc_entry_grow_rescan++;
 		ipc_entry_grow_rescan_entries += hi_mod - low_mod + 1;
-		if (hi_mod - low_mod + 1 > ipc_entry_grow_rescan_entries_max)
+		if (hi_mod - low_mod + 1 > ipc_entry_grow_rescan_entries_max) {
 			ipc_entry_grow_rescan_entries_max = hi_mod - low_mod + 1;
+		}
 #endif
 		goto rescan;
 	}
 
 	/* link new free entries onto the rest of the freelist */
 	assert(table[free_index].ie_next == 0 &&
-	       table[free_index].ie_object == IO_NULL);
+	    table[free_index].ie_object == IO_NULL);
 	table[free_index].ie_next = osize;
 
 	assert(space->is_table == otable);
@@ -764,12 +769,7 @@ ipc_entry_grow_table(
 	is_done_growing(space);
 	is_write_unlock(space);
 
-#if defined (__DARLING__)
-    mutex_unlock (& space->is_mutex_lock);
-#else
-
 	thread_wakeup((event_t) space);
-#endif
 
 	/*
 	 *	Now we need to free the old table.
@@ -798,10 +798,10 @@ mach_port_name_t
 ipc_entry_name_mask(mach_port_name_t name)
 {
 #ifndef NO_PORT_GEN
-	static mach_port_name_t null_name = MACH_PORT_MAKE(0, IE_BITS_NEW_GEN(IE_BITS_GEN_MASK));
+	static mach_port_name_t null_name = MACH_PORT_MAKE(0, IE_BITS_GEN_MASK + IE_BITS_GEN_ONE);
 	return name | null_name;
 #else
-	static mach_port_name_t null_name = MACH_PORT_MAKE(0, ~(IE_BITS_NEW_GEN(IE_BITS_GEN_MASK)));
+	static mach_port_name_t null_name = MACH_PORT_MAKE(0, ~(IE_BITS_GEN_MASK + IE_BITS_GEN_ONE));
 	return name & ~null_name;
 #endif
 }

@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,605 +22,159 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-/* 
+/*
  * Mach Operating System
  * Copyright (c) 1987 Carnegie-Mellon University
  * All rights reserved.  The CMU software License Agreement specifies
  * the terms and conditions for use and redistribution.
  */
 
-/*
- *********************************************************************
- * HISTORY
- **********************************************************************
- */
-
-#if defined (__DARLING__)
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
-#ifndef __DARLING__
 #include <sys/param.h>
-#endif
 
 #include <mach/boolean.h>
 #include <mach/exception.h>
 #include <mach/kern_return.h>
-#include <mach/message.h>
-#include <mach/port.h>
-#include <mach/mach_port.h>
-#include <mach/mig_errors.h>
-#include <mach/exc_server.h>
-#include <mach/mach_exc_server.h>
-#include <kern/task.h>
-#include <kern/thread.h>
-#include <kern/sched_prim.h>
-#include <kern/kalloc.h>
 
-#ifndef __DARLING__
 #include <sys/proc.h>
 #include <sys/user.h>
 #include <sys/systm.h>
+#include <sys/vmparam.h>        /* MAXSSIZ */
+
 #include <sys/ux_exception.h>
-#include <sys/vmparam.h>	/* MAXSSIZ */
-
-#include <vm/vm_protos.h>	/* get_task_ipcspace() */
-#else
-
-#define proc_list_lock
-#define proc_list_unlock
-
-#endif
-
-#if defined (__DARLING__)
-#include <sys/ux_exception.h>
-#include <duct/duct_post_xnu.h>
-#include <linux/delay.h>
-
-extern kern_return_t xnu_kthread_register(void);
-extern kern_return_t xnu_kthread_deregister(void);
-
-#define SIGSTOP XNU_SIGSTOP
-#define SIGSEGV XNU_SIGSEGV
-#define SIGBUS XNU_SIGBUS
-#define SIGILL XNU_SIGILL
-#define SIGFPE XNU_SIGFPE
-#define SIGSYS XNU_SIGSYS
-#define SIGPIPE XNU_SIGPIPE
-#define SIGABRT XNU_SIGABRT
-#define SIGKILL XNU_SIGKILL
-#define SIGTRAP XNU_SIGTRAP
-
-ipc_space_t  get_task_ipcspace(task_t t)
-{
-	return(t->itk_space);
-}
-
-int panic_on_exception_triage = 0;
-#endif
 
 /*
- * XXX Things that should be retrieved from Mach headers, but aren't
+ * Translate Mach exceptions to UNIX signals.
+ *
+ * ux_exception translates a mach exception, code and subcode to
+ * a signal.  Calls machine_exception (machine dependent)
+ * to attempt translation first.
  */
-struct ipc_object;
-extern kern_return_t ipc_object_copyin(ipc_space_t space, mach_port_name_t name,
-		mach_msg_type_name_t msgt_name, struct ipc_object **objectp);
-extern mach_msg_return_t mach_msg_receive(mach_msg_header_t *msg,
-		mach_msg_option_t option, mach_msg_size_t rcv_size,
-		mach_port_name_t rcv_name, mach_msg_timeout_t rcv_timeout,
-		void (*continuation)(mach_msg_return_t),
-		mach_msg_size_t slist_size);
-extern mach_msg_return_t mach_msg_send(mach_msg_header_t *msg,
-		mach_msg_option_t option, mach_msg_size_t send_size,
-		mach_msg_timeout_t send_timeout, mach_port_name_t notify);
-extern thread_t convert_port_to_thread(ipc_port_t port);
-extern void ipc_port_release_send(ipc_port_t port);
-
-
-
-
-/*
- *	Unix exception handler.
- */
-
-static void	ux_exception(int exception, mach_exception_code_t code, 
-				mach_exception_subcode_t subcode,
-				int *ux_signal, mach_exception_code_t *ux_code);
-
-#if defined(__x86_64__) || defined(__arm64__)
-mach_port_t			ux_exception_port;
-#else
-mach_port_name_t		ux_exception_port;
-#endif /* __x86_64__ */
-
-static task_t			ux_handler_self;
-
-#ifndef __DARLING__
-__attribute__((noreturn))
-static void
-ux_handler(void)
-#else
-static int ux_handler(void* unused_arg)
-#endif
+static int
+ux_exception(int                        exception,
+    mach_exception_code_t      code,
+    mach_exception_subcode_t   subcode)
 {
-#ifdef __DARLING__
-	xnu_kthread_register();
-	allow_signal(LINUX_SIGTERM);
-#endif
-    task_t		self = current_task();
-    mach_port_name_t	exc_port_name;
-    mach_port_name_t	exc_set_name;
+	int machine_signal = 0;
 
-    /* self->kernel_vm_space = TRUE; */
-    ux_handler_self = self;
-
-
-    /*
-     *	Allocate a port set that we will receive on.
-     */
-    if (mach_port_allocate(get_task_ipcspace(ux_handler_self), MACH_PORT_RIGHT_PORT_SET,  &exc_set_name) != MACH_MSG_SUCCESS)
-	    panic("ux_handler: port_set_allocate failed");
-
-    /*
-     *	Allocate an exception port and use object_copyin to
-     *	translate it to the global name.  Put it into the set.
-     */
-    if (mach_port_allocate(get_task_ipcspace(ux_handler_self), MACH_PORT_RIGHT_RECEIVE, &exc_port_name) != MACH_MSG_SUCCESS)
-	panic("ux_handler: port_allocate failed");
-    if (mach_port_move_member(get_task_ipcspace(ux_handler_self),
-    			exc_port_name,  exc_set_name) != MACH_MSG_SUCCESS)
-	panic("ux_handler: port_set_add failed");
-
-    if (ipc_object_copyin(get_task_ipcspace(self), exc_port_name,
-			MACH_MSG_TYPE_MAKE_SEND, 
-			(void *) &ux_exception_port) != MACH_MSG_SUCCESS)
-		panic("ux_handler: object_copyin(ux_exception_port) failed");
-
-#ifndef __DARLING__
-    proc_list_lock();
-    thread_wakeup(&ux_exception_port);
-    proc_list_unlock();
-#endif
-
-    /* Message handling loop. */
-
-    for (;;) {
-	struct rep_msg {
-		mach_msg_header_t Head;
-		NDR_record_t NDR;
-		kern_return_t RetCode;
-	} rep_msg;
-	struct exc_msg {
-		mach_msg_header_t Head;
-		/* start of the kernel processed data */
-		mach_msg_body_t msgh_body;
-		mach_msg_port_descriptor_t thread;
-		mach_msg_port_descriptor_t task;
-		/* end of the kernel processed data */
-		NDR_record_t NDR;
-		exception_type_t exception;
-		mach_msg_type_number_t codeCnt;
-		mach_exception_data_t code;
-		/* some times RCV_TO_LARGE probs */
-		char pad[512];
-	} exc_msg;
-	mach_port_name_t	reply_port;
-	kern_return_t	 result;
-
-	exc_msg.Head.msgh_local_port = CAST_MACH_NAME_TO_PORT(exc_set_name);
-	exc_msg.Head.msgh_size = sizeof (exc_msg);
-#if 0
-	result = mach_msg_receive(&exc_msg.Head);
-#else
-	result = mach_msg_receive(&exc_msg.Head, MACH_RCV_MSG,
-			     sizeof (exc_msg), exc_set_name,
-			     MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL,
-			     0);
-#endif
-	if (result == MACH_MSG_SUCCESS) {
-	    reply_port = CAST_MACH_PORT_TO_NAME(exc_msg.Head.msgh_remote_port);
-
-	    if (mach_exc_server(&exc_msg.Head, &rep_msg.Head)) {
-		result = mach_msg_send(&rep_msg.Head, MACH_SEND_MSG,
-			sizeof (rep_msg),MACH_MSG_TIMEOUT_NONE,MACH_PORT_NULL);
-		if (reply_port != 0 && result != MACH_MSG_SUCCESS)
-			mach_port_deallocate(get_task_ipcspace(ux_handler_self), reply_port);
-	    }
-
-	}
-	else if (result == MACH_RCV_TOO_LARGE)
-		/* ignore oversized messages */;
-	else {
-#ifndef __DARLING__
-		panic("exception_handler");
-#else
-		xnu_kthread_deregister();
-		return 0;
-#endif
-	}
-    }
-}
-
-#ifdef __DARLING__
-extern kern_return_t
-host_set_exception_ports(
-	host_priv_t			host_priv,
-	exception_mask_t		exception_mask,
-	ipc_port_t			new_port,
-	exception_behavior_t		new_behavior,
-	thread_state_flavor_t		new_flavor);
-extern host_priv_t
-host_priv_self(void);
-
-static struct task_struct* ux_kthread = NULL;
-#endif
-void
-ux_handler_init(void)
-{
-#ifndef __DARLING__
-	thread_t	thread = THREAD_NULL;
-
-	ux_exception_port = MACH_PORT_NULL;
-	(void) kernel_thread_start((thread_continue_t)ux_handler, NULL, &thread);
-	thread_deallocate(thread);
-	proc_list_lock();
-	if (ux_exception_port == MACH_PORT_NULL)  {
-		(void)msleep(&ux_exception_port, proc_list_mlock, 0, "ux_handler_wait", 0);
-	}
-	proc_list_unlock();
-#else
-
-	ux_exception_port = MACH_PORT_NULL;
-
-	ux_kthread = kthread_run(ux_handler, NULL, "ux_exception");
-
-	while (ux_exception_port == MACH_PORT_NULL)
-		msleep(100);
-
-	(void) host_set_exception_ports(host_priv_self(),
-				EXC_MASK_ALL & ~(EXC_MASK_RPC_ALERT),//pilotfish (shark) needs this port
-				(mach_port_t) ux_exception_port,
-				EXCEPTION_DEFAULT| MACH_EXCEPTION_CODES,
-				0);
-#endif
-}
-
-#ifdef __DARLING__
-void ux_handler_stop(void)
-{
-	if (ux_kthread != NULL)
-	{
-		send_sig(LINUX_SIGTERM, ux_kthread, 1);
-		kthread_stop(ux_kthread);
-		ux_kthread = NULL;
-	}
-}
-#endif
-
-kern_return_t
-catch_exception_raise(
-        __unused mach_port_t exception_port,
-        mach_port_t thread,
-        mach_port_t task,
-        exception_type_t exception,
-        exception_data_t code,
-        __unused mach_msg_type_number_t codeCnt
-)
-{
-	mach_exception_data_type_t big_code[EXCEPTION_CODE_MAX];
-	big_code[0] = code[0];
-	big_code[1] = code[1];
-
-	return catch_mach_exception_raise(exception_port,
-			thread,
-			task,
-			exception,
-			big_code,
-			codeCnt);
-
-}
-
-kern_return_t
-catch_mach_exception_raise(
-        __unused mach_port_t exception_port,
-        mach_port_t thread,
-        mach_port_t task,
-        exception_type_t exception,
-        mach_exception_data_t code,
-        __unused mach_msg_type_number_t codeCnt
-)
-{
-	task_t			self = current_task();
-	thread_t		th_act;
-	ipc_port_t 		thread_port;
-#ifndef __DARLING__
-	struct proc		*p;
-#endif
-	kern_return_t		result = MACH_MSG_SUCCESS;
-	int			ux_signal = 0;
-	mach_exception_code_t 	ucode = 0;
-#ifndef __DARLING__
-	struct uthread 		*ut;
-#endif
-	mach_port_name_t thread_name = CAST_MACH_PORT_TO_NAME(thread);
-	mach_port_name_t task_name = CAST_MACH_PORT_TO_NAME(task);
-
-	/*
-	 *	Convert local thread name to global port.
-	 */
-   if (MACH_PORT_VALID(thread_name) &&
-       (ipc_object_copyin(get_task_ipcspace(self), thread_name,
-		       MACH_MSG_TYPE_PORT_SEND,
-		       (void *) &thread_port) == MACH_MSG_SUCCESS)) {
-        if (IPC_PORT_VALID(thread_port)) {
-	   th_act = convert_port_to_thread(thread_port);
-	   ipc_port_release_send(thread_port);
-	} else {
-	   th_act = THREAD_NULL;
+	/* Try machine-dependent translation first. */
+	if ((machine_signal = machine_exception(exception, code, subcode)) != 0) {
+		return machine_signal;
 	}
 
-	/*
-	 *	Catch bogus ports
-	 */
-	if (th_act != THREAD_NULL) {
-
-	    /*
-	     *	Convert exception to unix signal and code.
-	     */
-	    ux_exception(exception, code[0], code[1], &ux_signal, &ucode);
-
-#ifndef __DARLING__
-	    ut = get_bsdthread_info(th_act);
-	    p = proc_findthread(th_act);
-
-	    /* Can't deliver a signal without a bsd process reference */
-	    if (p == NULL) {
-		    ux_signal = 0;
-		    result = KERN_FAILURE;
-	    }
-
-	    /*
-	     * Stack overflow should result in a SIGSEGV signal
-	     * on the alternate stack.
-	     * but we have one or more guard pages after the
-	     * stack top, so we would get a KERN_PROTECTION_FAILURE
-	     * exception instead of KERN_INVALID_ADDRESS, resulting in
-	     * a SIGBUS signal.
-	     * Detect that situation and select the correct signal.
-	     */
-	    if (code[0] == KERN_PROTECTION_FAILURE &&
-		ux_signal == SIGBUS) {
-		    user_addr_t		sp, stack_min, stack_max;
-		    int			mask;
-		    struct sigacts	*ps;
-
-		    sp = code[1];
-
-		    stack_max = p->user_stack;
-		    stack_min = p->user_stack - MAXSSIZ;
-		    if (sp >= stack_min &&
-			sp < stack_max) {
-			    /*
-			     * This is indeed a stack overflow.  Deliver a
-			     * SIGSEGV signal.
-			     */
-			    ux_signal = SIGSEGV;
-
-			    /*
-			     * If the thread/process is not ready to handle
-			     * SIGSEGV on an alternate stack, force-deliver
-			     * SIGSEGV with a SIG_DFL handler.
-			     */
-			    mask = sigmask(ux_signal);
-			    ps = p->p_sigacts;
-			    if ((p->p_sigignore & mask) ||
-				(ut->uu_sigwait & mask) ||
-				(ut->uu_sigmask & mask) ||
-				(ps->ps_sigact[SIGSEGV] == SIG_IGN) ||
-				(! (ps->ps_sigonstack & mask))) {
-				    p->p_sigignore &= ~mask;
-				    p->p_sigcatch &= ~mask;
-				    ps->ps_sigact[SIGSEGV] = SIG_DFL;
-				    ut->uu_sigwait &= ~mask;
-				    ut->uu_sigmask &= ~mask;
-			    }
-		    }
-	    }
-
-	    /*
-	     *	Send signal.
-	     */
-	    if (ux_signal != 0) {
-			ut->uu_exception = exception;
-			//ut->uu_code = code[0]; // filled in by threadsignal
-			ut->uu_subcode = code[1];			
-			threadsignal(th_act, ux_signal, code[0], TRUE);
-	    }
-
-	    if (p != NULL) 
-		    proc_rele(p);
-#else
-		if (th_act->in_sigprocess)
-		{
-			th_act->pending_signal = ux_signal;
-		}
-		else
-		{
-			// TODO: Introduce signal
-			printf("ux_exception: TODO introduce signal\n");
-		}
-#endif
-	    thread_deallocate(th_act);
-	}
-	else
-	    result = KERN_INVALID_ARGUMENT;
-    }
-    else
-    	result = KERN_INVALID_ARGUMENT;
-
-    /*
-     *	Delete our send rights to the task port.
-     */
-    (void)mach_port_deallocate(get_task_ipcspace(ux_handler_self), task_name);
-
-    return (result);
-}
-
-#ifdef __DARLING__
-void	threadsignal(thread_t sig_actthread, int signum, 
-		mach_exception_code_t code, boolean_t set_exitreason)
-{
-	if (sig_actthread->in_sigprocess)
-	{
-		if (signum == SIGSTOP)
-		{
-			// TODO: deliver LINUX_SIGSTOP directly
-		}
-		else
-			sig_actthread->pending_signal = signum;
-	}
-	else
-	{
-		printf("Someone introduced a new signal by sending a message to the exception port.\n");
-		printf("This is not supported under Darling.\n");
-	}
-}
-#endif
-
-kern_return_t
-catch_exception_raise_state(
-        __unused mach_port_t exception_port,
-        __unused exception_type_t exception,
-        __unused const exception_data_t code,
-        __unused mach_msg_type_number_t codeCnt,
-        __unused int *flavor,
-        __unused const thread_state_t old_state,
-        __unused mach_msg_type_number_t old_stateCnt,
-        __unused thread_state_t new_state,
-        __unused mach_msg_type_number_t *new_stateCnt)
-{
-	return(KERN_INVALID_ARGUMENT);
-}
-
-kern_return_t
-catch_mach_exception_raise_state(
-        __unused mach_port_t exception_port,
-        __unused exception_type_t exception,
-        __unused const mach_exception_data_t code,
-        __unused mach_msg_type_number_t codeCnt,
-        __unused int *flavor,
-        __unused const thread_state_t old_state,
-        __unused mach_msg_type_number_t old_stateCnt,
-        __unused thread_state_t new_state,
-        __unused mach_msg_type_number_t *new_stateCnt)
-{
-	return(KERN_INVALID_ARGUMENT);
-}
-
-kern_return_t
-catch_exception_raise_state_identity(
-        __unused mach_port_t exception_port,
-        __unused mach_port_t thread,
-        __unused mach_port_t task,
-        __unused exception_type_t exception,
-        __unused exception_data_t code,
-        __unused mach_msg_type_number_t codeCnt,
-        __unused int *flavor,
-        __unused thread_state_t old_state,
-        __unused mach_msg_type_number_t old_stateCnt,
-        __unused thread_state_t new_state,
-        __unused mach_msg_type_number_t *new_stateCnt)
-{
-	return(KERN_INVALID_ARGUMENT);
-}
-
-kern_return_t
-catch_mach_exception_raise_state_identity(
-        __unused mach_port_t exception_port,
-        __unused mach_port_t thread,
-        __unused mach_port_t task,
-        __unused exception_type_t exception,
-        __unused mach_exception_data_t code,
-        __unused mach_msg_type_number_t codeCnt,
-        __unused int *flavor,
-        __unused thread_state_t old_state,
-        __unused mach_msg_type_number_t old_stateCnt,
-        __unused thread_state_t new_state,
-        __unused mach_msg_type_number_t *new_stateCnt)
-{
-	return(KERN_INVALID_ARGUMENT);
-}
-
-
-/*
- *	ux_exception translates a mach exception, code and subcode to
- *	a signal and u.u_code.  Calls machine_exception (machine dependent)
- *	to attempt translation first.
- */
-
-static
-void ux_exception(
-		int			exception,
-		mach_exception_code_t 	code,
-		mach_exception_subcode_t subcode,
-		int			*ux_signal,
-		mach_exception_code_t 	*ux_code)
-{
-#ifndef __DARLING__
-    /*
-     *	Try machine-dependent translation first.
-     */
-    if (machine_exception(exception, code, subcode, ux_signal, ux_code))
-	return;
-#endif
-	
-    switch(exception) {
-
+	switch (exception) {
 	case EXC_BAD_ACCESS:
-		if (code == KERN_INVALID_ADDRESS)
-			*ux_signal = SIGSEGV;
-		else
-			*ux_signal = SIGBUS;
-		break;
+		if (code == KERN_INVALID_ADDRESS) {
+			return SIGSEGV;
+		} else {
+			return SIGBUS;
+		}
 
 	case EXC_BAD_INSTRUCTION:
-	    *ux_signal = SIGILL;
-	    break;
+		return SIGILL;
 
 	case EXC_ARITHMETIC:
-	    *ux_signal = SIGFPE;
-	    break;
+		return SIGFPE;
 
-#ifndef __DARLING__
 	case EXC_EMULATION:
-	    *ux_signal = SIGEMT;
-	    break;
-#endif
+		return SIGEMT;
 
 	case EXC_SOFTWARE:
-	    switch (code) {
-
-	    case EXC_UNIX_BAD_SYSCALL:
-		*ux_signal = SIGSYS;
+		switch (code) {
+		case EXC_UNIX_BAD_SYSCALL:
+			return SIGSYS;
+		case EXC_UNIX_BAD_PIPE:
+			return SIGPIPE;
+		case EXC_UNIX_ABORT:
+			return SIGABRT;
+		case EXC_SOFT_SIGNAL:
+			return SIGKILL;
+		}
 		break;
-	    case EXC_UNIX_BAD_PIPE:
-		*ux_signal = SIGPIPE;
-		break;
-	    case EXC_UNIX_ABORT:
-		*ux_signal = SIGABRT;
-		break;
-	    case EXC_SOFT_SIGNAL:
-		*ux_signal = SIGKILL;
-		break;
-	    }
-	    break;
 
 	case EXC_BREAKPOINT:
-	    *ux_signal = SIGTRAP;
-	    break;
-    }
+		return SIGTRAP;
+	}
+
+	return 0;
+}
+
+/*
+ * Sends the corresponding UNIX signal to a thread that has triggered a Mach exception.
+ */
+kern_return_t
+handle_ux_exception(thread_t                    thread,
+    int                         exception,
+    mach_exception_code_t       code,
+    mach_exception_subcode_t    subcode)
+{
+	/* Returns +1 proc reference */
+	proc_t p = proc_findthread(thread);
+
+	/* Can't deliver a signal without a bsd process reference */
+	if (p == NULL) {
+		return KERN_FAILURE;
+	}
+
+	/* Translate exception and code to signal type */
+	int ux_signal = ux_exception(exception, code, subcode);
+
+	uthread_t ut = get_bsdthread_info(thread);
+
+	/*
+	 * Stack overflow should result in a SIGSEGV signal
+	 * on the alternate stack.
+	 * but we have one or more guard pages after the
+	 * stack top, so we would get a KERN_PROTECTION_FAILURE
+	 * exception instead of KERN_INVALID_ADDRESS, resulting in
+	 * a SIGBUS signal.
+	 * Detect that situation and select the correct signal.
+	 */
+	if (code == KERN_PROTECTION_FAILURE &&
+	    ux_signal == SIGBUS) {
+		user_addr_t sp = subcode;
+
+		user_addr_t stack_max = p->user_stack;
+		user_addr_t stack_min = p->user_stack - MAXSSIZ;
+		if (sp >= stack_min && sp < stack_max) {
+			/*
+			 * This is indeed a stack overflow.  Deliver a
+			 * SIGSEGV signal.
+			 */
+			ux_signal = SIGSEGV;
+
+			/*
+			 * If the thread/process is not ready to handle
+			 * SIGSEGV on an alternate stack, force-deliver
+			 * SIGSEGV with a SIG_DFL handler.
+			 */
+			int mask = sigmask(ux_signal);
+			struct sigacts *ps = p->p_sigacts;
+			if ((p->p_sigignore & mask) ||
+			    (ut->uu_sigwait & mask) ||
+			    (ut->uu_sigmask & mask) ||
+			    (ps->ps_sigact[SIGSEGV] == SIG_IGN) ||
+			    (!(ps->ps_sigonstack & mask))) {
+				p->p_sigignore &= ~mask;
+				p->p_sigcatch &= ~mask;
+				ps->ps_sigact[SIGSEGV] = SIG_DFL;
+				ut->uu_sigwait &= ~mask;
+				ut->uu_sigmask &= ~mask;
+			}
+		}
+	}
+
+	/* Send signal to thread */
+	if (ux_signal != 0) {
+		ut->uu_exception = exception;
+		//ut->uu_code = code; // filled in by threadsignal
+		ut->uu_subcode = subcode;
+		threadsignal(thread, ux_signal, code, TRUE);
+	}
+
+	proc_rele(p);
+
+	return KERN_SUCCESS;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015 Apple Inc. All rights reserved.
+ * Copyright (c) 2015-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -70,7 +70,7 @@ char *proc_name_address(void *p);
 
 kern_return_t ktrace_background_available_notify_user(void);
 
-lck_mtx_t *ktrace_lock;
+static lck_mtx_t *ktrace_mtx;
 
 /*
  * The overall state of ktrace, whether it is unconfigured, in foreground mode,
@@ -105,7 +105,7 @@ static uint32_t ktrace_active_mask = 0;
  *
  * Background tools must be RunAtLoad daemons.
  */
-static boolean_t should_notify_on_init = TRUE;
+static bool should_notify_on_init = true;
 
 /* Set the owning process of ktrace. */
 static void ktrace_set_owning_proc(proc_t p);
@@ -124,7 +124,10 @@ static void ktrace_promote_background(void);
  * This is managed by the user space-oriented function ktrace_set_owning_pid
  * and ktrace_unset_owning_pid.
  */
-boolean_t ktrace_keep_ownership_on_reset = FALSE;
+bool ktrace_keep_ownership_on_reset = false;
+
+/* Whether the kernel is the owner of ktrace. */
+bool ktrace_owner_kernel = false;
 
 /* Allow user space to unset the owning pid and potentially reset ktrace. */
 static void ktrace_set_invalid_owning_pid(void);
@@ -135,19 +138,51 @@ static void ktrace_set_invalid_owning_pid(void);
  */
 int ktrace_root_set_owner_allowed = 0;
 
+/*
+ * If ktrace is guaranteed that it's the only thread running on the system
+ * (e.g., during boot or wake) this flag disables locking requirements.
+ */
+static bool ktrace_single_threaded = false;
+
 void
-ktrace_reset(uint32_t reset_mask)
+ktrace_lock(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
-	assert(reset_mask != 0);
-
-	if (ktrace_active_mask == 0) {
-		if (!ktrace_keep_ownership_on_reset) {
-			assert(ktrace_state == KTRACE_STATE_OFF);
-		}
-		return;
+	if (!ktrace_single_threaded) {
+		lck_mtx_lock(ktrace_mtx);
 	}
+}
 
+void
+ktrace_unlock(void)
+{
+	if (!ktrace_single_threaded) {
+		lck_mtx_unlock(ktrace_mtx);
+	}
+}
+
+void
+ktrace_assert_lock_held(void)
+{
+	if (!ktrace_single_threaded) {
+		lck_mtx_assert(ktrace_mtx, LCK_MTX_ASSERT_OWNED);
+	}
+}
+
+void
+ktrace_start_single_threaded(void)
+{
+	ktrace_single_threaded = true;
+}
+
+void
+ktrace_end_single_threaded(void)
+{
+	ktrace_single_threaded = false;
+}
+
+static void
+ktrace_reset_internal(uint32_t reset_mask)
+{
 	if (!ktrace_keep_ownership_on_reset) {
 		ktrace_active_mask &= ~reset_mask;
 	}
@@ -165,17 +200,31 @@ ktrace_reset(uint32_t reset_mask)
 			ktrace_promote_background();
 		} else if (ktrace_state == KTRACE_STATE_BG) {
 			/* background tool is resetting ktrace */
-			should_notify_on_init = TRUE;
+			should_notify_on_init = true;
 			ktrace_release_ownership();
 			ktrace_state = KTRACE_STATE_OFF;
 		}
 	}
 }
 
+void
+ktrace_reset(uint32_t reset_mask)
+{
+	ktrace_assert_lock_held();
+
+	if (ktrace_active_mask == 0) {
+		if (!ktrace_keep_ownership_on_reset) {
+			assert(ktrace_state == KTRACE_STATE_OFF);
+		}
+		return;
+	}
+
+	ktrace_reset_internal(reset_mask);
+}
+
 static void
 ktrace_promote_background(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
 	assert(ktrace_state != KTRACE_STATE_BG);
 
 	/*
@@ -184,9 +233,9 @@ ktrace_promote_background(void)
 	 * for the host special port).
 	 */
 	if (ktrace_background_available_notify_user() == KERN_FAILURE) {
-		should_notify_on_init = TRUE;
+		should_notify_on_init = true;
 	} else {
-		should_notify_on_init = FALSE;
+		should_notify_on_init = false;
 	}
 
 	ktrace_release_ownership();
@@ -196,17 +245,15 @@ ktrace_promote_background(void)
 bool
 ktrace_background_active(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
-	return (ktrace_state == KTRACE_STATE_BG);
+	return ktrace_state == KTRACE_STATE_BG;
 }
 
 int
 ktrace_read_check(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	ktrace_assert_lock_held();
 
-	if (proc_uniqueid(current_proc()) == ktrace_owning_unique_id)
-	{
+	if (proc_uniqueid(current_proc()) == ktrace_owning_unique_id) {
 		return 0;
 	}
 
@@ -217,7 +264,7 @@ ktrace_read_check(void)
 static void
 ktrace_ownership_maintenance(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	ktrace_assert_lock_held();
 
 	/* do nothing if ktrace is not owned */
 	if (ktrace_owning_unique_id == 0) {
@@ -243,7 +290,7 @@ ktrace_ownership_maintenance(void)
 int
 ktrace_configure(uint32_t config_mask)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	ktrace_assert_lock_held();
 	assert(config_mask != 0);
 
 	proc_t p = current_proc();
@@ -256,8 +303,7 @@ ktrace_configure(uint32_t config_mask)
 
 	/* background configure while foreground is active is not allowed */
 	if (proc_uniqueid(p) == ktrace_bg_unique_id &&
-	    ktrace_state == KTRACE_STATE_FG)
-	{
+	    ktrace_state == KTRACE_STATE_FG) {
 		return EBUSY;
 	}
 
@@ -269,6 +315,7 @@ ktrace_configure(uint32_t config_mask)
 			return EPERM;
 		}
 
+		ktrace_owner_kernel = false;
 		ktrace_set_owning_proc(p);
 		ktrace_active_mask |= config_mask;
 		return 0;
@@ -290,7 +337,7 @@ ktrace_disable(enum ktrace_state state_to_match)
 int
 ktrace_get_owning_pid(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	ktrace_assert_lock_held();
 
 	ktrace_ownership_maintenance();
 	return ktrace_owning_pid;
@@ -299,23 +346,29 @@ ktrace_get_owning_pid(void)
 void
 ktrace_kernel_configure(uint32_t config_mask)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	assert(ktrace_single_threaded == true);
+
+	if (ktrace_owner_kernel) {
+		ktrace_active_mask |= config_mask;
+		return;
+	}
 
 	if (ktrace_state != KTRACE_STATE_OFF) {
-		if (ktrace_active_mask & KTRACE_KPERF) {
+		if (ktrace_active_mask & config_mask & KTRACE_KPERF) {
 			kperf_reset();
 		}
-		if (ktrace_active_mask & KTRACE_KDEBUG) {
+		if (ktrace_active_mask & config_mask & KTRACE_KDEBUG) {
 			kdebug_reset();
 		}
 	}
 
-	ktrace_active_mask = config_mask;
+	ktrace_owner_kernel = true;
+	ktrace_active_mask |= config_mask;
 	ktrace_state = KTRACE_STATE_FG;
 
 	ktrace_release_ownership();
 	strlcpy(ktrace_last_owner_execname, "kernel_task",
-		sizeof(ktrace_last_owner_execname));
+	    sizeof(ktrace_last_owner_execname));
 }
 
 static errno_t
@@ -323,7 +376,7 @@ ktrace_init_background(void)
 {
 	int err = 0;
 
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	ktrace_assert_lock_held();
 
 	if ((err = priv_check_cred(kauth_cred_get(), PRIV_KTRACE_BACKGROUND, 0))) {
 		return err;
@@ -345,7 +398,7 @@ ktrace_init_background(void)
 				return EINVAL;
 			}
 		}
-		should_notify_on_init = FALSE;
+		should_notify_on_init = false;
 	}
 
 	proc_t p = current_proc();
@@ -364,15 +417,15 @@ void
 ktrace_set_invalid_owning_pid(void)
 {
 	if (ktrace_keep_ownership_on_reset) {
-		ktrace_reset(ktrace_active_mask);
-		ktrace_keep_ownership_on_reset = FALSE;
+		ktrace_keep_ownership_on_reset = false;
+		ktrace_reset_internal(ktrace_active_mask);
 	}
 }
 
 int
 ktrace_set_owning_pid(int pid)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
+	ktrace_assert_lock_held();
 
 	/* allow user space to successfully unset owning pid */
 	if (pid == -1) {
@@ -392,7 +445,7 @@ ktrace_set_owning_pid(int pid)
 		return ESRCH;
 	}
 
-	ktrace_keep_ownership_on_reset = TRUE;
+	ktrace_keep_ownership_on_reset = true;
 	ktrace_set_owning_proc(p);
 
 	proc_rele(p);
@@ -402,8 +455,8 @@ ktrace_set_owning_pid(int pid)
 static void
 ktrace_set_owning_proc(proc_t p)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
-	assert(p);
+	ktrace_assert_lock_held();
+	assert(p != NULL);
 
 	if (ktrace_state != KTRACE_STATE_FG) {
 		if (proc_uniqueid(p) == ktrace_bg_unique_id) {
@@ -420,21 +473,20 @@ ktrace_set_owning_proc(proc_t p)
 				ktrace_active_mask = 0;
 			}
 			ktrace_state = KTRACE_STATE_FG;
-			should_notify_on_init = FALSE;
+			should_notify_on_init = false;
 		}
 	}
 
+	ktrace_owner_kernel = false;
 	ktrace_owning_unique_id = proc_uniqueid(p);
 	ktrace_owning_pid = proc_pid(p);
 	strlcpy(ktrace_last_owner_execname, proc_name_address(p),
-		sizeof(ktrace_last_owner_execname));
+	    sizeof(ktrace_last_owner_execname));
 }
 
 static void
 ktrace_release_ownership(void)
 {
-	lck_mtx_assert(ktrace_lock, LCK_MTX_ASSERT_OWNED);
-
 	ktrace_owning_unique_id = 0;
 	ktrace_owning_pid = 0;
 }
@@ -446,24 +498,24 @@ static int ktrace_sysctl SYSCTL_HANDLER_ARGS;
 SYSCTL_NODE(, OID_AUTO, ktrace, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "ktrace");
 
 SYSCTL_UINT(_ktrace, OID_AUTO, state, CTLFLAG_RD | CTLFLAG_LOCKED,
-            &ktrace_state, 0,
-            "");
+    &ktrace_state, 0,
+    "");
 
 SYSCTL_INT(_ktrace, OID_AUTO, owning_pid, CTLFLAG_RD | CTLFLAG_LOCKED,
-           &ktrace_owning_pid, 0,
-           "pid of the process that owns ktrace");
+    &ktrace_owning_pid, 0,
+    "pid of the process that owns ktrace");
 
 SYSCTL_INT(_ktrace, OID_AUTO, background_pid, CTLFLAG_RD | CTLFLAG_LOCKED,
-           &ktrace_bg_pid, 0,
-           "pid of the background ktrace tool");
+    &ktrace_bg_pid, 0,
+    "pid of the background ktrace tool");
 
 SYSCTL_STRING(_ktrace, OID_AUTO, configured_by, CTLFLAG_RD | CTLFLAG_LOCKED,
-              ktrace_last_owner_execname, 0,
-              "execname of process that last configured ktrace");
+    ktrace_last_owner_execname, 0,
+    "execname of process that last configured ktrace");
 
 SYSCTL_PROC(_ktrace, OID_AUTO, init_background, CTLFLAG_RW | CTLFLAG_LOCKED,
-            (void *)SYSCTL_INIT_BACKGROUND, sizeof(int),
-            ktrace_sysctl, "I", "initialize calling process as background");
+    (void *)SYSCTL_INIT_BACKGROUND, sizeof(int),
+    ktrace_sysctl, "I", "initialize calling process as background");
 
 static int
 ktrace_sysctl SYSCTL_HANDLER_ARGS
@@ -472,7 +524,7 @@ ktrace_sysctl SYSCTL_HANDLER_ARGS
 	int ret = 0;
 	uintptr_t type = (uintptr_t)arg1;
 
-	lck_mtx_lock(ktrace_lock);
+	ktrace_lock();
 
 	if (!kauth_cred_issuser(kauth_cred_get())) {
 		ret = EPERM;
@@ -493,7 +545,7 @@ ktrace_sysctl SYSCTL_HANDLER_ARGS
 	}
 
 out:
-	lck_mtx_unlock(ktrace_lock);
+	ktrace_unlock();
 	return ret;
 }
 
@@ -503,7 +555,7 @@ ktrace_init(void)
 {
 	static lck_grp_attr_t *lock_grp_attr = NULL;
 	static lck_grp_t *lock_grp = NULL;
-	static boolean_t initialized = FALSE;
+	static bool initialized = false;
 
 	if (initialized) {
 		return;
@@ -513,7 +565,7 @@ ktrace_init(void)
 	lock_grp = lck_grp_alloc_init("ktrace", lock_grp_attr);
 	lck_grp_attr_free(lock_grp_attr);
 
-	ktrace_lock = lck_mtx_alloc_init(lock_grp, LCK_ATTR_NULL);
-	assert(ktrace_lock);
-	initialized = TRUE;
+	ktrace_mtx = lck_mtx_alloc_init(lock_grp, LCK_ATTR_NULL);
+	assert(ktrace_mtx != NULL);;
+	initialized = true;
 }

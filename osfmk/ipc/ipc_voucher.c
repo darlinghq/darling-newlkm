@@ -26,12 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#if defined (__DARLING__)
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#include <duct/duct_kern_printf.h>
-#endif
-
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/notify.h>
@@ -50,10 +44,6 @@
 #include <mach/mach_voucher_attr_control_server.h>
 #include <mach/mach_host_server.h>
 #include <voucher/ipc_pthread_priority_types.h>
-
-#if defined (__DARLING__)
-#include <duct/duct_post_xnu.h>
-#endif
 
 /*
  * Sysctl variable; enable and disable tracing of voucher contents
@@ -77,11 +67,11 @@ static uint32_t ivht_count = 0;
 	lck_spin_init(&ivht_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define ivht_lock_destroy() \
 	lck_spin_destroy(&ivht_lock_data, &ipc_lck_grp)
-#define	ivht_lock() \
-	lck_spin_lock(&ivht_lock_data)
-#define	ivht_lock_try() \
-	lck_spin_try_lock(&ivht_lock_data)
-#define	ivht_unlock() \
+#define ivht_lock() \
+	lck_spin_lock_grp(&ivht_lock_data, &ipc_lck_grp)
+#define ivht_lock_try() \
+	lck_spin_try_lock_grp(&ivht_lock_data, &ipc_lck_grp)
+#define ivht_unlock() \
 	lck_spin_unlock(&ivht_lock_data)
 
 /*
@@ -93,41 +83,37 @@ static uint32_t ivht_count = 0;
  */
 static iv_index_t ivgt_keys_in_use = MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN;
 static ipc_voucher_global_table_element iv_global_table[MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN];
-static lck_spin_t ivgt_lock_data; 
+static lck_spin_t ivgt_lock_data;
 
 #define ivgt_lock_init() \
 	lck_spin_init(&ivgt_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define ivgt_lock_destroy() \
 	lck_spin_destroy(&ivgt_lock_data, &ipc_lck_grp)
-#define	ivgt_lock() \
-	lck_spin_lock(&ivgt_lock_data)
-#define	ivgt_lock_try() \
-	lck_spin_try_lock(&ivgt_lock_data)
-#define	ivgt_unlock() \
+#define ivgt_lock() \
+	lck_spin_lock_grp(&ivgt_lock_data, &ipc_lck_grp)
+#define ivgt_lock_try() \
+	lck_spin_try_lock_grp(&ivgt_lock_data, &ipc_lck_grp)
+#define ivgt_unlock() \
 	lck_spin_unlock(&ivgt_lock_data)
 
 ipc_voucher_t iv_alloc(iv_index_t entries);
 void iv_dealloc(ipc_voucher_t iv, boolean_t unhash);
-extern int thread_qos_from_pthread_priority(unsigned long, unsigned long *);
 
-static inline iv_refs_t
+os_refgrp_decl(static, iv_refgrp, "voucher", NULL);
+os_refgrp_decl(static, ivac_refgrp, "voucher attribute control", NULL);
+
+static inline void
 iv_reference(ipc_voucher_t iv)
 {
-	iv_refs_t refs;
-
-	refs = hw_atomic_add(&iv->iv_refs, 1);
-	return refs;
+	os_ref_retain(&iv->iv_refs);
 }
 
 static inline void
 iv_release(ipc_voucher_t iv)
 {
-	iv_refs_t refs;
-
-	assert(0 < iv->iv_refs);
-	refs = hw_atomic_sub(&iv->iv_refs, 1);
-	if (0 == refs)
+	if (os_ref_release(&iv->iv_refs) == 0) {
 		iv_dealloc(iv, TRUE);
+	}
 }
 
 /*
@@ -169,32 +155,33 @@ static inline iv_index_t
 iv_key_to_index(mach_voucher_attr_key_t key)
 {
 	if (MACH_VOUCHER_ATTR_KEY_ALL == key ||
-	    MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN < key)
+	    MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN < key) {
 		return IV_UNUSED_KEYINDEX;
+	}
 	return (iv_index_t)key - 1;
 }
 
 static inline mach_voucher_attr_key_t
 iv_index_to_key(iv_index_t key_index)
 {
-	if (MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN > key_index)
+	if (MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN > key_index) {
 		return iv_global_table[key_index].ivgte_key;
+	}
 	return MACH_VOUCHER_ATTR_KEY_NONE;
-		
 }
 
 static void ivace_release(iv_index_t key_index, iv_index_t value_index);
-static void ivace_lookup_values(iv_index_t key_index, iv_index_t value_index, 
-				mach_voucher_attr_value_handle_array_t	values,
-				mach_voucher_attr_value_handle_array_size_t *count);
+static void ivace_lookup_values(iv_index_t key_index, iv_index_t value_index,
+    mach_voucher_attr_value_handle_array_t  values,
+    mach_voucher_attr_value_handle_array_size_t *count);
 
 static iv_index_t iv_lookup(ipc_voucher_t, iv_index_t);
 
-				
+
 static void ivgt_lookup(iv_index_t,
-			boolean_t,
-			ipc_voucher_attr_manager_t *,
-			ipc_voucher_attr_control_t *);
+    boolean_t,
+    ipc_voucher_attr_manager_t *,
+    ipc_voucher_attr_control_t *);
 
 static kern_return_t
 ipc_voucher_prepare_processing_recipe(
@@ -207,7 +194,7 @@ ipc_voucher_prepare_processing_recipe(
 
 #if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) || defined(MACH_VOUCHER_ATTR_KEY_TEST)
 void user_data_attr_manager_init(void);
-#endif 
+#endif
 
 void
 ipc_voucher_init(void)
@@ -217,21 +204,24 @@ ipc_voucher_init(void)
 	iv_index_t i;
 
 	ipc_voucher_zone = zinit(sizeof(struct ipc_voucher),
-				 ipc_voucher_max * sizeof(struct ipc_voucher),
-				 sizeof(struct ipc_voucher),
-				 "ipc vouchers");
+	    ipc_voucher_max * sizeof(struct ipc_voucher),
+	    sizeof(struct ipc_voucher),
+	    "ipc vouchers");
 	zone_change(ipc_voucher_zone, Z_NOENCRYPT, TRUE);
+	zone_change(ipc_voucher_zone, Z_CLEARMEMORY, TRUE);
 
 	ipc_voucher_attr_control_zone = zinit(sizeof(struct ipc_voucher_attr_control),
-				 attr_manager_max * sizeof(struct ipc_voucher_attr_control),
-				 sizeof(struct ipc_voucher_attr_control),
-				 "ipc voucher attr controls");
+	    attr_manager_max * sizeof(struct ipc_voucher_attr_control),
+	    sizeof(struct ipc_voucher_attr_control),
+	    "ipc voucher attr controls");
 	zone_change(ipc_voucher_attr_control_zone, Z_NOENCRYPT, TRUE);
+	zone_change(ipc_voucher_attr_control_zone, Z_CLEARMEMORY, TRUE);
 
 	/* initialize voucher hash */
 	ivht_lock_init();
-	for (i = 0; i < IV_HASH_BUCKETS; i++)
+	for (i = 0; i < IV_HASH_BUCKETS; i++) {
 		queue_init(&ivht_bucket[i]);
+	}
 
 	/* initialize global table locking */
 	ivgt_lock_init();
@@ -249,10 +239,11 @@ iv_alloc(iv_index_t entries)
 
 
 	iv = (ipc_voucher_t)zalloc(ipc_voucher_zone);
-	if (IV_NULL == iv)
+	if (IV_NULL == iv) {
 		return IV_NULL;
-		
-	iv->iv_refs = 1;
+	}
+
+	os_ref_init(&iv->iv_refs, &iv_refgrp);
 	iv->iv_sum = 0;
 	iv->iv_hash = 0;
 	iv->iv_port = IP_NULL;
@@ -274,10 +265,11 @@ iv_alloc(iv_index_t entries)
 	}
 
 	/* initialize the table entries */
-	for (i=0; i < iv->iv_table_size; i++)
+	for (i = 0; i < iv->iv_table_size; i++) {
 		iv->iv_table[i] = IV_UNUSED_VALINDEX;
-		
-	return (iv);
+	}
+
+	return iv;
 }
 
 /*
@@ -289,9 +281,9 @@ iv_alloc(iv_index_t entries)
  *		they are immutable once references are distributed.
  */
 static void
-iv_set(ipc_voucher_t iv, 
-       iv_index_t key_index,
-       iv_index_t value_index)
+iv_set(ipc_voucher_t iv,
+    iv_index_t key_index,
+    iv_index_t value_index)
 {
 	assert(key_index < iv->iv_table_size);
 	iv->iv_table[key_index] = value_index;
@@ -308,17 +300,18 @@ iv_dealloc(ipc_voucher_t iv, boolean_t unhash)
 	 */
 	if (unhash) {
 		ivht_lock();
-		assert(0 == iv->iv_refs);
+		assert(os_ref_get_count(&iv->iv_refs) == 0);
 		assert(IV_HASH_BUCKETS > iv->iv_hash);
 		queue_remove(&ivht_bucket[iv->iv_hash], iv, ipc_voucher_t, iv_hash_link);
 		ivht_count--;
 		ivht_unlock();
 
-		KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_IPC,MACH_IPC_VOUCHER_DESTROY) | DBG_FUNC_NONE,
-				      VM_KERNEL_ADDRPERM((uintptr_t)iv), 0, ivht_count, 0, 0);
-
-	} else
-		assert(0 == --iv->iv_refs);
+		KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_VOUCHER_DESTROY) | DBG_FUNC_NONE,
+		    VM_KERNEL_ADDRPERM((uintptr_t)iv), 0, ivht_count, 0, 0);
+	} else {
+		os_ref_count_t cnt __assert_only = os_ref_release(&iv->iv_refs);
+		assert(cnt == 0);
+	}
 
 	/*
 	 * if a port was allocated for this voucher,
@@ -327,7 +320,7 @@ iv_dealloc(ipc_voucher_t iv, boolean_t unhash)
 	 * is gone.  We can just discard it now.
 	 */
 	if (IP_VALID(port)) {
-		assert(ip_active(port));
+		require_ip_active(port);
 		assert(port->ip_srights == 0);
 
 		ipc_port_dealloc_kernel(port);
@@ -340,10 +333,11 @@ iv_dealloc(ipc_voucher_t iv, boolean_t unhash)
 		iv_set(iv, i, ~0);
 #endif
 	}
-			
-	if (iv->iv_table != iv->iv_inline_table)
-		kfree(iv->iv_table, 
-		      iv->iv_table_size * sizeof(*iv->iv_table));
+
+	if (iv->iv_table != iv->iv_inline_table) {
+		kfree(iv->iv_table,
+		    iv->iv_table_size * sizeof(*iv->iv_table));
+	}
 
 	zfree(ipc_voucher_zone, iv);
 }
@@ -359,8 +353,9 @@ iv_dealloc(ipc_voucher_t iv, boolean_t unhash)
 static inline iv_index_t
 iv_lookup(ipc_voucher_t iv, iv_index_t key_index)
 {
-	if (key_index < iv->iv_table_size)
+	if (key_index < iv->iv_table_size) {
 		return iv->iv_table[key_index];
+	}
 	return IV_UNUSED_VALINDEX;
 }
 
@@ -379,7 +374,7 @@ iv_lookup(ipc_voucher_t iv, iv_index_t key_index)
  */
 uintptr_t
 unsafe_convert_port_to_voucher(
-	ipc_port_t	port)
+	ipc_port_t      port)
 {
 	if (IP_VALID(port)) {
 		uintptr_t voucher = (uintptr_t) port->ip_kobject;
@@ -389,8 +384,9 @@ unsafe_convert_port_to_voucher(
 		 * port, and if it is a true voucher port, that reference
 		 * keeps the voucher bound to the port (and active).
 		 */
-		if (ip_kotype(port) == IKOT_VOUCHER)
-			return (voucher);
+		if (ip_kotype(port) == IKOT_VOUCHER) {
+			return voucher;
+		}
 	}
 	return (uintptr_t)IV_NULL;
 }
@@ -407,9 +403,10 @@ unsafe_convert_port_to_voucher(
  */
 ipc_voucher_t
 convert_port_to_voucher(
-	ipc_port_t	port)
+	ipc_port_t      port)
 {
 	if (IP_VALID(port)) {
+		zone_require(port, ipc_object_zones[IOT_PORT]);
 		ipc_voucher_t voucher = (ipc_voucher_t) port->ip_kobject;
 
 		/*
@@ -417,13 +414,15 @@ convert_port_to_voucher(
 		 * port, and if it is a true voucher port, that reference
 		 * keeps the voucher bound to the port (and active).
 		 */
-		if (ip_kotype(port) != IKOT_VOUCHER)
+		if (ip_kotype(port) != IKOT_VOUCHER) {
 			return IV_NULL;
+		}
 
-		assert(ip_active(port));
+		require_ip_active(port);
 
+		zone_require(voucher, ipc_voucher_zone);
 		ipc_voucher_reference(voucher);
-		return (voucher);
+		return voucher;
 	}
 	return IV_NULL;
 }
@@ -439,7 +438,7 @@ convert_port_to_voucher(
 
 ipc_voucher_t
 convert_port_name_to_voucher(
-	mach_port_name_t	voucher_name)
+	mach_port_name_t        voucher_name)
 {
 	ipc_voucher_t iv;
 	kern_return_t kr;
@@ -447,8 +446,9 @@ convert_port_name_to_voucher(
 
 	if (MACH_PORT_VALID(voucher_name)) {
 		kr = ipc_port_translate_send(current_space(), voucher_name, &port);
-		if (KERN_SUCCESS != kr)
+		if (KERN_SUCCESS != kr) {
 			return IV_NULL;
+		}
 
 		iv = convert_port_to_voucher(port);
 		ip_unlock(port);
@@ -461,20 +461,19 @@ convert_port_name_to_voucher(
 void
 ipc_voucher_reference(ipc_voucher_t voucher)
 {
-	iv_refs_t refs;
-
-	if (IPC_VOUCHER_NULL == voucher)
+	if (IPC_VOUCHER_NULL == voucher) {
 		return;
+	}
 
-	refs = iv_reference(voucher);
-	assert(1 < refs);
+	iv_reference(voucher);
 }
 
 void
 ipc_voucher_release(ipc_voucher_t voucher)
 {
-	if (IPC_VOUCHER_NULL != voucher)
+	if (IPC_VOUCHER_NULL != voucher) {
 		iv_release(voucher);
+	}
 }
 
 /*
@@ -482,26 +481,19 @@ ipc_voucher_release(ipc_voucher_t voucher)
  * Purpose:
  *	Called whenever the Mach port system detects no-senders
  *	on the voucher port.
- *
- *	Each time the send-right count goes positive, a no-senders 
- *	notification is armed (and a voucher reference is donated).
- *	So, each notification that comes in must release a voucher
- *	reference.  If more send rights have been added since it
- *	fired (asynchronously), they will be protected by a different
- *	reference hold.
  */
 void
 ipc_voucher_notify(mach_msg_header_t *msg)
 {
 	mach_no_senders_notification_t *notification = (void *)msg;
 	ipc_port_t port = notification->not_header.msgh_remote_port;
-	ipc_voucher_t iv;
 
-	assert(ip_active(port));
+	require_ip_active(port);
 	assert(IKOT_VOUCHER == ip_kotype(port));
-	iv = (ipc_voucher_t)port->ip_kobject;
 
-	ipc_voucher_release(iv);
+	/* consume the reference donated by convert_voucher_to_port */
+	zone_require((ipc_voucher_t)port->ip_kobject, ipc_voucher_zone);
+	ipc_voucher_release((ipc_voucher_t)port->ip_kobject);
 }
 
 /*
@@ -510,47 +502,22 @@ ipc_voucher_notify(mach_msg_header_t *msg)
 ipc_port_t
 convert_voucher_to_port(ipc_voucher_t voucher)
 {
-	ipc_port_t	port, send;
-
-	if (IV_NULL == voucher)
-		return (IP_NULL);
-
-	assert(0 < voucher->iv_refs);
-
-	/* create a port if needed */
-	port = voucher->iv_port;
-	if (!IP_VALID(port)) {
-		port = ipc_port_alloc_kernel();
-		assert(IP_VALID(port));
-		ipc_kobject_set_atomically(port, (ipc_kobject_t) voucher, IKOT_VOUCHER);
-
-		/* If we lose the race, deallocate and pick up the other guy's port */
-		if (!OSCompareAndSwapPtr(IP_NULL, port, &voucher->iv_port)) {
-			ipc_port_dealloc_kernel(port);
-			port = voucher->iv_port;
-			assert(ip_kotype(port) == IKOT_VOUCHER);
-			assert(port->ip_kobject == (ipc_kobject_t)voucher);
-		}
+	if (IV_NULL == voucher) {
+		return IP_NULL;
 	}
-	
-	ip_lock(port);
-	assert(ip_active(port));
-	send = ipc_port_make_send_locked(port);
 
-	if (1 == port->ip_srights) {
-		ipc_port_t old_notify;
+	zone_require(voucher, ipc_voucher_zone);
+	assert(os_ref_get_count(&voucher->iv_refs) > 0);
 
-		/* transfer our ref to the port, and arm the no-senders notification */
-		assert(IP_NULL == port->ip_nsrequest);
-		ipc_port_nsrequest(port, port->ip_mscount, ipc_port_make_sonce_locked(port), &old_notify);
-		/* port unlocked */
-		assert(IP_NULL == old_notify);
-	} else {
-		/* piggyback on the existing port reference, so consume ours */
-		ip_unlock(port);
+	/*
+	 * make a send right and donate our reference for ipc_voucher_notify
+	 * if this is the first send right
+	 */
+	if (!ipc_kobject_make_send_lazy_alloc_port(&voucher->iv_port,
+	    (ipc_kobject_t)voucher, IKOT_VOUCHER)) {
 		ipc_voucher_release(voucher);
 	}
-	return (send);
+	return voucher->iv_port;
 }
 
 #define ivace_reset_data(ivace_elem, next_index) {       \
@@ -586,32 +553,33 @@ ivac_alloc(iv_index_t key_index)
 
 
 	ivac = (ipc_voucher_attr_control_t)zalloc(ipc_voucher_attr_control_zone);
-	if (IVAC_NULL == ivac)
+	if (IVAC_NULL == ivac) {
 		return IVAC_NULL;
-		
-	ivac->ivac_refs = 1;
+	}
+
+	os_ref_init(&ivac->ivac_refs, &ivac_refgrp);
 	ivac->ivac_is_growing = FALSE;
 	ivac->ivac_port = IP_NULL;
 
 	/* start with just the inline table */
-	table =	(ivac_entry_t) kalloc(IVAC_ENTRIES_MIN * sizeof(ivac_entry));
+	table = (ivac_entry_t) kalloc(IVAC_ENTRIES_MIN * sizeof(ivac_entry));
 	ivac->ivac_table = table;
 	ivac->ivac_table_size = IVAC_ENTRIES_MIN;
 	ivac->ivac_init_table_size = IVAC_ENTRIES_MIN;
 	for (i = 0; i < ivac->ivac_table_size; i++) {
-		ivace_reset_data(&table[i], i+1);
+		ivace_reset_data(&table[i], i + 1);
 	}
 
 	/* the default table entry is never on freelist */
 	table[0].ivace_next = IV_HASH_END;
 	table[0].ivace_free = FALSE;
-	table[i-1].ivace_next = IV_FREELIST_END;
+	table[i - 1].ivace_next = IV_FREELIST_END;
 	ivac->ivac_freelist = 1;
 	ivac_lock_init(ivac);
 	ivac->ivac_key_index = key_index;
-	return (ivac);
+	return ivac;
 }
-	
+
 
 void
 ivac_dealloc(ipc_voucher_attr_control_t ivac)
@@ -627,7 +595,7 @@ ivac_dealloc(ipc_voucher_attr_control_t ivac)
 	 * that the reference count is still zero.
 	 */
 	ivgt_lock();
-	if (ivac->ivac_refs > 0) {
+	if (os_ref_get_count(&ivac->ivac_refs) > 0) {
 		ivgt_unlock();
 		return;
 	}
@@ -642,8 +610,9 @@ ivac_dealloc(ipc_voucher_attr_control_t ivac)
 	ivgt_unlock();
 
 	/* release the reference held on the resource manager */
-	if (IVAM_NULL != ivam)
+	if (IVAM_NULL != ivam) {
 		(ivam->ivam_release)(ivam);
+	}
 
 	/*
 	 * if a port was allocated for this voucher,
@@ -652,7 +621,7 @@ ivac_dealloc(ipc_voucher_attr_control_t ivac)
 	 * is gone.  We can just discard it now.
 	 */
 	if (IP_VALID(port)) {
-		assert(ip_active(port));
+		require_ip_active(port);
 		assert(port->ip_srights == 0);
 
 		ipc_port_dealloc_kernel(port);
@@ -664,9 +633,11 @@ ivac_dealloc(ipc_voucher_attr_control_t ivac)
 	 * table.
 	 */
 #ifdef MACH_DEBUG
-	for (i = 0; i < ivac->ivac_table_size; i++)
-		if (ivac->ivac_table[i].ivace_refs != 0)
+	for (i = 0; i < ivac->ivac_table_size; i++) {
+		if (ivac->ivac_table[i].ivace_refs != 0) {
 			panic("deallocing a resource manager with live refs to its attr values\n");
+		}
+	}
 #endif
 	kfree(ivac->ivac_table, ivac->ivac_table_size * sizeof(*ivac->ivac_table));
 	ivac_lock_destroy(ivac);
@@ -696,9 +667,10 @@ ipc_voucher_attr_control_release(ipc_voucher_attr_control_t control)
  */
 ipc_voucher_attr_control_t
 convert_port_to_voucher_attr_control(
-	ipc_port_t	port)
+	ipc_port_t      port)
 {
 	if (IP_VALID(port)) {
+		zone_require(port, ipc_object_zones[IOT_PORT]);
 		ipc_voucher_attr_control_t ivac = (ipc_voucher_attr_control_t) port->ip_kobject;
 
 		/*
@@ -707,37 +679,35 @@ convert_port_to_voucher_attr_control(
 		 * that reference keeps the voucher bound to the port
 		 * (and active).
 		 */
-		if (ip_kotype(port) != IKOT_VOUCHER_ATTR_CONTROL)
+		if (ip_kotype(port) != IKOT_VOUCHER_ATTR_CONTROL) {
 			return IVAC_NULL;
+		}
+		require_ip_active(port);
 
-		assert(ip_active(port));
-
+		zone_require(ivac, ipc_voucher_attr_control_zone);
 		ivac_reference(ivac);
-		return (ivac);
+		return ivac;
 	}
 	return IVAC_NULL;
 }
 
+/*
+ * Routine:	ipc_voucher_notify
+ * Purpose:
+ *	Called whenever the Mach port system detects no-senders
+ *	on the voucher attr control port.
+ */
 void
 ipc_voucher_attr_control_notify(mach_msg_header_t *msg)
 {
 	mach_no_senders_notification_t *notification = (void *)msg;
 	ipc_port_t port = notification->not_header.msgh_remote_port;
-	ipc_voucher_attr_control_t ivac;
 
+	require_ip_active(port);
 	assert(IKOT_VOUCHER_ATTR_CONTROL == ip_kotype(port));
-	ip_lock(port);
-	assert(ip_active(port));
 
-	/* if no new send rights, drop a control reference */
-	if (port->ip_mscount == notification->not_count) {
-		ivac = (ipc_voucher_attr_control_t)port->ip_kobject;
-		ip_unlock(port);
-
-		ivac_release(ivac);
-	} else {
-		ip_unlock(port);
-	}
+	/* release the reference donated by convert_voucher_attr_control_to_port */
+	ivac_release((ipc_voucher_attr_control_t)port->ip_kobject);
 }
 
 /*
@@ -746,46 +716,21 @@ ipc_voucher_attr_control_notify(mach_msg_header_t *msg)
 ipc_port_t
 convert_voucher_attr_control_to_port(ipc_voucher_attr_control_t control)
 {
-	ipc_port_t	port, send;
+	if (IVAC_NULL == control) {
+		return IP_NULL;
+	}
 
-	if (IVAC_NULL == control)
-		return (IP_NULL);
+	zone_require(control, ipc_voucher_attr_control_zone);
 
-	/* create a port if needed */
-	port = control->ivac_port;
-	if (!IP_VALID(port)) {
-		port = ipc_port_alloc_kernel();
-		assert(IP_VALID(port));
-		if (OSCompareAndSwapPtr(IP_NULL, port, &control->ivac_port)) {
-			ip_lock(port);
-			ipc_kobject_set_atomically(port, (ipc_kobject_t) control, IKOT_VOUCHER_ATTR_CONTROL);
-		} else {
-			ipc_port_dealloc_kernel(port);
-			port = control->ivac_port;
-			ip_lock(port);
-			assert(ip_kotype(port) == IKOT_VOUCHER_ATTR_CONTROL);
-			assert(port->ip_kobject == (ipc_kobject_t)control);
-		}
-	} else 
-		ip_lock(port);
-
-	assert(ip_active(port));
-	send = ipc_port_make_send_locked(port);
-
-	if (1 == port->ip_srights) {
-		ipc_port_t old_notify;
-
-		/* transfer our ref to the port, and arm the no-senders notification */
-		assert(IP_NULL == port->ip_nsrequest);
-		ipc_port_nsrequest(port, port->ip_mscount, ipc_port_make_sonce_locked(port), &old_notify);
-		assert(IP_NULL == old_notify);
-		/* ipc_port_nsrequest unlocks the port */
-	} else {
-		/* piggyback on the existing port reference, so consume ours */
-		ip_unlock(port);
+	/*
+	 * make a send right and donate our reference for
+	 * ipc_voucher_attr_control_notify if this is the first send right
+	 */
+	if (!ipc_kobject_make_send_lazy_alloc_port(&control->ivac_port,
+	    (ipc_kobject_t)control, IKOT_VOUCHER_ATTR_CONTROL)) {
 		ivac_release(control);
 	}
-	return (send);
+	return control->ivac_port;
 }
 
 /*
@@ -793,10 +738,10 @@ convert_voucher_attr_control_to_port(ipc_voucher_attr_control_t control)
  */
 static void
 ivace_lookup_values(
-	iv_index_t		 		key_index,
-	iv_index_t				value_index,
-	mach_voucher_attr_value_handle_array_t		values,
-	mach_voucher_attr_value_handle_array_size_t	*count)
+	iv_index_t                              key_index,
+	iv_index_t                              value_index,
+	mach_voucher_attr_value_handle_array_t          values,
+	mach_voucher_attr_value_handle_array_size_t     *count)
 {
 	ipc_voucher_attr_control_t ivac;
 	ivac_entry_t ivace;
@@ -860,19 +805,19 @@ ivac_grow_table(ipc_voucher_attr_control_t ivac)
 	assert(new_size < IVAC_ENTRIES_MAX);
 
 	new_table = kalloc(sizeof(ivac_entry) * new_size);
-	if (!new_table){
+	if (!new_table) {
 		panic("Failed to grow ivac table to size %d\n", new_size);
 		return;
 	}
 
 	/* setup the free list for new entries */
 	for (i = old_size; i < new_size; i++) {
-		ivace_reset_data(&new_table[i], i+1);
+		ivace_reset_data(&new_table[i], i + 1);
 	}
 
 	ivac_lock(ivac);
-	
-	for (i = 0; i < ivac->ivac_table_size; i++){
+
+	for (i = 0; i < ivac->ivac_table_size; i++) {
 		ivace_copy_data(&ivac->ivac_table[i], &new_table[i]);
 	}
 
@@ -880,14 +825,14 @@ ivac_grow_table(ipc_voucher_attr_control_t ivac)
 
 	ivac->ivac_table = new_table;
 	ivac->ivac_table_size = new_size;
-	
+
 	/* adding new free entries at head of freelist */
 	ivac->ivac_table[new_size - 1].ivace_next = ivac->ivac_freelist;
 	ivac->ivac_freelist = old_size;
 	ivac->ivac_is_growing = 0;
 	ivac_wakeup(ivac);
 
-	if (old_table){
+	if (old_table) {
 		ivac_unlock(ivac);
 		kfree(old_table, old_size * sizeof(ivac_entry));
 		ivac_lock(ivac);
@@ -903,14 +848,15 @@ ivac_grow_table(ipc_voucher_attr_control_t ivac)
  */
 static void
 ivace_reference_by_index(
-	iv_index_t 	key_index,
-	iv_index_t	val_index)
+	iv_index_t      key_index,
+	iv_index_t      val_index)
 {
 	ipc_voucher_attr_control_t ivac;
 	ivac_entry_t ivace;
 
-	if (IV_UNUSED_VALINDEX == val_index)
+	if (IV_UNUSED_VALINDEX == val_index) {
 		return;
+	}
 
 	ivgt_lookup(key_index, FALSE, NULL, &ivac);
 	assert(IVAC_NULL != ivac);
@@ -941,8 +887,8 @@ ivace_reference_by_index(
  */
 static iv_index_t
 ivace_reference_by_value(
-	ipc_voucher_attr_control_t	ivac,
-	mach_voucher_attr_value_handle_t  	value,
+	ipc_voucher_attr_control_t      ivac,
+	mach_voucher_attr_value_handle_t        value,
 	mach_voucher_attr_value_flags_t          flag)
 {
 	ivac_entry_t ivace = IVACE_NULL;
@@ -953,7 +899,7 @@ ivace_reference_by_value(
 		return IV_UNUSED_VALINDEX;
 	}
 
- 	ivac_lock(ivac);
+	ivac_lock(ivac);
 restart:
 	hash_index = IV_HASH_VAL(ivac->ivac_init_table_size, value);
 	index = ivac->ivac_table[hash_index].ivace_index;
@@ -962,15 +908,16 @@ restart:
 		ivace = &ivac->ivac_table[index];
 		assert(!ivace->ivace_free);
 
-		if (ivace->ivace_value == value)
+		if (ivace->ivace_value == value) {
 			break;
+		}
 
 		assert(ivace->ivace_next != index);
 		index = ivace->ivace_next;
 	}
 
 	/* found it? */
-	if (index != IV_HASH_END) { 
+	if (index != IV_HASH_END) {
 		/* only add reference on non-persistent value */
 		if (!ivace->ivace_persist) {
 			ivace->ivace_refs++;
@@ -1015,11 +962,12 @@ restart:
  * Release a reference on the given <key_index, value_index> pair.
  *
  * Conditions:	called with nothing locked, as it may cause
- *		callouts and/or messaging to the resource 
+ *		callouts and/or messaging to the resource
  *		manager.
  */
-static void ivace_release(
-	iv_index_t key_index,	  
+static void
+ivace_release(
+	iv_index_t key_index,
 	iv_index_t value_index)
 {
 	ipc_voucher_attr_control_t ivac;
@@ -1032,8 +980,9 @@ static void ivace_release(
 	kern_return_t kr;
 
 	/* cant release the default value */
-	if (IV_UNUSED_VALINDEX == value_index)
+	if (IV_UNUSED_VALINDEX == value_index) {
 		return;
+	}
 
 	ivgt_lookup(key_index, FALSE, &ivam, &ivac);
 	assert(IVAC_NULL != ivac);
@@ -1073,7 +1022,7 @@ static void ivace_release(
 	ivace->ivace_releasing = TRUE;
 	value = ivace->ivace_value;
 
- redrive:
+redrive:
 	assert(value == ivace->ivace_value);
 	assert(!ivace->ivace_free);
 	made = ivace->ivace_made;
@@ -1095,18 +1044,20 @@ static void ivace_release(
 	 * re-drive the release.
 	 */
 	if (ivace->ivace_made != made) {
-		if (KERN_SUCCESS == kr)
+		if (KERN_SUCCESS == kr) {
 			ivace->ivace_made -= made;
+		}
 
-		if (0 == ivace->ivace_refs)
+		if (0 == ivace->ivace_refs) {
 			goto redrive;
+		}
 
 		ivace->ivace_releasing = FALSE;
 		ivac_unlock(ivac);
 		return;
 	} else {
 		/*
-		 * If the manager returned FAILURE, someone took a 
+		 * If the manager returned FAILURE, someone took a
 		 * reference on the value but have not updated the ivace,
 		 * release the lock and return since thread who got
 		 * the new reference will update the ivace and will have
@@ -1170,16 +1121,17 @@ static void ivace_release(
  */
 static void
 ivgt_lookup(iv_index_t key_index,
-	    boolean_t take_reference,
-	    ipc_voucher_attr_manager_t *manager,
-	    ipc_voucher_attr_control_t *control)
+    boolean_t take_reference,
+    ipc_voucher_attr_manager_t *manager,
+    ipc_voucher_attr_control_t *control)
 {
 	ipc_voucher_attr_control_t ivac;
 
 	if (key_index < MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN) {
 		ivgt_lock();
-		if (NULL != manager)
+		if (NULL != manager) {
 			*manager = iv_global_table[key_index].ivgte_manager;
+		}
 		ivac = iv_global_table[key_index].ivgte_control;
 		if (IVAC_NULL != ivac) {
 			assert(key_index == ivac->ivac_key_index);
@@ -1189,18 +1141,21 @@ ivgt_lookup(iv_index_t key_index,
 			}
 		}
 		ivgt_unlock();
-		if (NULL != control)
+		if (NULL != control) {
 			*control = ivac;
+		}
 	} else {
-		if (NULL != manager)
+		if (NULL != manager) {
 			*manager = IVAM_NULL;
-		if (NULL != control)
+		}
+		if (NULL != control) {
 			*control = IVAC_NULL;
+		}
 	}
 }
 
 /*
- *	Routine: 	ipc_replace_voucher_value
+ *	Routine:	ipc_replace_voucher_value
  *	Purpose:
  *		Replace the <voucher, key> value with the results of
  *		running the supplied command through the resource
@@ -1211,11 +1166,11 @@ ivgt_lookup(iv_index_t key_index,
  */
 static kern_return_t
 ipc_replace_voucher_value(
-	ipc_voucher_t				voucher,
-	mach_voucher_attr_key_t 		key,
-	mach_voucher_attr_recipe_command_t	command,
-	ipc_voucher_t				prev_voucher,
-	mach_voucher_attr_content_t		content,
+	ipc_voucher_t                           voucher,
+	mach_voucher_attr_key_t                 key,
+	mach_voucher_attr_recipe_command_t      command,
+	ipc_voucher_t                           prev_voucher,
+	mach_voucher_attr_content_t             content,
 	mach_voucher_attr_content_size_t        content_size)
 {
 	mach_voucher_attr_value_handle_t previous_vals[MACH_VOUCHER_ATTR_VALUE_MAX_NESTED];
@@ -1230,15 +1185,16 @@ ipc_replace_voucher_value(
 	iv_index_t val_index;
 	iv_index_t key_index;
 	kern_return_t kr;
-	
+
 	/*
 	 * Get the manager for this key_index.
 	 * Returns a reference on the control.
 	 */
 	key_index = iv_key_to_index(key);
 	ivgt_lookup(key_index, TRUE, &ivam, &ivac);
-	if (IVAM_NULL == ivam)
+	if (IVAM_NULL == ivam) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	/* save the current value stored in the forming voucher */
 	save_val_index = iv_lookup(voucher, key_index);
@@ -1250,26 +1206,27 @@ ipc_replace_voucher_value(
 	 * in the forming voucher.
 	 */
 	prev_val_index = (IV_NULL != prev_voucher) ?
-		         iv_lookup(prev_voucher, key_index) :
-		         save_val_index;
+	    iv_lookup(prev_voucher, key_index) :
+	    save_val_index;
 	ivace_lookup_values(key_index, prev_val_index,
-			    previous_vals, &previous_vals_count);
+	    previous_vals, &previous_vals_count);
 
 	/* Call out to resource manager to get new value */
 	new_value_voucher = IV_NULL;
 	kr = (ivam->ivam_get_value)(
-				    ivam, key, command,
-				    previous_vals, previous_vals_count,
-				    content, content_size,
-				    &new_value, &new_flag, &new_value_voucher);
+		ivam, key, command,
+		previous_vals, previous_vals_count,
+		content, content_size,
+		&new_value, &new_flag, &new_value_voucher);
 	if (KERN_SUCCESS != kr) {
 		ivac_release(ivac);
 		return kr;
 	}
 
 	/* TODO: value insertion from returned voucher */
-	if (IV_NULL != new_value_voucher)
+	if (IV_NULL != new_value_voucher) {
 		iv_release(new_value_voucher);
+	}
 
 	/*
 	 * Find or create a slot in the table associated
@@ -1287,12 +1244,12 @@ ipc_replace_voucher_value(
 	 * as was there before.
 	 */
 	ivace_release(key_index, save_val_index);
-	
+
 	return KERN_SUCCESS;
 }
 
 /*
- *	Routine: 	ipc_directly_replace_voucher_value
+ *	Routine:	ipc_directly_replace_voucher_value
  *	Purpose:
  *		Replace the <voucher, key> value with the value-handle
  *		supplied directly by the attribute manager.
@@ -1303,24 +1260,25 @@ ipc_replace_voucher_value(
  */
 static kern_return_t
 ipc_directly_replace_voucher_value(
-	ipc_voucher_t				voucher,
-	mach_voucher_attr_key_t 		key,
-	mach_voucher_attr_value_handle_t	new_value)
+	ipc_voucher_t                           voucher,
+	mach_voucher_attr_key_t                 key,
+	mach_voucher_attr_value_handle_t        new_value)
 {
 	ipc_voucher_attr_manager_t ivam;
 	ipc_voucher_attr_control_t ivac;
 	iv_index_t save_val_index;
 	iv_index_t val_index;
 	iv_index_t key_index;
-	
+
 	/*
 	 * Get the manager for this key_index.
 	 * Returns a reference on the control.
 	 */
 	key_index = iv_key_to_index(key);
 	ivgt_lookup(key_index, TRUE, &ivam, &ivac);
-	if (IVAM_NULL == ivam)
+	if (IVAM_NULL == ivam) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	/* save the current value stored in the forming voucher */
 	save_val_index = iv_lookup(voucher, key_index);
@@ -1332,7 +1290,7 @@ ipc_directly_replace_voucher_value(
 	 * we find a matching existing value.
 	 */
 	val_index = ivace_reference_by_value(ivac, new_value,
-				MACH_VOUCHER_ATTR_VALUE_FLAGS_NONE);
+	    MACH_VOUCHER_ATTR_VALUE_FLAGS_NONE);
 	iv_set(voucher, key_index, val_index);
 
 	/*
@@ -1342,26 +1300,25 @@ ipc_directly_replace_voucher_value(
 	 * as was there before.
 	 */
 	ivace_release(key_index, save_val_index);
-	
+
 	return KERN_SUCCESS;
 }
 
 static kern_return_t
 ipc_execute_voucher_recipe_command(
-	ipc_voucher_t 				voucher,
-	mach_voucher_attr_key_t			key,
-	mach_voucher_attr_recipe_command_t	command,
-	ipc_voucher_t				prev_iv,
-	mach_voucher_attr_content_t		content,
-	mach_voucher_attr_content_size_t	content_size,
-	boolean_t				key_priv)
+	ipc_voucher_t                           voucher,
+	mach_voucher_attr_key_t                 key,
+	mach_voucher_attr_recipe_command_t      command,
+	ipc_voucher_t                           prev_iv,
+	mach_voucher_attr_content_t             content,
+	mach_voucher_attr_content_size_t        content_size,
+	boolean_t                               key_priv)
 {
 	iv_index_t prev_val_index;
 	iv_index_t val_index;
 	kern_return_t kr;
 
 	switch (command) {
-
 	/*
 	 * MACH_VOUCHER_ATTR_COPY
 	 *	Copy the attribute(s) from the previous voucher to the new
@@ -1370,22 +1327,24 @@ ipc_execute_voucher_recipe_command(
 	 *	voucher.
 	 */
 	case MACH_VOUCHER_ATTR_COPY:
-		
+
 		/* no recipe data on a copy */
-		if (0 < content_size)
+		if (0 < content_size) {
 			return KERN_INVALID_ARGUMENT;
+		}
 
 		/* nothing to copy from? - done */
-		if (IV_NULL == prev_iv)
+		if (IV_NULL == prev_iv) {
 			return KERN_SUCCESS;
+		}
 
 		if (MACH_VOUCHER_ATTR_KEY_ALL == key) {
 			iv_index_t limit, j;
 
 			/* reconcile possible difference in voucher sizes */
 			limit = (prev_iv->iv_table_size < voucher->iv_table_size) ?
-			        prev_iv->iv_table_size :
-				voucher->iv_table_size;
+			    prev_iv->iv_table_size :
+			    voucher->iv_table_size;
 
 			/* wildcard matching */
 			for (j = 0; j < limit; j++) {
@@ -1403,8 +1362,9 @@ ipc_execute_voucher_recipe_command(
 
 			/* copy just one key */
 			key_index = iv_key_to_index(key);
-			if (ivgt_keys_in_use < key_index)
+			if (ivgt_keys_in_use < key_index) {
 				return KERN_INVALID_ARGUMENT;
+			}
 
 			/* release old value being replaced */
 			val_index = iv_lookup(voucher, key_index);
@@ -1427,16 +1387,17 @@ ipc_execute_voucher_recipe_command(
 	 */
 	case MACH_VOUCHER_ATTR_REMOVE:
 		/* no recipe data on a remove */
-		if (0 < content_size)
+		if (0 < content_size) {
 			return KERN_INVALID_ARGUMENT;
+		}
 
 		if (MACH_VOUCHER_ATTR_KEY_ALL == key) {
 			iv_index_t limit, j;
 
 			/* reconcile possible difference in voucher sizes */
 			limit = (IV_NULL == prev_iv) ? voucher->iv_table_size :
-				((prev_iv->iv_table_size < voucher->iv_table_size) ?
-				 prev_iv->iv_table_size : voucher->iv_table_size);
+			    ((prev_iv->iv_table_size < voucher->iv_table_size) ?
+			    prev_iv->iv_table_size : voucher->iv_table_size);
 
 			/* wildcard matching */
 			for (j = 0; j < limit; j++) {
@@ -1445,8 +1406,9 @@ ipc_execute_voucher_recipe_command(
 				/* If not matched in previous, skip */
 				if (IV_NULL != prev_iv) {
 					prev_val_index = iv_lookup(prev_iv, j);
-					if (val_index != prev_val_index)
+					if (val_index != prev_val_index) {
 						continue;
+					}
 				}
 				/* release and clear */
 				ivace_release(j, val_index);
@@ -1457,16 +1419,18 @@ ipc_execute_voucher_recipe_command(
 
 			/* copy just one key */
 			key_index = iv_key_to_index(key);
-			if (ivgt_keys_in_use < key_index)
+			if (ivgt_keys_in_use < key_index) {
 				return KERN_INVALID_ARGUMENT;
+			}
 
 			val_index = iv_lookup(voucher, key_index);
 
 			/* If not matched in previous, skip */
 			if (IV_NULL != prev_iv) {
 				prev_val_index = iv_lookup(prev_iv, key_index);
-				if (val_index != prev_val_index)
+				if (val_index != prev_val_index) {
 					break;
+				}
 			}
 
 			/* release and clear */
@@ -1485,17 +1449,19 @@ ipc_execute_voucher_recipe_command(
 		if (key_priv) {
 			mach_voucher_attr_value_handle_t new_value;
 
-			if (sizeof(mach_voucher_attr_value_handle_t) != content_size)
+			if (sizeof(mach_voucher_attr_value_handle_t) != content_size) {
 				return KERN_INVALID_ARGUMENT;
-			
+			}
+
 			new_value = *(mach_voucher_attr_value_handle_t *)(void *)content;
 			kr = ipc_directly_replace_voucher_value(voucher,
-								key,
-								new_value);
-			if (KERN_SUCCESS != kr)
+			    key, new_value);
+			if (KERN_SUCCESS != kr) {
 				return kr;
-		} else
+			}
+		} else {
 			return KERN_INVALID_CAPABILITY;
+		}
 		break;
 
 	/*
@@ -1503,19 +1469,20 @@ ipc_execute_voucher_recipe_command(
 	 *	Redeem the attribute(s) from the previous voucher for a possibly
 	 *	new value in the new voucher. A wildcard key is an acceptable value,
 	 *	indicating a desire to redeem all the values.
-	 */ 	
+	 */
 	case MACH_VOUCHER_ATTR_REDEEM:
 
 		if (MACH_VOUCHER_ATTR_KEY_ALL == key) {
 			iv_index_t limit, j;
 
 			/* reconcile possible difference in voucher sizes */
-			if (IV_NULL != prev_iv)
+			if (IV_NULL != prev_iv) {
 				limit = (prev_iv->iv_table_size < voucher->iv_table_size) ?
-					prev_iv->iv_table_size :
-					voucher->iv_table_size;
-			else
+				    prev_iv->iv_table_size :
+				    voucher->iv_table_size;
+			} else {
 				limit = voucher->iv_table_size;
+			}
 
 			/* wildcard matching */
 			for (j = 0; j < limit; j++) {
@@ -1524,22 +1491,24 @@ ipc_execute_voucher_recipe_command(
 				j_key = iv_index_to_key(j);
 
 				/* skip non-existent managers */
-				if (MACH_VOUCHER_ATTR_KEY_NONE == j_key)
+				if (MACH_VOUCHER_ATTR_KEY_NONE == j_key) {
 					continue;
+				}
 
 				/* get the new value from redeem (skip empty previous) */
 				kr = ipc_replace_voucher_value(voucher,
-							       j_key,
-							       command,
-							       prev_iv,
-							       content,
-							       content_size);
-				if (KERN_SUCCESS != kr)
+				    j_key,
+				    command,
+				    prev_iv,
+				    content,
+				    content_size);
+				if (KERN_SUCCESS != kr) {
 					return kr;
+				}
 			}
 			break;
 		}
-		/* fall thru for single key redemption */
+	/* fall thru for single key redemption */
 
 	/*
 	 * DEFAULT:
@@ -1549,13 +1518,14 @@ ipc_execute_voucher_recipe_command(
 	 */
 	default:
 		kr = ipc_replace_voucher_value(voucher,
-					       key,
-					       command,
-					       prev_iv,
-					       content,
-					       content_size);
-		if (KERN_SUCCESS != kr)
+		    key,
+		    command,
+		    prev_iv,
+		    content,
+		    content_size);
+		if (KERN_SUCCESS != kr) {
 			return kr;
+		}
 
 		break;
 	}
@@ -1563,7 +1533,7 @@ ipc_execute_voucher_recipe_command(
 }
 
 /*
- *	Routine: 	iv_checksum
+ *	Routine:	iv_checksum
  *	Purpose:
  *		Compute the voucher sum.  This is more position-
  *		relevant than many other checksums - important for
@@ -1577,13 +1547,13 @@ iv_checksum(ipc_voucher_t voucher, boolean_t *emptyp)
 	boolean_t empty = TRUE;
 	if (0 < voucher->iv_table_size) {
 		iv_index_t i = voucher->iv_table_size - 1;
-	
+
 		do {
 			iv_index_t v = voucher->iv_table[i];
-			c = c << 3 | c >> (32 - 3);		/* rotate */
-			c = ~c;					/* invert */
+			c = c << 3 | c >> (32 - 3);             /* rotate */
+			c = ~c;                                 /* invert */
 			if (0 < v) {
-				c += v;				/* add in */
+				c += v;                         /* add in */
 				empty = FALSE;
 			}
 		} while (0 < i--);
@@ -1593,7 +1563,7 @@ iv_checksum(ipc_voucher_t voucher, boolean_t *emptyp)
 }
 
 /*
- *	Routine: 	iv_dedup
+ *	Routine:	iv_dedup
  *	Purpose:
  *		See if the set of values represented by this new voucher
  *		already exist in another voucher.  If so return a reference
@@ -1608,7 +1578,7 @@ static ipc_voucher_t
 iv_dedup(ipc_voucher_t new_iv)
 {
 	boolean_t empty;
-	iv_index_t sum; 
+	iv_index_t sum;
 	iv_index_t hash;
 	ipc_voucher_t iv;
 
@@ -1627,40 +1597,41 @@ iv_dedup(ipc_voucher_t new_iv)
 		assert(iv->iv_hash == hash);
 
 		/* if not already deallocating and sums match... */
-		if (0 < iv->iv_refs && iv->iv_sum == sum) {
-			iv_refs_t refs;
+		if ((os_ref_get_count(&iv->iv_refs) > 0) && (iv->iv_sum == sum)) {
 			iv_index_t i;
 
 			assert(iv->iv_table_size <= new_iv->iv_table_size);
-		
+
 			/* and common entries match... */
-			for (i = 0; i < iv->iv_table_size; i++)
-				if (iv->iv_table[i] != new_iv->iv_table[i])
+			for (i = 0; i < iv->iv_table_size; i++) {
+				if (iv->iv_table[i] != new_iv->iv_table[i]) {
 					break;
-			if (i < iv->iv_table_size)
+				}
+			}
+			if (i < iv->iv_table_size) {
 				continue;
+			}
 
 			/* and all extra entries in new one are unused... */
-			while (i < new_iv->iv_table_size)
-				if (new_iv->iv_table[i++] != IV_UNUSED_VALINDEX)
+			while (i < new_iv->iv_table_size) {
+				if (new_iv->iv_table[i++] != IV_UNUSED_VALINDEX) {
 					break;
-			if (i < new_iv->iv_table_size)
+				}
+			}
+			if (i < new_iv->iv_table_size) {
 				continue;
+			}
 
 			/* ... we found a match... */
 
 			/* can we get a ref before it hits 0
 			 *
-			 * This is thread safe. The reference is just an atomic
-			 * add. If the reference count is zero when we adjust it,
-			 * no other thread can have a reference to the voucher.
+			 * This is thread safe. If the reference count is zero before we
+			 * adjust it, no other thread can have a reference to the voucher.
 			 * The dealloc code requires holding the ivht_lock, so
 			 * the voucher cannot be yanked out from under us.
 			 */
-			refs = iv_reference(iv);
-			if (1 == refs) {
-				/* drats! going away. Put back to zero */
-				iv->iv_refs = 0;
+			if (!os_ref_retain_try(&iv->iv_refs)) {
 				continue;
 			}
 
@@ -1730,28 +1701,25 @@ iv_dedup(ipc_voucher_t new_iv)
 				size_t remainder = payload_size % PAYLOAD_PER_TRACEPOINT;
 				if (remainder) {
 					bzero((uint8_t*)payload + payload_size,
-					      PAYLOAD_PER_TRACEPOINT - remainder);
+					    PAYLOAD_PER_TRACEPOINT - remainder);
 				}
 			}
 
-			KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_IPC,MACH_IPC_VOUCHER_CREATE) | DBG_FUNC_NONE,
-					      voucher_addr,
-					      new_iv->iv_table_size, ivht_count, payload_size, 0);
+			KDBG(MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_VOUCHER_CREATE),
+			    voucher_addr, new_iv->iv_table_size, ivht_count,
+			    payload_size);
 
 			uintptr_t index = 0;
 			while (attr_tracepoints_needed--) {
-				KERNEL_DEBUG_CONSTANT1(MACHDBG_CODE(DBG_MACH_IPC,MACH_IPC_VOUCHER_CREATE_ATTR_DATA) | DBG_FUNC_NONE,
-						       payload[index],
-						       payload[index+1],
-						       payload[index+2],
-						       payload[index+3],
-						       voucher_addr);
+				KDBG(MACHDBG_CODE(DBG_MACH_IPC,
+				    MACH_IPC_VOUCHER_CREATE_ATTR_DATA), payload[index],
+				    payload[index + 1], payload[index + 2],
+				    payload[index + 3]);
 				index += 4;
 			}
 		} else {
-			KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_IPC,MACH_IPC_VOUCHER_CREATE) | DBG_FUNC_NONE,
-					      voucher_addr,
-					      new_iv->iv_table_size, ivht_count, 0, 0);
+			KDBG(MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_VOUCHER_CREATE),
+			    voucher_addr, new_iv->iv_table_size, ivht_count);
 		}
 	}
 #endif /* KDEBUG_LEVEL >= KDEBUG_LEVEL_STANDARD */
@@ -1760,7 +1728,7 @@ iv_dedup(ipc_voucher_t new_iv)
 }
 
 /*
- *	Routine: 	ipc_create_mach_voucher
+ *	Routine:	ipc_create_mach_voucher
  *	Purpose:
  *		Create a new mach voucher and initialize it with the
  *		value(s) created by having the appropriate resource
@@ -1773,9 +1741,9 @@ iv_dedup(ipc_voucher_t new_iv)
  */
 kern_return_t
 ipc_create_mach_voucher(
-	ipc_voucher_attr_raw_recipe_array_t 		recipes,
-	ipc_voucher_attr_raw_recipe_array_size_t	recipe_size,
-	ipc_voucher_t 					*new_voucher)
+	ipc_voucher_attr_raw_recipe_array_t             recipes,
+	ipc_voucher_attr_raw_recipe_array_size_t        recipe_size,
+	ipc_voucher_t                                   *new_voucher)
 {
 	ipc_voucher_attr_recipe_t sub_recipe;
 	ipc_voucher_attr_recipe_size_t recipe_used = 0;
@@ -1790,12 +1758,12 @@ ipc_create_mach_voucher(
 
 	/* allocate a voucher */
 	voucher = iv_alloc(ivgt_keys_in_use);
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_RESOURCE_SHORTAGE;
+	}
 
 	/* iterate over the recipe items */
 	while (0 < recipe_size - recipe_used) {
-
 		if (recipe_size - recipe_used < sizeof(*sub_recipe)) {
 			kr = KERN_INVALID_ARGUMENT;
 			break;
@@ -1810,14 +1778,15 @@ ipc_create_mach_voucher(
 		recipe_used += sizeof(*sub_recipe) + sub_recipe->content_size;
 
 		kr = ipc_execute_voucher_recipe_command(voucher,
-							sub_recipe->key,
-							sub_recipe->command,
-							sub_recipe->previous_voucher,
-							sub_recipe->content,
-							sub_recipe->content_size,
-							FALSE);
-		if (KERN_SUCCESS != kr)
+		    sub_recipe->key,
+		    sub_recipe->command,
+		    sub_recipe->previous_voucher,
+		    sub_recipe->content,
+		    sub_recipe->content_size,
+		    FALSE);
+		if (KERN_SUCCESS != kr) {
 			break;
+		}
 	}
 
 	if (KERN_SUCCESS == kr) {
@@ -1830,7 +1799,7 @@ ipc_create_mach_voucher(
 }
 
 /*
- *	Routine: 	ipc_voucher_attr_control_create_mach_voucher
+ *	Routine:	ipc_voucher_attr_control_create_mach_voucher
  *	Purpose:
  *		Create a new mach voucher and initialize it with the
  *		value(s) created by having the appropriate resource
@@ -1851,10 +1820,10 @@ ipc_create_mach_voucher(
  */
 kern_return_t
 ipc_voucher_attr_control_create_mach_voucher(
-	ipc_voucher_attr_control_t			control,
-	ipc_voucher_attr_raw_recipe_array_t 		recipes,
-	ipc_voucher_attr_raw_recipe_array_size_t	recipe_size,
-	ipc_voucher_t 					*new_voucher)
+	ipc_voucher_attr_control_t                      control,
+	ipc_voucher_attr_raw_recipe_array_t             recipes,
+	ipc_voucher_attr_raw_recipe_array_size_t        recipe_size,
+	ipc_voucher_t                                   *new_voucher)
 {
 	mach_voucher_attr_key_t control_key;
 	ipc_voucher_attr_recipe_t sub_recipe;
@@ -1862,8 +1831,9 @@ ipc_voucher_attr_control_create_mach_voucher(
 	ipc_voucher_t voucher = IV_NULL;
 	kern_return_t kr = KERN_SUCCESS;
 
-	if (IPC_VOUCHER_ATTR_CONTROL_NULL == control)
+	if (IPC_VOUCHER_ATTR_CONTROL_NULL == control) {
 		return KERN_INVALID_CAPABILITY;
+	}
 
 	/* if nothing to do ... */
 	if (0 == recipe_size) {
@@ -1873,14 +1843,14 @@ ipc_voucher_attr_control_create_mach_voucher(
 
 	/* allocate new voucher */
 	voucher = iv_alloc(ivgt_keys_in_use);
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_RESOURCE_SHORTAGE;
+	}
 
 	control_key = iv_index_to_key(control->ivac_key_index);
 
 	/* iterate over the recipe items */
 	while (0 < recipe_size - recipe_used) {
-
 		if (recipe_size - recipe_used < sizeof(*sub_recipe)) {
 			kr = KERN_INVALID_ARGUMENT;
 			break;
@@ -1895,14 +1865,15 @@ ipc_voucher_attr_control_create_mach_voucher(
 		recipe_used += sizeof(*sub_recipe) + sub_recipe->content_size;
 
 		kr = ipc_execute_voucher_recipe_command(voucher,
-							sub_recipe->key,
-							sub_recipe->command,
-							sub_recipe->previous_voucher,
-							sub_recipe->content,
-							sub_recipe->content_size,
-							(sub_recipe->key == control_key));
-		if (KERN_SUCCESS != kr)
+		    sub_recipe->key,
+		    sub_recipe->command,
+		    sub_recipe->previous_voucher,
+		    sub_recipe->content,
+		    sub_recipe->content_size,
+		    (sub_recipe->key == control_key));
+		if (KERN_SUCCESS != kr) {
 			break;
+		}
 	}
 
 	if (KERN_SUCCESS == kr) {
@@ -1915,7 +1886,7 @@ ipc_voucher_attr_control_create_mach_voucher(
 }
 
 /*
- * 	ipc_register_well_known_mach_voucher_attr_manager
+ *	ipc_register_well_known_mach_voucher_attr_manager
  *
  *	Register the resource manager responsible for a given key value.
  */
@@ -1923,23 +1894,26 @@ kern_return_t
 ipc_register_well_known_mach_voucher_attr_manager(
 	ipc_voucher_attr_manager_t manager,
 	mach_voucher_attr_value_handle_t default_value,
-        mach_voucher_attr_key_t key,
+	mach_voucher_attr_key_t key,
 	ipc_voucher_attr_control_t *control)
 {
 	ipc_voucher_attr_control_t new_control;
 	iv_index_t key_index;
 	iv_index_t hash_index;
 
-	if (IVAM_NULL == manager)
+	if (IVAM_NULL == manager) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	key_index = iv_key_to_index(key);
-	if (IV_UNUSED_KEYINDEX == key_index)
+	if (IV_UNUSED_KEYINDEX == key_index) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	new_control = ivac_alloc(key_index);
-	if (IVAC_NULL == new_control)
+	if (IVAC_NULL == new_control) {
 		return KERN_RESOURCE_SHORTAGE;
+	}
 
 	/* insert the default value into slot 0 */
 	new_control->ivac_table[IV_UNUSED_VALINDEX].ivace_value = default_value;
@@ -1966,7 +1940,7 @@ ipc_register_well_known_mach_voucher_attr_manager(
 	new_control->ivac_table[hash_index].ivace_index = IV_UNUSED_VALINDEX;
 
 	ivgt_unlock();
-	
+
 	/* return the reference on the new cache control to the caller */
 	*control = new_control;
 
@@ -1974,7 +1948,7 @@ ipc_register_well_known_mach_voucher_attr_manager(
 }
 
 /*
- * 	Routine:	mach_voucher_extract_attr_content
+ *	Routine:	mach_voucher_extract_attr_content
  *	Purpose:
  *		Extract the content for a given <voucher, key> pair.
  *
@@ -1989,10 +1963,10 @@ ipc_register_well_known_mach_voucher_attr_manager(
  */
 kern_return_t
 mach_voucher_extract_attr_content(
-	ipc_voucher_t				voucher,
-	mach_voucher_attr_key_t			key,
-	mach_voucher_attr_content_t		content,
-	mach_voucher_attr_content_size_t	*in_out_size)
+	ipc_voucher_t                           voucher,
+	mach_voucher_attr_key_t                 key,
+	mach_voucher_attr_content_t             content,
+	mach_voucher_attr_content_size_t        *in_out_size)
 {
 	mach_voucher_attr_value_handle_t vals[MACH_VOUCHER_ATTR_VALUE_MAX_NESTED];
 	mach_voucher_attr_value_handle_array_size_t vals_count;
@@ -2003,8 +1977,9 @@ mach_voucher_extract_attr_content(
 	kern_return_t kr;
 
 
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	key_index = iv_key_to_index(key);
 
@@ -2030,20 +2005,18 @@ mach_voucher_extract_attr_content(
 	 * for this value_index.
 	 */
 	ivace_lookup_values(key_index, value_index,
-			    vals, &vals_count);
+	    vals, &vals_count);
 	assert(0 < vals_count);
 
 	/* callout to manager */
-	
-	kr = (manager->ivam_extract_content)(manager, key, 
-					     vals, vals_count,
-					     &command,
-					     content, in_out_size);
+
+	kr = (manager->ivam_extract_content)(manager, key,
+	    vals, vals_count, &command, content, in_out_size);
 	return kr;
 }
 
 /*
- * 	Routine:	mach_voucher_extract_attr_recipe
+ *	Routine:	mach_voucher_extract_attr_recipe
  *	Purpose:
  *		Extract a recipe for a given <voucher, key> pair.
  *
@@ -2058,10 +2031,10 @@ mach_voucher_extract_attr_content(
  */
 kern_return_t
 mach_voucher_extract_attr_recipe(
-	ipc_voucher_t				voucher,
-	mach_voucher_attr_key_t			key,
-	mach_voucher_attr_raw_recipe_t		raw_recipe,
-	mach_voucher_attr_raw_recipe_size_t	*in_out_size)
+	ipc_voucher_t                           voucher,
+	mach_voucher_attr_key_t                 key,
+	mach_voucher_attr_raw_recipe_t          raw_recipe,
+	mach_voucher_attr_raw_recipe_size_t     *in_out_size)
 {
 	mach_voucher_attr_value_handle_t vals[MACH_VOUCHER_ATTR_VALUE_MAX_NESTED];
 	mach_voucher_attr_value_handle_array_size_t vals_count;
@@ -2072,8 +2045,9 @@ mach_voucher_extract_attr_recipe(
 	kern_return_t kr;
 
 
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	key_index = iv_key_to_index(key);
 
@@ -2083,8 +2057,9 @@ mach_voucher_extract_attr_recipe(
 		return KERN_SUCCESS;
 	}
 
-	if (*in_out_size < sizeof(*recipe))
+	if (*in_out_size < sizeof(*recipe)) {
 		return KERN_NO_SPACE;
+	}
 
 	recipe = (mach_voucher_attr_recipe_t)(void *)raw_recipe;
 	recipe->key = key;
@@ -2108,17 +2083,17 @@ mach_voucher_extract_attr_recipe(
 	 * for this value_index.
 	 */
 	ivace_lookup_values(key_index, value_index,
-			    vals, &vals_count);
+	    vals, &vals_count);
 	assert(0 < vals_count);
 
 	/* callout to manager */
-	kr = (manager->ivam_extract_content)(manager, key, 
-					     vals, vals_count,
-					     &recipe->command,
-					     recipe->content, &recipe->content_size);
+	kr = (manager->ivam_extract_content)(manager, key,
+	    vals, vals_count,
+	    &recipe->command,
+	    recipe->content, &recipe->content_size);
 	if (KERN_SUCCESS == kr) {
-	  assert(*in_out_size - sizeof(*recipe) >= recipe->content_size);
-	  *in_out_size = sizeof(*recipe) + recipe->content_size;
+		assert(*in_out_size - sizeof(*recipe) >= recipe->content_size);
+		*in_out_size = sizeof(*recipe) + recipe->content_size;
 	}
 
 	return kr;
@@ -2127,27 +2102,28 @@ mach_voucher_extract_attr_recipe(
 
 
 /*
- *	Routine: 	mach_voucher_extract_all_attr_recipes
+ *	Routine:	mach_voucher_extract_all_attr_recipes
  *	Purpose:
  *		Extract all the (non-default) contents for a given voucher,
- *		building up a recipe that could be provided to a future 
+ *		building up a recipe that could be provided to a future
  *		voucher creation call.
- *	Conditions:		
+ *	Conditions:
  *		Nothing locked (may invoke user-space).
  *		Caller holds a reference on the supplied voucher.
  */
 kern_return_t
 mach_voucher_extract_all_attr_recipes(
-	ipc_voucher_t					voucher,
-	mach_voucher_attr_raw_recipe_array_t		recipes,
-	mach_voucher_attr_raw_recipe_array_size_t	*in_out_size)
+	ipc_voucher_t                                   voucher,
+	mach_voucher_attr_raw_recipe_array_t            recipes,
+	mach_voucher_attr_raw_recipe_array_size_t       *in_out_size)
 {
 	mach_voucher_attr_recipe_size_t recipe_size = *in_out_size;
 	mach_voucher_attr_recipe_size_t recipe_used = 0;
 	iv_index_t key_index;
 
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	for (key_index = 0; key_index < voucher->iv_table_size; key_index++) {
 		mach_voucher_attr_value_handle_t vals[MACH_VOUCHER_ATTR_VALUE_MAX_NESTED];
@@ -2161,11 +2137,13 @@ mach_voucher_extract_all_attr_recipes(
 
 		/* don't output anything for a default value */
 		value_index = iv_lookup(voucher, key_index);
-		if (IV_UNUSED_VALINDEX == value_index)
+		if (IV_UNUSED_VALINDEX == value_index) {
 			continue;
+		}
 
-		if (recipe_size - recipe_used < sizeof(*recipe))
+		if (recipe_size - recipe_used < sizeof(*recipe)) {
 			return KERN_NO_SPACE;
+		}
 
 		/*
 		 * Get the manager for this key_index.  The
@@ -2187,7 +2165,7 @@ mach_voucher_extract_all_attr_recipes(
 		 * for this value_index.
 		 */
 		ivace_lookup_values(key_index, value_index,
-				    vals, &vals_count);
+		    vals, &vals_count);
 		assert(0 < vals_count);
 
 		key = iv_index_to_key(key_index);
@@ -2197,12 +2175,13 @@ mach_voucher_extract_all_attr_recipes(
 		recipe->content_size = content_size;
 
 		/* callout to manager */
-		kr = (manager->ivam_extract_content)(manager, key, 
-					     vals, vals_count,
-					     &recipe->command,
-					     recipe->content, &recipe->content_size);
-		if (KERN_SUCCESS != kr)
+		kr = (manager->ivam_extract_content)(manager, key,
+		    vals, vals_count,
+		    &recipe->command,
+		    recipe->content, &recipe->content_size);
+		if (KERN_SUCCESS != kr) {
 			return kr;
+		}
 
 		assert(recipe->content_size <= content_size);
 		recipe_used += sizeof(*recipe) + recipe->content_size;
@@ -2213,10 +2192,10 @@ mach_voucher_extract_all_attr_recipes(
 }
 
 /*
- *	Routine: 	mach_voucher_debug_info
+ *	Routine:	mach_voucher_debug_info
  *	Purpose:
  *		Extract all the (non-default) contents for a given mach port name,
- *		building up a recipe that could be provided to a future 
+ *		building up a recipe that could be provided to a future
  *		voucher creation call.
  *	Conditions:
  *		Nothing locked (may invoke user-space).
@@ -2225,32 +2204,37 @@ mach_voucher_extract_all_attr_recipes(
 #if !(DEVELOPMENT || DEBUG)
 kern_return_t
 mach_voucher_debug_info(
-	ipc_space_t 					__unused space,
-	mach_port_name_t				__unused voucher_name,
-	mach_voucher_attr_raw_recipe_array_t		__unused recipes,
-	mach_voucher_attr_raw_recipe_array_size_t	__unused *in_out_size)
+	ipc_space_t                                     __unused space,
+	mach_port_name_t                                __unused voucher_name,
+	mach_voucher_attr_raw_recipe_array_t            __unused recipes,
+	mach_voucher_attr_raw_recipe_array_size_t       __unused *in_out_size)
 {
 	return KERN_NOT_SUPPORTED;
 }
 #else
 kern_return_t
 mach_voucher_debug_info(
-	ipc_space_t 					space,
-	mach_port_name_t				voucher_name,
-	mach_voucher_attr_raw_recipe_array_t		recipes,
-	mach_voucher_attr_raw_recipe_array_size_t	*in_out_size)
+	ipc_space_t                                     space,
+	mach_port_name_t                                voucher_name,
+	mach_voucher_attr_raw_recipe_array_t            recipes,
+	mach_voucher_attr_raw_recipe_array_size_t       *in_out_size)
 {
 	ipc_voucher_t voucher = IPC_VOUCHER_NULL;
 	kern_return_t kr;
 	ipc_port_t port = MACH_PORT_NULL;
+
+	if (space == IS_NULL) {
+		return KERN_INVALID_TASK;
+	}
 
 	if (!MACH_PORT_VALID(voucher_name)) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
 	kr = ipc_port_translate_send(space, voucher_name, &port);
-	if (KERN_SUCCESS != kr)
+	if (KERN_SUCCESS != kr) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	voucher = convert_port_to_voucher(port);
 	ip_unlock(port);
@@ -2266,7 +2250,7 @@ mach_voucher_debug_info(
 #endif
 
 /*
- * 	Routine:	mach_voucher_attr_command
+ *	Routine:	mach_voucher_attr_command
  *	Purpose:
  *		Invoke an attribute-specific command through this voucher.
  *
@@ -2279,13 +2263,13 @@ mach_voucher_debug_info(
  */
 kern_return_t
 mach_voucher_attr_command(
-	ipc_voucher_t						voucher,
-	mach_voucher_attr_key_t				key,
-	mach_voucher_attr_command_t			command,
-	mach_voucher_attr_content_t			in_content,
-	mach_voucher_attr_content_size_t	in_content_size,
-	mach_voucher_attr_content_t			out_content,
-	mach_voucher_attr_content_size_t	*out_content_size)
+	ipc_voucher_t                                           voucher,
+	mach_voucher_attr_key_t                         key,
+	mach_voucher_attr_command_t                     command,
+	mach_voucher_attr_content_t                     in_content,
+	mach_voucher_attr_content_size_t        in_content_size,
+	mach_voucher_attr_content_t                     out_content,
+	mach_voucher_attr_content_size_t        *out_content_size)
 {
 	mach_voucher_attr_value_handle_t vals[MACH_VOUCHER_ATTR_VALUE_MAX_NESTED];
 	mach_voucher_attr_value_handle_array_size_t vals_count;
@@ -2296,8 +2280,9 @@ mach_voucher_attr_command(
 	kern_return_t kr;
 
 
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	key_index = iv_key_to_index(key);
 
@@ -2322,14 +2307,14 @@ mach_voucher_attr_command(
 	 */
 	value_index = iv_lookup(voucher, key_index);
 	ivace_lookup_values(key_index, value_index,
-			    vals, &vals_count);
+	    vals, &vals_count);
 
 	/* callout to manager */
-	kr = (manager->ivam_command)(manager, key, 
-				     vals, vals_count,
-				     command,
-				     in_content, in_content_size,
-				     out_content, out_content_size);
+	kr = (manager->ivam_command)(manager, key,
+	    vals, vals_count,
+	    command,
+	    in_content, in_content_size,
+	    out_content, out_content_size);
 
 	/* release reference on control */
 	ivac_release(control);
@@ -2338,7 +2323,7 @@ mach_voucher_attr_command(
 }
 
 /*
- * 	Routine:	mach_voucher_attr_control_get_values
+ *	Routine:	mach_voucher_attr_control_get_values
  *	Purpose:
  *		For a given voucher, get the value handle associated with the
  *		specified attribute manager.
@@ -2352,26 +2337,29 @@ mach_voucher_attr_control_get_values(
 {
 	iv_index_t key_index, value_index;
 
-	if (IPC_VOUCHER_ATTR_CONTROL_NULL == control)
+	if (IPC_VOUCHER_ATTR_CONTROL_NULL == control) {
 		return KERN_INVALID_CAPABILITY;
+	}
 
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
-	if (0 == *in_out_size)
+	if (0 == *in_out_size) {
 		return KERN_SUCCESS;
+	}
 
 	key_index = control->ivac_key_index;
 
-	assert(0 < voucher->iv_refs);
+	assert(os_ref_get_count(&voucher->iv_refs) > 0);
 	value_index = iv_lookup(voucher, key_index);
 	ivace_lookup_values(key_index, value_index,
-			    out_values, in_out_size);
+	    out_values, in_out_size);
 	return KERN_SUCCESS;
 }
 
 /*
- * 	Routine:	mach_voucher_attr_control_create_mach_voucher
+ *	Routine:	mach_voucher_attr_control_create_mach_voucher
  *	Purpose:
  *		Create a new mach voucher and initialize it by processing the
  *		supplied recipe(s).
@@ -2399,8 +2387,9 @@ mach_voucher_attr_control_create_mach_voucher(
 	ipc_voucher_t voucher = IV_NULL;
 	kern_return_t kr = KERN_SUCCESS;
 
-	if (IPC_VOUCHER_ATTR_CONTROL_NULL == control)
+	if (IPC_VOUCHER_ATTR_CONTROL_NULL == control) {
 		return KERN_INVALID_CAPABILITY;
+	}
 
 	/* if nothing to do ... */
 	if (0 == recipe_size) {
@@ -2410,8 +2399,9 @@ mach_voucher_attr_control_create_mach_voucher(
 
 	/* allocate new voucher */
 	voucher = iv_alloc(ivgt_keys_in_use);
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_RESOURCE_SHORTAGE;
+	}
 
 	control_key = iv_index_to_key(control->ivac_key_index);
 
@@ -2440,16 +2430,17 @@ mach_voucher_attr_control_create_mach_voucher(
 		}
 
 		kr = ipc_execute_voucher_recipe_command(voucher,
-							sub_recipe->key,
-							sub_recipe->command,
-							prev_iv,
-							sub_recipe->content,
-							sub_recipe->content_size,
-							(sub_recipe->key == control_key));
+		    sub_recipe->key,
+		    sub_recipe->command,
+		    prev_iv,
+		    sub_recipe->content,
+		    sub_recipe->content_size,
+		    (sub_recipe->key == control_key));
 		ipc_voucher_release(prev_iv);
 
-		if (KERN_SUCCESS != kr)
+		if (KERN_SUCCESS != kr) {
 			break;
+		}
 	}
 
 	if (KERN_SUCCESS == kr) {
@@ -2462,7 +2453,7 @@ mach_voucher_attr_control_create_mach_voucher(
 }
 
 /*
- * 	Routine:	host_create_mach_voucher
+ *	Routine:	host_create_mach_voucher
  *	Purpose:
  *		Create a new mach voucher and initialize it by processing the
  *		supplied recipe(s).
@@ -2486,8 +2477,9 @@ host_create_mach_voucher(
 	ipc_voucher_t voucher = IV_NULL;
 	kern_return_t kr = KERN_SUCCESS;
 
-	if (host == HOST_NULL)
+	if (host == HOST_NULL) {
 		return KERN_INVALID_ARGUMENT;
+	}
 
 	/* if nothing to do ... */
 	if (0 == recipe_size) {
@@ -2497,8 +2489,9 @@ host_create_mach_voucher(
 
 	/* allocate new voucher */
 	voucher = iv_alloc(ivgt_keys_in_use);
-	if (IV_NULL == voucher)
+	if (IV_NULL == voucher) {
 		return KERN_RESOURCE_SHORTAGE;
+	}
 
 	/* iterate over the recipe items */
 	while (0 < recipe_size - recipe_used) {
@@ -2525,16 +2518,17 @@ host_create_mach_voucher(
 		}
 
 		kr = ipc_execute_voucher_recipe_command(voucher,
-							sub_recipe->key,
-							sub_recipe->command,
-							prev_iv,
-							sub_recipe->content,
-							sub_recipe->content_size,
-							FALSE);
+		    sub_recipe->key,
+		    sub_recipe->command,
+		    prev_iv,
+		    sub_recipe->content,
+		    sub_recipe->content_size,
+		    FALSE);
 		ipc_voucher_release(prev_iv);
 
-		if (KERN_SUCCESS != kr)
+		if (KERN_SUCCESS != kr) {
 			break;
+		}
 	}
 
 	if (KERN_SUCCESS == kr) {
@@ -2547,10 +2541,10 @@ host_create_mach_voucher(
 }
 
 /*
- * 	Routine:	host_register_well_known_mach_voucher_attr_manager
+ *	Routine:	host_register_well_known_mach_voucher_attr_manager
  *	Purpose:
  *		Register the user-level resource manager responsible for a given
- * 		key value.  
+ *		key value.
  *	Conditions:
  *		The manager port passed in has to be converted/wrapped
  *		in an ipc_voucher_attr_manager_t structure and then call the
@@ -2560,14 +2554,15 @@ host_create_mach_voucher(
  */
 kern_return_t
 host_register_well_known_mach_voucher_attr_manager(
-        host_t host,
+	host_t host,
 	mach_voucher_attr_manager_t __unused manager,
 	mach_voucher_attr_value_handle_t __unused default_value,
-        mach_voucher_attr_key_t __unused key,
+	mach_voucher_attr_key_t __unused key,
 	ipc_voucher_attr_control_t __unused *control)
 {
-	if (HOST_NULL == host)
+	if (HOST_NULL == host) {
 		return KERN_INVALID_HOST;
+	}
 
 #if 1
 	return KERN_NOT_SUPPORTED;
@@ -2586,18 +2581,19 @@ host_register_well_known_mach_voucher_attr_manager(
 	proxy = mvam_alloc(manager);
 
 	kr = ipc_register_well_known_mach_voucher_attr_manager(&proxy->mvam_manager,
-							       default_value,
-							       key,
-							       control);
-	if (KERN_SUCCESS != kr)
+	    default_value,
+	    key,
+	    control);
+	if (KERN_SUCCESS != kr) {
 		mvam_release(proxy);
+	}
 
 	return kr;
 #endif
 }
 
 /*
- * 	Routine:	host_register_mach_voucher_attr_manager
+ *	Routine:	host_register_mach_voucher_attr_manager
  *	Purpose:
  *		Register the user-space resource manager and return a
  *		dynamically allocated key.
@@ -2608,14 +2604,15 @@ host_register_well_known_mach_voucher_attr_manager(
  */
 kern_return_t
 host_register_mach_voucher_attr_manager(
-        host_t host,
+	host_t host,
 	mach_voucher_attr_manager_t __unused manager,
 	mach_voucher_attr_value_handle_t __unused default_value,
-        mach_voucher_attr_key_t __unused *key,
+	mach_voucher_attr_key_t __unused *key,
 	ipc_voucher_attr_control_t __unused *control)
 {
-	if (HOST_NULL == host)
+	if (HOST_NULL == host) {
 		return KERN_INVALID_HOST;
+	}
 
 	return KERN_NOT_SUPPORTED;
 }
@@ -2632,7 +2629,7 @@ ipc_get_pthpriority_from_kmsg_voucher(
 {
 	ipc_voucher_t pthread_priority_voucher;
 	mach_voucher_attr_raw_recipe_size_t content_size =
-			sizeof(mach_voucher_attr_recipe_data_t) + sizeof(ipc_pthread_priority_value_t);
+	    sizeof(mach_voucher_attr_recipe_data_t) + sizeof(ipc_pthread_priority_value_t);
 	uint8_t content_data[content_size];
 	mach_voucher_attr_recipe_t cur_content;
 	kern_return_t kr = KERN_SUCCESS;
@@ -2643,9 +2640,9 @@ ipc_get_pthpriority_from_kmsg_voucher(
 
 	pthread_priority_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
 	kr = mach_voucher_extract_attr_recipe(pthread_priority_voucher,
-				MACH_VOUCHER_ATTR_KEY_PTHPRIORITY,
-				content_data,
-				&content_size);
+	    MACH_VOUCHER_ATTR_KEY_PTHPRIORITY,
+	    content_data,
+	    &content_size);
 	if (kr != KERN_SUCCESS) {
 		return kr;
 	}
@@ -2674,8 +2671,8 @@ void
 ipc_voucher_send_preprocessing(ipc_kmsg_t kmsg)
 {
 	uint8_t recipes[(MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN + 1) * sizeof(ipc_voucher_attr_recipe_data_t)];
-	ipc_voucher_attr_raw_recipe_array_size_t recipe_size = (MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN + 1) * 
-						sizeof(ipc_voucher_attr_recipe_data_t);
+	ipc_voucher_attr_raw_recipe_array_size_t recipe_size = (MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN + 1) *
+	    sizeof(ipc_voucher_attr_recipe_data_t);
 	ipc_voucher_t pre_processed_voucher;
 	ipc_voucher_t voucher_to_send;
 	kern_return_t kr;
@@ -2689,9 +2686,9 @@ ipc_voucher_send_preprocessing(ipc_kmsg_t kmsg)
 	pre_processed_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
 
 	kr = ipc_voucher_prepare_processing_recipe(pre_processed_voucher,
-		(mach_voucher_attr_raw_recipe_array_t)recipes,
-		&recipe_size, MACH_VOUCHER_ATTR_SEND_PREPROCESS,
-		IVAM_FLAGS_SUPPORT_SEND_PREPROCESS, &need_preprocessing);
+	    (mach_voucher_attr_raw_recipe_array_t)recipes,
+	    &recipe_size, MACH_VOUCHER_ATTR_SEND_PREPROCESS,
+	    IVAM_FLAGS_SUPPORT_SEND_PREPROCESS, &need_preprocessing);
 
 	assert(KERN_SUCCESS == kr);
 	/*
@@ -2699,8 +2696,8 @@ ipc_voucher_send_preprocessing(ipc_kmsg_t kmsg)
 	 */
 	if (need_preprocessing) {
 		kr = ipc_create_mach_voucher(recipes,
-					     recipe_size,
-					     &voucher_to_send);
+		    recipe_size,
+		    &voucher_to_send);
 		assert(KERN_SUCCESS == kr);
 		ipc_port_release_send(kmsg->ikm_voucher);
 		kmsg->ikm_voucher = convert_voucher_to_port(voucher_to_send);
@@ -2718,19 +2715,19 @@ ipc_voucher_send_preprocessing(ipc_kmsg_t kmsg)
  */
 void
 ipc_voucher_receive_postprocessing(
-	ipc_kmsg_t		kmsg,
-	mach_msg_option_t	option)
+	ipc_kmsg_t              kmsg,
+	mach_msg_option_t       option)
 {
 	uint8_t recipes[(MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN + 1) * sizeof(ipc_voucher_attr_recipe_data_t)];
-	ipc_voucher_attr_raw_recipe_array_size_t recipe_size = (MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN + 1) * 
-						sizeof(ipc_voucher_attr_recipe_data_t);
+	ipc_voucher_attr_raw_recipe_array_size_t recipe_size = (MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN + 1) *
+	    sizeof(ipc_voucher_attr_recipe_data_t);
 	ipc_voucher_t recv_voucher;
 	ipc_voucher_t sent_voucher;
 	kern_return_t kr;
 	int need_postprocessing = FALSE;
 
 	if ((option & MACH_RCV_VOUCHER) == 0 || (!IP_VALID(kmsg->ikm_voucher)) ||
-	     current_task() == kernel_task) {
+	    current_task() == kernel_task) {
 		return;
 	}
 
@@ -2738,9 +2735,9 @@ ipc_voucher_receive_postprocessing(
 	sent_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
 
 	kr = ipc_voucher_prepare_processing_recipe(sent_voucher,
-		(mach_voucher_attr_raw_recipe_array_t)recipes,
-		&recipe_size, MACH_VOUCHER_ATTR_AUTO_REDEEM,
-		IVAM_FLAGS_SUPPORT_RECEIVE_POSTPROCESS, &need_postprocessing);
+	    (mach_voucher_attr_raw_recipe_array_t)recipes,
+	    &recipe_size, MACH_VOUCHER_ATTR_AUTO_REDEEM,
+	    IVAM_FLAGS_SUPPORT_RECEIVE_POSTPROCESS, &need_postprocessing);
 
 	assert(KERN_SUCCESS == kr);
 
@@ -2749,8 +2746,8 @@ ipc_voucher_receive_postprocessing(
 	 */
 	if (need_postprocessing) {
 		kr = ipc_create_mach_voucher(recipes,
-					     recipe_size,
-					     &recv_voucher);
+		    recipe_size,
+		    &recv_voucher);
 		assert(KERN_SUCCESS == kr);
 		/* swap the voucher port (and set voucher bits in case it didn't already exist) */
 		kmsg->ikm_header->msgh_bits |= (MACH_MSG_TYPE_MOVE_SEND << 16);
@@ -2779,13 +2776,15 @@ ipc_voucher_prepare_processing_recipe(
 	ipc_voucher_attr_raw_recipe_array_size_t recipe_used = 0;
 	iv_index_t key_index;
 	ipc_voucher_attr_recipe_t recipe;
-	
-	if (IV_NULL == voucher)
+
+	if (IV_NULL == voucher) {
 		return KERN_INVALID_ARGUMENT;
-	
+	}
+
 	/* Setup a recipe to copy all attributes. */
-	if (recipe_size < sizeof(*recipe))
-			return KERN_NO_SPACE;
+	if (recipe_size < sizeof(*recipe)) {
+		return KERN_NO_SPACE;
+	}
 
 	*need_processing = FALSE;
 	recipe = (ipc_voucher_attr_recipe_t)(void *)&recipes[recipe_used];
@@ -2802,14 +2801,16 @@ ipc_voucher_prepare_processing_recipe(
 
 		/* don't output anything for a default value */
 		value_index = iv_lookup(voucher, key_index);
-		if (IV_UNUSED_VALINDEX == value_index)
+		if (IV_UNUSED_VALINDEX == value_index) {
 			continue;
+		}
 
-		if (recipe_size - recipe_used < sizeof(*recipe))
+		if (recipe_size - recipe_used < sizeof(*recipe)) {
 			return KERN_NO_SPACE;
+		}
 
 		recipe = (ipc_voucher_attr_recipe_t)(void *)&recipes[recipe_used];
-		
+
 		/*
 		 * Get the manager for this key_index. The
 		 * existence of a non-default value for this
@@ -2823,9 +2824,10 @@ ipc_voucher_prepare_processing_recipe(
 		}
 
 		/* Check if the supported flag is set in the manager */
-		if ((manager->ivam_flags & flags) == 0)
+		if ((manager->ivam_flags & flags) == 0) {
 			continue;
-		
+		}
+
 		key = iv_index_to_key(key_index);
 
 		recipe->key = key;
@@ -2877,9 +2879,9 @@ mach_generate_activity_id(
 	}
 
 	activity_id = generate_activity_id(args->count);
-	kr = copyout(&activity_id, args->activity_id, sizeof (activity_id));
+	kr = copyout(&activity_id, args->activity_id, sizeof(activity_id));
 
-	return (kr);
+	return kr;
 }
 
 #if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) || defined(MACH_VOUCHER_ATTR_KEY_TEST)
@@ -2887,15 +2889,15 @@ mach_generate_activity_id(
 /*
  * Build-in a simple User Data Resource Manager
  */
-#define USER_DATA_MAX_DATA	(16*1024)
+#define USER_DATA_MAX_DATA      (16*1024)
 
 struct user_data_value_element {
-	mach_voucher_attr_value_reference_t	e_made;
-	mach_voucher_attr_content_size_t	e_size;
-	iv_index_t				e_sum;
-	iv_index_t				e_hash;
-	queue_chain_t				e_hash_link;
-	uint8_t					e_data[];
+	mach_voucher_attr_value_reference_t     e_made;
+	mach_voucher_attr_content_size_t        e_size;
+	iv_index_t                              e_sum;
+	iv_index_t                              e_hash;
+	queue_chain_t                           e_hash_link;
+	uint8_t                                 e_data[];
 };
 
 typedef struct user_data_value_element *user_data_element_t;
@@ -2913,74 +2915,74 @@ static lck_spin_t user_data_lock_data;
 	lck_spin_init(&user_data_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define user_data_lock_destroy() \
 	lck_spin_destroy(&user_data_lock_data, &ipc_lck_grp)
-#define	user_data_lock() \
-	lck_spin_lock(&user_data_lock_data)
-#define	user_data_lock_try() \
-	lck_spin_try_lock(&user_data_lock_data)
-#define	user_data_unlock() \
+#define user_data_lock() \
+	lck_spin_lock_grp(&user_data_lock_data, &ipc_lck_grp)
+#define user_data_lock_try() \
+	lck_spin_try_lock_grp(&user_data_lock_data, &ipc_lck_grp)
+#define user_data_unlock() \
 	lck_spin_unlock(&user_data_lock_data)
 
 static kern_return_t
 user_data_release_value(
-	ipc_voucher_attr_manager_t		manager,
-	mach_voucher_attr_key_t			key,
-	mach_voucher_attr_value_handle_t	value,
-	mach_voucher_attr_value_reference_t	sync);
+	ipc_voucher_attr_manager_t              manager,
+	mach_voucher_attr_key_t                 key,
+	mach_voucher_attr_value_handle_t        value,
+	mach_voucher_attr_value_reference_t     sync);
 
 static kern_return_t
 user_data_get_value(
-	ipc_voucher_attr_manager_t			manager,
-	mach_voucher_attr_key_t				key,
-	mach_voucher_attr_recipe_command_t		command,
-	mach_voucher_attr_value_handle_array_t		prev_values,
-	mach_voucher_attr_value_handle_array_size_t	prev_value_count,
-	mach_voucher_attr_content_t			content,
-	mach_voucher_attr_content_size_t		content_size,
-	mach_voucher_attr_value_handle_t		*out_value,
-	mach_voucher_attr_value_flags_t			*out_flags,
-	ipc_voucher_t					*out_value_voucher);
+	ipc_voucher_attr_manager_t                      manager,
+	mach_voucher_attr_key_t                         key,
+	mach_voucher_attr_recipe_command_t              command,
+	mach_voucher_attr_value_handle_array_t          prev_values,
+	mach_voucher_attr_value_handle_array_size_t     prev_value_count,
+	mach_voucher_attr_content_t                     content,
+	mach_voucher_attr_content_size_t                content_size,
+	mach_voucher_attr_value_handle_t                *out_value,
+	mach_voucher_attr_value_flags_t                 *out_flags,
+	ipc_voucher_t                                   *out_value_voucher);
 
 static kern_return_t
 user_data_extract_content(
-	ipc_voucher_attr_manager_t			manager,
-	mach_voucher_attr_key_t				key,
-	mach_voucher_attr_value_handle_array_t		values,
-	mach_voucher_attr_value_handle_array_size_t	value_count,
-	mach_voucher_attr_recipe_command_t		*out_command,
-	mach_voucher_attr_content_t			out_content,
-	mach_voucher_attr_content_size_t		*in_out_content_size);
+	ipc_voucher_attr_manager_t                      manager,
+	mach_voucher_attr_key_t                         key,
+	mach_voucher_attr_value_handle_array_t          values,
+	mach_voucher_attr_value_handle_array_size_t     value_count,
+	mach_voucher_attr_recipe_command_t              *out_command,
+	mach_voucher_attr_content_t                     out_content,
+	mach_voucher_attr_content_size_t                *in_out_content_size);
 
 static kern_return_t
 user_data_command(
-	ipc_voucher_attr_manager_t				manager,
-	mach_voucher_attr_key_t					key,
-	mach_voucher_attr_value_handle_array_t	values,
-	mach_msg_type_number_t					value_count,
-	mach_voucher_attr_command_t				command,
-	mach_voucher_attr_content_t				in_content,
-	mach_voucher_attr_content_size_t		in_content_size,
-	mach_voucher_attr_content_t				out_content,
-	mach_voucher_attr_content_size_t		*out_content_size);
+	ipc_voucher_attr_manager_t                              manager,
+	mach_voucher_attr_key_t                                 key,
+	mach_voucher_attr_value_handle_array_t  values,
+	mach_msg_type_number_t                                  value_count,
+	mach_voucher_attr_command_t                             command,
+	mach_voucher_attr_content_t                             in_content,
+	mach_voucher_attr_content_size_t                in_content_size,
+	mach_voucher_attr_content_t                             out_content,
+	mach_voucher_attr_content_size_t                *out_content_size);
 
 static void
 user_data_release(
-	ipc_voucher_attr_manager_t		manager);
+	ipc_voucher_attr_manager_t              manager);
 
-struct ipc_voucher_attr_manager user_data_manager = {
-	.ivam_release_value =	user_data_release_value,
-	.ivam_get_value =	user_data_get_value,
-	.ivam_extract_content =	user_data_extract_content,
-	.ivam_command = 	user_data_command,
-	.ivam_release =		user_data_release,
-	.ivam_flags = 		IVAM_FLAGS_NONE,
+const struct ipc_voucher_attr_manager user_data_manager = {
+	.ivam_release_value =   user_data_release_value,
+	.ivam_get_value =       user_data_get_value,
+	.ivam_extract_content = user_data_extract_content,
+	.ivam_command =         user_data_command,
+	.ivam_release =         user_data_release,
+	.ivam_flags =           IVAM_FLAGS_NONE,
 };
 
 ipc_voucher_attr_control_t user_data_control;
 ipc_voucher_attr_control_t test_control;
 
 #if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) && defined(MACH_VOUCHER_ATTR_KEY_TEST)
-#define USER_DATA_ASSERT_KEY(key)				\
-	assert(MACH_VOUCHER_ATTR_KEY_USER_DATA == (key) || 	\
+#define USER_DATA_ASSERT_KEY(key)                               \
+	assert(MACH_VOUCHER_ATTR_KEY_USER_DATA == (key) ||      \
 	       MACH_VOUCHER_ATTR_KEY_TEST == (key));
 #elif defined(MACH_VOUCHER_ATTR_KEY_USER_DATA)
 #define USER_DATA_ASSERT_KEY(key) assert(MACH_VOUCHER_ATTR_KEY_USER_DATA == (key))
@@ -2989,7 +2991,7 @@ ipc_voucher_attr_control_t test_control;
 #endif
 
 /*
- *	Routine: 	user_data_release_value
+ *	Routine:	user_data_release_value
  *	Purpose:
  *		Release a made reference on a specific value managed by
  *		this voucher attribute manager.
@@ -2999,15 +3001,15 @@ ipc_voucher_attr_control_t test_control;
  */
 static kern_return_t
 user_data_release_value(
-	ipc_voucher_attr_manager_t		__assert_only manager,
-	mach_voucher_attr_key_t			__assert_only key,
-	mach_voucher_attr_value_handle_t	value,
-	mach_voucher_attr_value_reference_t	sync)
+	ipc_voucher_attr_manager_t              __assert_only manager,
+	mach_voucher_attr_key_t                 __assert_only key,
+	mach_voucher_attr_value_handle_t        value,
+	mach_voucher_attr_value_reference_t     sync)
 {
 	user_data_element_t elem;
 	iv_index_t hash;
 
-	assert (&user_data_manager == manager);
+	assert(&user_data_manager == manager);
 	USER_DATA_ASSERT_KEY(key);
 
 	elem = (user_data_element_t)value;
@@ -3027,28 +3029,28 @@ user_data_release_value(
 }
 
 /*
- *	Routine: 	user_data_checksum
+ *	Routine:	user_data_checksum
  *	Purpose:
  *		Provide a rudimentary checksum for the data presented
  *		to these voucher attribute managers.
  */
 static iv_index_t
 user_data_checksum(
-	mach_voucher_attr_content_t			content,
-	mach_voucher_attr_content_size_t		content_size)
+	mach_voucher_attr_content_t                     content,
+	mach_voucher_attr_content_size_t                content_size)
 {
 	mach_voucher_attr_content_size_t i;
 	iv_index_t cksum = 0;
 
-	for(i = 0; i < content_size; i++, content++) {
+	for (i = 0; i < content_size; i++, content++) {
 		cksum = (cksum << 8) ^ (cksum + *(unsigned char *)content);
 	}
 
-	return (~cksum);
+	return ~cksum;
 }
 
 /*
- *	Routine: 	user_data_dedup
+ *	Routine:	user_data_dedup
  *	Purpose:
  *		See if the content represented by this request already exists
  *		in another user data element.  If so return a made reference
@@ -3061,10 +3063,10 @@ user_data_checksum(
  */
 static user_data_element_t
 user_data_dedup(
-	mach_voucher_attr_content_t			content,
-	mach_voucher_attr_content_size_t		content_size)
+	mach_voucher_attr_content_t                     content,
+	mach_voucher_attr_content_size_t                content_size)
 {
-	iv_index_t sum; 
+	iv_index_t sum;
 	iv_index_t hash;
 	user_data_element_t elem;
 	user_data_element_t alloc = NULL;
@@ -3072,7 +3074,7 @@ user_data_dedup(
 	sum = user_data_checksum(content, content_size);
 	hash = USER_DATA_HASH_BUCKET(sum);
 
- retry:
+retry:
 	user_data_lock();
 	queue_iterate(&user_data_bucket[hash], elem, user_data_element_t, e_hash_link) {
 		assert(elem->e_hash == hash);
@@ -3082,19 +3084,23 @@ user_data_dedup(
 			iv_index_t i;
 
 			/* and all data matches */
-			for (i = 0; i < content_size; i++)
-				if (elem->e_data[i] != content[i])
+			for (i = 0; i < content_size; i++) {
+				if (elem->e_data[i] != content[i]) {
 					break;
-			if (i < content_size)
+				}
+			}
+			if (i < content_size) {
 				continue;
+			}
 
 			/* ... we found a match... */
 
 			elem->e_made++;
 			user_data_unlock();
 
-			if (NULL != alloc)
+			if (NULL != alloc) {
 				kfree(alloc, sizeof(*alloc) + content_size);
+			}
 
 			return elem;
 		}
@@ -3120,20 +3126,20 @@ user_data_dedup(
 
 static kern_return_t
 user_data_get_value(
-	ipc_voucher_attr_manager_t			__assert_only manager,
-	mach_voucher_attr_key_t				__assert_only key,
-	mach_voucher_attr_recipe_command_t		command,
-	mach_voucher_attr_value_handle_array_t		prev_values,
-	mach_voucher_attr_value_handle_array_size_t	prev_value_count,
-	mach_voucher_attr_content_t			content,
-	mach_voucher_attr_content_size_t		content_size,
-	mach_voucher_attr_value_handle_t		*out_value,
-	mach_voucher_attr_value_flags_t			*out_flags,
-	ipc_voucher_t					*out_value_voucher)
+	ipc_voucher_attr_manager_t                      __assert_only manager,
+	mach_voucher_attr_key_t                         __assert_only key,
+	mach_voucher_attr_recipe_command_t              command,
+	mach_voucher_attr_value_handle_array_t          prev_values,
+	mach_voucher_attr_value_handle_array_size_t     prev_value_count,
+	mach_voucher_attr_content_t                     content,
+	mach_voucher_attr_content_size_t                content_size,
+	mach_voucher_attr_value_handle_t                *out_value,
+	mach_voucher_attr_value_flags_t                 *out_flags,
+	ipc_voucher_t                                   *out_value_voucher)
 {
 	user_data_element_t elem;
 
-	assert (&user_data_manager == manager);
+	assert(&user_data_manager == manager);
 	USER_DATA_ASSERT_KEY(key);
 
 	/* never an out voucher */
@@ -3141,7 +3147,6 @@ user_data_get_value(
 	*out_flags = MACH_VOUCHER_ATTR_VALUE_FLAGS_NONE;
 
 	switch (command) {
-
 	case MACH_VOUCHER_ATTR_REDEEM:
 
 		/* redeem of previous values is the value */
@@ -3158,8 +3163,9 @@ user_data_get_value(
 		return KERN_SUCCESS;
 
 	case MACH_VOUCHER_ATTR_USER_DATA_STORE:
-		if (USER_DATA_MAX_DATA < content_size)
+		if (USER_DATA_MAX_DATA < content_size) {
 			return KERN_RESOURCE_SHORTAGE;
+		}
 
 		/* empty is the default */
 		if (0 == content_size) {
@@ -3179,28 +3185,29 @@ user_data_get_value(
 
 static kern_return_t
 user_data_extract_content(
-	ipc_voucher_attr_manager_t			__assert_only manager,
-	mach_voucher_attr_key_t				__assert_only key,
-	mach_voucher_attr_value_handle_array_t		values,
-	mach_voucher_attr_value_handle_array_size_t	value_count,
-	mach_voucher_attr_recipe_command_t		*out_command,
-	mach_voucher_attr_content_t			out_content,
-	mach_voucher_attr_content_size_t		*in_out_content_size)
+	ipc_voucher_attr_manager_t                      __assert_only manager,
+	mach_voucher_attr_key_t                         __assert_only key,
+	mach_voucher_attr_value_handle_array_t          values,
+	mach_voucher_attr_value_handle_array_size_t     value_count,
+	mach_voucher_attr_recipe_command_t              *out_command,
+	mach_voucher_attr_content_t                     out_content,
+	mach_voucher_attr_content_size_t                *in_out_content_size)
 {
 	mach_voucher_attr_content_size_t size = 0;
 	user_data_element_t elem;
 	unsigned int i;
 
-	assert (&user_data_manager == manager);
+	assert(&user_data_manager == manager);
 	USER_DATA_ASSERT_KEY(key);
 
 	/* concatenate the stored data items */
-	for (i = 0; i < value_count ; i++) {
+	for (i = 0; i < value_count && *in_out_content_size > 0; i++) {
 		elem = (user_data_element_t)values[i];
 		assert(USER_DATA_MAX_DATA >= elem->e_size);
 
-		if (size + elem->e_size > *in_out_content_size)
+		if (size + elem->e_size > *in_out_content_size) {
 			return KERN_NO_SPACE;
+		}
 
 		memcpy(&out_content[size], elem->e_data, elem->e_size);
 		size += elem->e_size;
@@ -3212,27 +3219,28 @@ user_data_extract_content(
 
 static kern_return_t
 user_data_command(
-	ipc_voucher_attr_manager_t				__assert_only manager,
-	mach_voucher_attr_key_t					__assert_only key,
-	mach_voucher_attr_value_handle_array_t	__unused values,
-	mach_msg_type_number_t					__unused value_count,
-	mach_voucher_attr_command_t				__unused command,
-	mach_voucher_attr_content_t				__unused in_content,
-	mach_voucher_attr_content_size_t		__unused in_content_size,
-	mach_voucher_attr_content_t				__unused out_content,
-	mach_voucher_attr_content_size_t		__unused *out_content_size)
+	ipc_voucher_attr_manager_t                              __assert_only manager,
+	mach_voucher_attr_key_t                                 __assert_only key,
+	mach_voucher_attr_value_handle_array_t  __unused values,
+	mach_msg_type_number_t                                  __unused value_count,
+	mach_voucher_attr_command_t                             __unused command,
+	mach_voucher_attr_content_t                             __unused in_content,
+	mach_voucher_attr_content_size_t                __unused in_content_size,
+	mach_voucher_attr_content_t                             __unused out_content,
+	mach_voucher_attr_content_size_t                __unused *out_content_size)
 {
-	assert (&user_data_manager == manager);
+	assert(&user_data_manager == manager);
 	USER_DATA_ASSERT_KEY(key);
 	return KERN_FAILURE;
 }
 
 static void
 user_data_release(
-	ipc_voucher_attr_manager_t		manager)
+	ipc_voucher_attr_manager_t              manager)
 {
-	if (manager != &user_data_manager)
+	if (manager != &user_data_manager) {
 		return;
+	}
 
 	panic("Voucher user-data manager released");
 }
@@ -3244,35 +3252,38 @@ user_data_attr_manager_init()
 {
 	kern_return_t kr;
 
-#if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA)	
+#if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA)
 	if ((user_data_manager_inited & 0x1) != 0x1) {
 		kr = ipc_register_well_known_mach_voucher_attr_manager(&user_data_manager,
-						(mach_voucher_attr_value_handle_t)0,
-						MACH_VOUCHER_ATTR_KEY_USER_DATA,
-						&user_data_control);
-		if (KERN_SUCCESS != kr)
+		    (mach_voucher_attr_value_handle_t)0,
+		    MACH_VOUCHER_ATTR_KEY_USER_DATA,
+		    &user_data_control);
+		if (KERN_SUCCESS != kr) {
 			printf("Voucher user-data manager register(USER-DATA) returned %d", kr);
-		else
+		} else {
 			user_data_manager_inited |= 0x1;
+		}
 	}
 #endif
 #if defined(MACH_VOUCHER_ATTR_KEY_TEST)
 	if ((user_data_manager_inited & 0x2) != 0x2) {
 		kr = ipc_register_well_known_mach_voucher_attr_manager(&user_data_manager,
-						(mach_voucher_attr_value_handle_t)0,
-						MACH_VOUCHER_ATTR_KEY_TEST,
-						&test_control);
-		if (KERN_SUCCESS != kr)
+		    (mach_voucher_attr_value_handle_t)0,
+		    MACH_VOUCHER_ATTR_KEY_TEST,
+		    &test_control);
+		if (KERN_SUCCESS != kr) {
 			printf("Voucher user-data manager register(TEST) returned %d", kr);
-		else
+		} else {
 			user_data_manager_inited |= 0x2;
+		}
 	}
 #endif
 #if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) || defined(MACH_VOUCHER_ATTR_KEY_TEST)
 	int i;
 
-	for (i=0; i < USER_DATA_HASH_BUCKETS; i++)
+	for (i = 0; i < USER_DATA_HASH_BUCKETS; i++) {
 		queue_init(&user_data_bucket[i]);
+	}
 
 	user_data_lock_init();
 #endif

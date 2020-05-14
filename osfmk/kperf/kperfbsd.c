@@ -44,32 +44,44 @@
 #include <kperf/kperfbsd.h>
 #include <kperf/kperf_timer.h>
 #include <kperf/pet.h>
+#include <kperf/lazy.h>
 
 #include <sys/ktrace.h>
 
-/* IDs for dispatch from SYSCTL macros */
-#define REQ_SAMPLING                (1)
-#define REQ_ACTION_COUNT            (2)
-#define REQ_ACTION_SAMPLERS         (3)
-#define REQ_TIMER_COUNT             (4)
-#define REQ_TIMER_PERIOD            (5)
-#define REQ_TIMER_PET               (6)
-#define REQ_TIMER_ACTION            (7)
-#define REQ_BLESS                   (8)
-#define REQ_ACTION_USERDATA         (9)
-#define REQ_ACTION_FILTER_BY_TASK   (10)
-#define REQ_ACTION_FILTER_BY_PID    (11)
-/* 12 unused */
-#define REQ_PET_IDLE_RATE           (13)
-#define REQ_BLESS_PREEMPT           (14)
-#define REQ_KDBG_CSWITCH            (15)
-#define REQ_RESET                   (16)
-/* 17 unused */
-#define REQ_ACTION_UCALLSTACK_DEPTH (18)
-#define REQ_ACTION_KCALLSTACK_DEPTH (19)
-#define REQ_LIGHTWEIGHT_PET         (20)
-#define REQ_KDEBUG_ACTION           (21)
-#define REQ_KDEBUG_FILTER           (22)
+/* Requests from kperf sysctls. */
+enum kperf_request {
+	REQ_SAMPLING,
+	REQ_RESET,
+
+	REQ_ACTION_COUNT,
+	REQ_ACTION_SAMPLERS,
+	REQ_ACTION_USERDATA,
+	REQ_ACTION_FILTER_BY_TASK,
+	REQ_ACTION_FILTER_BY_PID,
+	REQ_ACTION_UCALLSTACK_DEPTH,
+	REQ_ACTION_KCALLSTACK_DEPTH,
+
+	REQ_TIMER_COUNT,
+	REQ_TIMER_PERIOD,
+	REQ_TIMER_PET,
+	REQ_TIMER_ACTION,
+
+	REQ_KDBG_CSWITCH,
+
+	REQ_BLESS,
+	REQ_BLESS_PREEMPT,
+
+	REQ_PET_IDLE_RATE,
+	REQ_LIGHTWEIGHT_PET,
+
+	REQ_KDEBUG_FILTER,
+	REQ_KDEBUG_ACTION,
+
+	REQ_LAZY_WAIT_TIME_THRESHOLD,
+	REQ_LAZY_WAIT_ACTION,
+	REQ_LAZY_CPU_TIME_THRESHOLD,
+	REQ_LAZY_CPU_ACTION,
+};
 
 int kperf_debug_level = 0;
 
@@ -78,7 +90,7 @@ _Atomic long long kperf_pending_ipis = 0;
 #endif /* DEVELOPMENT || DEBUG */
 
 /*
- * kperf has a different sysctl model than others.
+ * kperf has unique requirements from sysctl.
  *
  * For simple queries like the number of actions, the normal sysctl style
  * of get/set works well.
@@ -95,7 +107,7 @@ _Atomic long long kperf_pending_ipis = 0;
 
 static int
 kperf_sysctl_get_set_uint32(struct sysctl_req *req,
-	uint32_t (*get)(void), int (*set)(uint32_t))
+    uint32_t (*get)(void), int (*set)(uint32_t))
 {
 	assert(req != NULL);
 	assert(get != NULL);
@@ -117,7 +129,7 @@ kperf_sysctl_get_set_uint32(struct sysctl_req *req,
 
 static int
 kperf_sysctl_get_set_int(struct sysctl_req *req,
-	int (*get)(void), int (*set)(int))
+    int (*get)(void), int (*set)(int))
 {
 	assert(req != NULL);
 	assert(get != NULL);
@@ -138,16 +150,43 @@ kperf_sysctl_get_set_int(struct sysctl_req *req,
 }
 
 static int
-kperf_sysctl_get_set_unsigned_uint32(struct sysctl_req *req,
-	int (*get)(unsigned int, uint32_t *), int (*set)(unsigned int, uint32_t))
+kperf_sysctl_get_set_uint64(struct sysctl_req *req,
+    uint64_t (*get)(void), int (*set)(uint64_t))
 {
 	assert(req != NULL);
 	assert(get != NULL);
 	assert(set != NULL);
 
-	int error;
-	uint64_t inputs[2];
-	if ((error = SYSCTL_IN(req, inputs, sizeof(inputs)))) {
+	uint64_t value = 0;
+	if (req->oldptr) {
+		value = get();
+	}
+
+	int error = sysctl_io_number(req, value, sizeof(value), &value, NULL);
+
+	if (error || !req->newptr) {
+		return error;
+	}
+
+	return set(value);
+}
+
+static int
+kperf_sysctl_get_set_unsigned_uint32(struct sysctl_req *req,
+    int (*get)(unsigned int, uint32_t *), int (*set)(unsigned int, uint32_t))
+{
+	assert(req != NULL);
+	assert(get != NULL);
+	assert(set != NULL);
+
+	int error = 0;
+	uint64_t inputs[2] = {};
+
+	if (req->newptr == USER_ADDR_NULL) {
+		return EFAULT;
+	}
+
+	if ((error = copyin(req->newptr, inputs, sizeof(inputs)))) {
 		return error;
 	}
 
@@ -161,17 +200,10 @@ kperf_sysctl_get_set_unsigned_uint32(struct sysctl_req *req,
 		}
 
 		inputs[1] = value_out;
-	} else {
-		if ((error = set(action_id, new_value))) {
-			return error;
-		}
-	}
 
-	if (req->oldptr != USER_ADDR_NULL) {
-		error =  SYSCTL_OUT(req, inputs, sizeof(inputs));
-		return error;
+		return copyout(inputs, req->oldptr, sizeof(inputs));
 	} else {
-		return 0;
+		return set(action_id, new_value);
 	}
 }
 
@@ -183,11 +215,16 @@ kperf_sysctl_get_set_unsigned_uint32(struct sysctl_req *req,
 static int
 sysctl_timer_period(struct sysctl_req *req)
 {
+	int error;
+	uint64_t inputs[2] = {};
+
 	assert(req != NULL);
 
-	int error;
-	uint64_t inputs[2];
-	if ((error = SYSCTL_IN(req, inputs, sizeof(inputs)))) {
+	if (req->newptr == USER_ADDR_NULL) {
+		return EFAULT;
+	}
+
+	if ((error = copyin(req->newptr, inputs, sizeof(inputs)))) {
 		return error;
 	}
 
@@ -201,23 +238,26 @@ sysctl_timer_period(struct sysctl_req *req)
 		}
 
 		inputs[1] = period_out;
-	} else {
-		if ((error = kperf_timer_set_period(timer, new_period))) {
-			return error;
-		}
-	}
 
-	return SYSCTL_OUT(req, inputs, sizeof(inputs));
+		return copyout(inputs, req->oldptr, sizeof(inputs));
+	} else {
+		return kperf_timer_set_period(timer, new_period);
+	}
 }
 
 static int
-sysctl_action_filter(struct sysctl_req *req, boolean_t is_task_t)
+sysctl_action_filter(struct sysctl_req *req, bool is_task_t)
 {
+	int error = 0;
+	uint64_t inputs[2] = {};
+
 	assert(req != NULL);
 
-	int error;
-	uint64_t inputs[2];
-	if ((error = SYSCTL_IN(req, inputs, sizeof(inputs)))) {
+	if (req->newptr == USER_ADDR_NULL) {
+		return EFAULT;
+	}
+
+	if ((error = copyin(req->newptr, inputs, sizeof(inputs)))) {
 		return error;
 	}
 
@@ -231,16 +271,13 @@ sysctl_action_filter(struct sysctl_req *req, boolean_t is_task_t)
 		}
 
 		inputs[1] = filter_out;
+		return copyout(inputs, req->oldptr, sizeof(inputs));
 	} else {
 		int pid = is_task_t ? kperf_port_to_pid((mach_port_name_t)new_filter)
-		                    : new_filter;
+		    : new_filter;
 
-		if ((error = kperf_action_set_filter(actionid, pid))) {
-		    return error;
-		}
+		return kperf_action_set_filter(actionid, pid);
 	}
-
-	return SYSCTL_OUT(req, inputs, sizeof(inputs));
 }
 
 static int
@@ -262,35 +299,35 @@ static int
 sysctl_action_samplers(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_unsigned_uint32(req,
-		kperf_action_get_samplers, kperf_action_set_samplers);
+	           kperf_action_get_samplers, kperf_action_set_samplers);
 }
 
 static int
 sysctl_action_userdata(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_unsigned_uint32(req,
-		kperf_action_get_userdata, kperf_action_set_userdata);
+	           kperf_action_get_userdata, kperf_action_set_userdata);
 }
 
 static int
 sysctl_action_ucallstack_depth(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_unsigned_uint32(req,
-		kperf_action_get_ucallstack_depth, kperf_action_set_ucallstack_depth);
+	           kperf_action_get_ucallstack_depth, kperf_action_set_ucallstack_depth);
 }
 
 static int
 sysctl_action_kcallstack_depth(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_unsigned_uint32(req,
-		kperf_action_get_kcallstack_depth, kperf_action_set_kcallstack_depth);
+	           kperf_action_get_kcallstack_depth, kperf_action_set_kcallstack_depth);
 }
 
 static int
 sysctl_kdebug_action(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_int(req, kperf_kdebug_get_action,
-		kperf_kdebug_set_action);
+	           kperf_kdebug_set_action);
 }
 
 static int
@@ -308,9 +345,11 @@ sysctl_kdebug_filter(struct sysctl_req *req)
 		}
 
 		return SYSCTL_OUT(req, filter, filter_size);
+	} else if (req->newptr != USER_ADDR_NULL) {
+		return kperf_kdebug_set_filter(req->newptr, (uint32_t)req->newlen);
+	} else {
+		return EINVAL;
 	}
-
-	return kperf_kdebug_set_filter(req->newptr, (uint32_t)req->newlen);
 }
 
 static int
@@ -327,43 +366,43 @@ static int
 sysctl_sampling(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_uint32(req, kperf_sampling_status,
-		kperf_sampling_set);
+	           kperf_sampling_set);
 }
 
 static int
 sysctl_action_count(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_uint32(req, kperf_action_get_count,
-		kperf_action_set_count);
+	           kperf_action_set_count);
 }
 
 static int
 sysctl_timer_count(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_uint32(req, kperf_timer_get_count,
-		kperf_timer_set_count);
+	           kperf_timer_set_count);
 }
 
 static int
 sysctl_timer_action(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_unsigned_uint32(req, kperf_timer_get_action,
-		kperf_timer_set_action);
+	           kperf_timer_set_action);
 }
 
 static int
 sysctl_timer_pet(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_uint32(req, kperf_timer_get_petid,
-		kperf_timer_set_petid);
+	           kperf_timer_set_petid);
 }
 
 static int
 sysctl_bless_preempt(struct sysctl_req *req)
 {
 	return sysctl_io_number(req, ktrace_root_set_owner_allowed,
-		sizeof(ktrace_root_set_owner_allowed),
-		&ktrace_root_set_owner_allowed, NULL);
+	           sizeof(ktrace_root_set_owner_allowed),
+	           &ktrace_root_set_owner_allowed, NULL);
 }
 
 static int
@@ -372,7 +411,7 @@ sysctl_kperf_reset(struct sysctl_req *req)
 	int should_reset = 0;
 
 	int error = sysctl_io_number(req, should_reset, sizeof(should_reset),
-		&should_reset, NULL);
+	    &should_reset, NULL);
 	if (error) {
 		return error;
 	}
@@ -387,21 +426,49 @@ static int
 sysctl_pet_idle_rate(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_int(req, kperf_get_pet_idle_rate,
-		kperf_set_pet_idle_rate);
+	           kperf_set_pet_idle_rate);
 }
 
 static int
 sysctl_lightweight_pet(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_int(req, kperf_get_lightweight_pet,
-		kperf_set_lightweight_pet);
+	           kperf_set_lightweight_pet);
 }
 
 static int
 sysctl_kdbg_cswitch(struct sysctl_req *req)
 {
 	return kperf_sysctl_get_set_int(req, kperf_kdbg_cswitch_get,
-		kperf_kdbg_cswitch_set);
+	           kperf_kdbg_cswitch_set);
+}
+
+static int
+sysctl_lazy_wait_time_threshold(struct sysctl_req *req)
+{
+	return kperf_sysctl_get_set_uint64(req, kperf_lazy_get_wait_time_threshold,
+	           kperf_lazy_set_wait_time_threshold);
+}
+
+static int
+sysctl_lazy_wait_action(struct sysctl_req *req)
+{
+	return kperf_sysctl_get_set_int(req, kperf_lazy_get_wait_action,
+	           kperf_lazy_set_wait_action);
+}
+
+static int
+sysctl_lazy_cpu_time_threshold(struct sysctl_req *req)
+{
+	return kperf_sysctl_get_set_uint64(req, kperf_lazy_get_cpu_time_threshold,
+	           kperf_lazy_set_cpu_time_threshold);
+}
+
+static int
+sysctl_lazy_cpu_action(struct sysctl_req *req)
+{
+	return kperf_sysctl_get_set_int(req, kperf_lazy_get_cpu_action,
+	           kperf_lazy_set_cpu_action);
 }
 
 static int
@@ -409,18 +476,18 @@ kperf_sysctl SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg2)
 	int ret;
-	uintptr_t type = (uintptr_t)arg1;
+	enum kperf_request type = (enum kperf_request)arg1;
 
-	lck_mtx_lock(ktrace_lock);
+	ktrace_lock();
 
 	if (req->oldptr == USER_ADDR_NULL && req->newptr != USER_ADDR_NULL) {
 		if ((ret = ktrace_configure(KTRACE_KPERF))) {
-			lck_mtx_unlock(ktrace_lock);
+			ktrace_unlock();
 			return ret;
 		}
 	} else {
 		if ((ret = ktrace_read_check())) {
-			lck_mtx_unlock(ktrace_lock);
+			ktrace_unlock();
 			return ret;
 		}
 	}
@@ -455,10 +522,10 @@ kperf_sysctl SYSCTL_HANDLER_ARGS
 		ret = sysctl_kdbg_cswitch(req);
 		break;
 	case REQ_ACTION_FILTER_BY_TASK:
-		ret = sysctl_action_filter(req, TRUE);
+		ret = sysctl_action_filter(req, true);
 		break;
 	case REQ_ACTION_FILTER_BY_PID:
-		ret = sysctl_action_filter(req, FALSE);
+		ret = sysctl_action_filter(req, false);
 		break;
 	case REQ_KDEBUG_ACTION:
 		ret = sysctl_kdebug_action(req);
@@ -483,13 +550,25 @@ kperf_sysctl SYSCTL_HANDLER_ARGS
 		break;
 	case REQ_LIGHTWEIGHT_PET:
 		ret = sysctl_lightweight_pet(req);
-        break;
+		break;
+	case REQ_LAZY_WAIT_TIME_THRESHOLD:
+		ret = sysctl_lazy_wait_time_threshold(req);
+		break;
+	case REQ_LAZY_WAIT_ACTION:
+		ret = sysctl_lazy_wait_action(req);
+		break;
+	case REQ_LAZY_CPU_TIME_THRESHOLD:
+		ret = sysctl_lazy_cpu_time_threshold(req);
+		break;
+	case REQ_LAZY_CPU_ACTION:
+		ret = sysctl_lazy_cpu_action(req);
+		break;
 	default:
 		ret = ENOENT;
 		break;
 	}
 
-	lck_mtx_unlock(ktrace_lock);
+	ktrace_unlock();
 
 	return ret;
 }
@@ -500,7 +579,7 @@ kperf_sysctl_bless_handler SYSCTL_HANDLER_ARGS
 #pragma unused(oidp, arg2)
 	int ret;
 
-	lck_mtx_lock(ktrace_lock);
+	ktrace_lock();
 
 	/* if setting a new "blessed pid" (ktrace owning pid) */
 	if (req->newptr != USER_ADDR_NULL) {
@@ -511,17 +590,16 @@ kperf_sysctl_bless_handler SYSCTL_HANDLER_ARGS
 		 * ownership to unset it).
 		 */
 		if (!((ktrace_root_set_owner_allowed ||
-		       ktrace_keep_ownership_on_reset) &&
-		      kauth_cred_issuser(kauth_cred_get())))
-		{
+		    ktrace_keep_ownership_on_reset) &&
+		    kauth_cred_issuser(kauth_cred_get()))) {
 			if ((ret = ktrace_configure(KTRACE_KPERF))) {
-				lck_mtx_unlock(ktrace_lock);
+				ktrace_unlock();
 				return ret;
 			}
 		}
 	} else {
 		if ((ret = ktrace_read_check())) {
-			lck_mtx_unlock(ktrace_lock);
+			ktrace_unlock();
 			return ret;
 		}
 	}
@@ -533,7 +611,7 @@ kperf_sysctl_bless_handler SYSCTL_HANDLER_ARGS
 		ret = ENOENT;
 	}
 
-	lck_mtx_unlock(ktrace_lock);
+	ktrace_unlock();
 
 	return ret;
 }
@@ -541,142 +619,241 @@ kperf_sysctl_bless_handler SYSCTL_HANDLER_ARGS
 /* root kperf node */
 
 SYSCTL_NODE(, OID_AUTO, kperf, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
-            "kperf");
+    "kperf");
 
 /* actions */
 
 SYSCTL_NODE(_kperf, OID_AUTO, action, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
-            "action");
+    "action");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, count,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_COUNT,
-            sizeof(int), kperf_sysctl, "I", "Number of actions");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED |
+    CTLFLAG_MASKED,
+    (void *)REQ_ACTION_COUNT,
+    sizeof(int), kperf_sysctl, "I", "Number of actions");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, samplers,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_SAMPLERS,
-            3 * sizeof(uint64_t), kperf_sysctl, "UQ",
-            "What to sample when a trigger fires an action");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_ACTION_SAMPLERS,
+    3 * sizeof(uint64_t), kperf_sysctl, "UQ",
+    "What to sample when a trigger fires an action");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, userdata,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_USERDATA,
-            3 * sizeof(uint64_t), kperf_sysctl, "UQ",
-            "User data to attribute to action");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_ACTION_USERDATA,
+    3 * sizeof(uint64_t), kperf_sysctl, "UQ",
+    "User data to attribute to action");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, filter_by_task,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_FILTER_BY_TASK,
-            3 * sizeof(uint64_t), kperf_sysctl, "UQ",
-            "Apply a task filter to the action");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_ACTION_FILTER_BY_TASK,
+    3 * sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Apply a task filter to the action");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, filter_by_pid,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_FILTER_BY_PID,
-            3 * sizeof(uint64_t), kperf_sysctl, "UQ",
-            "Apply a pid filter to the action");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_ACTION_FILTER_BY_PID,
+    3 * sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Apply a pid filter to the action");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, ucallstack_depth,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_UCALLSTACK_DEPTH,
-            sizeof(int), kperf_sysctl, "I",
-            "Maximum number of frames to include in user callstacks");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_ACTION_UCALLSTACK_DEPTH,
+    sizeof(int), kperf_sysctl, "I",
+    "Maximum number of frames to include in user callstacks");
 
 SYSCTL_PROC(_kperf_action, OID_AUTO, kcallstack_depth,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_ACTION_KCALLSTACK_DEPTH,
-            sizeof(int), kperf_sysctl, "I",
-            "Maximum number of frames to include in kernel callstacks");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_ACTION_KCALLSTACK_DEPTH,
+    sizeof(int), kperf_sysctl, "I",
+    "Maximum number of frames to include in kernel callstacks");
 
 /* timers */
 
 SYSCTL_NODE(_kperf, OID_AUTO, timer, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
-            "timer");
+    "timer");
 
 SYSCTL_PROC(_kperf_timer, OID_AUTO, count,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_TIMER_COUNT,
-            sizeof(int), kperf_sysctl, "I", "Number of time triggers");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void *)REQ_TIMER_COUNT,
+    sizeof(int), kperf_sysctl, "I", "Number of time triggers");
 
 SYSCTL_PROC(_kperf_timer, OID_AUTO, period,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_TIMER_PERIOD,
-            2 * sizeof(uint64_t), kperf_sysctl, "UQ",
-            "Timer number and period");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_TIMER_PERIOD,
+    2 * sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Timer number and period");
 
 SYSCTL_PROC(_kperf_timer, OID_AUTO, action,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_TIMER_ACTION,
-            2 * sizeof(uint64_t), kperf_sysctl, "UQ",
-            "Timer number and actionid");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_TIMER_ACTION,
+    2 * sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Timer number and actionid");
 
 SYSCTL_PROC(_kperf_timer, OID_AUTO, pet_timer,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_TIMER_PET,
-            sizeof(int), kperf_sysctl, "I", "Which timer ID does PET");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void *)REQ_TIMER_PET,
+    sizeof(int), kperf_sysctl, "I", "Which timer ID does PET");
 
 /* kdebug trigger */
 
 SYSCTL_NODE(_kperf, OID_AUTO, kdebug, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
-            "kdebug");
+    "kdebug");
 
 SYSCTL_PROC(_kperf_kdebug, OID_AUTO, action,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void*)REQ_KDEBUG_ACTION,
-            sizeof(int), kperf_sysctl, "I", "ID of action to trigger on kdebug events");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void*)REQ_KDEBUG_ACTION,
+    sizeof(int), kperf_sysctl, "I", "ID of action to trigger on kdebug events");
 
 SYSCTL_PROC(_kperf_kdebug, OID_AUTO, filter,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void*)REQ_KDEBUG_FILTER,
-            sizeof(int), kperf_sysctl, "P", "The filter that determines which kdebug events trigger a sample");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void*)REQ_KDEBUG_FILTER,
+    sizeof(int), kperf_sysctl, "P", "The filter that determines which kdebug events trigger a sample");
+
+/* lazy sampling */
+
+SYSCTL_NODE(_kperf, OID_AUTO, lazy, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
+    "lazy");
+
+SYSCTL_PROC(_kperf_lazy, OID_AUTO, wait_time_threshold,
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_LAZY_WAIT_TIME_THRESHOLD,
+    sizeof(uint64_t), kperf_sysctl, "UQ",
+    "How many ticks a thread must wait to take a sample");
+
+SYSCTL_PROC(_kperf_lazy, OID_AUTO, wait_action,
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_LAZY_WAIT_ACTION,
+    sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Which action to fire when a thread waits longer than threshold");
+
+SYSCTL_PROC(_kperf_lazy, OID_AUTO, cpu_time_threshold,
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_LAZY_CPU_TIME_THRESHOLD,
+    sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Minimum number of ticks a CPU must run between samples");
+
+SYSCTL_PROC(_kperf_lazy, OID_AUTO, cpu_action,
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_LAZY_CPU_ACTION,
+    sizeof(uint64_t), kperf_sysctl, "UQ",
+    "Which action to fire for lazy CPU samples");
 
 /* misc */
 
 SYSCTL_PROC(_kperf, OID_AUTO, sampling,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_SAMPLING,
-            sizeof(int), kperf_sysctl, "I", "Sampling running");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void *)REQ_SAMPLING,
+    sizeof(int), kperf_sysctl, "I", "Sampling running");
 
 SYSCTL_PROC(_kperf, OID_AUTO, reset,
-            CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-            (void *)REQ_RESET,
-            0, kperf_sysctl, "-", "Reset kperf");
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    (void *)REQ_RESET,
+    0, kperf_sysctl, "-", "Reset kperf");
 
 SYSCTL_PROC(_kperf, OID_AUTO, blessed_pid,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, /* must be root */
-            (void *)REQ_BLESS,
-            sizeof(int), kperf_sysctl_bless_handler, "I", "Blessed pid");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED         /* must be root */
+    | CTLFLAG_MASKED,
+    (void *)REQ_BLESS,
+    sizeof(int), kperf_sysctl_bless_handler, "I", "Blessed pid");
 
 SYSCTL_PROC(_kperf, OID_AUTO, blessed_preempt,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_BLESS_PREEMPT,
-            sizeof(int), kperf_sysctl, "I", "Blessed preemption");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED |
+    CTLFLAG_MASKED,
+    (void *)REQ_BLESS_PREEMPT,
+    sizeof(int), kperf_sysctl, "I", "Blessed preemption");
 
 SYSCTL_PROC(_kperf, OID_AUTO, kdbg_cswitch,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_KDBG_CSWITCH,
-            sizeof(int), kperf_sysctl, "I", "Generate context switch info");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void *)REQ_KDBG_CSWITCH,
+    sizeof(int), kperf_sysctl, "I", "Generate context switch info");
 
 SYSCTL_PROC(_kperf, OID_AUTO, pet_idle_rate,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_PET_IDLE_RATE,
-            sizeof(int), kperf_sysctl, "I",
-            "Rate at which unscheduled threads are forced to be sampled in "
-            "PET mode");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void *)REQ_PET_IDLE_RATE,
+    sizeof(int), kperf_sysctl, "I",
+    "Rate at which unscheduled threads are forced to be sampled in "
+    "PET mode");
 
 SYSCTL_PROC(_kperf, OID_AUTO, lightweight_pet,
-            CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
-            (void *)REQ_LIGHTWEIGHT_PET,
-            sizeof(int), kperf_sysctl, "I",
-            "Status of lightweight PET mode");
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED
+    | CTLFLAG_MASKED,
+    (void *)REQ_LIGHTWEIGHT_PET,
+    sizeof(int), kperf_sysctl, "I",
+    "Status of lightweight PET mode");
+
+/* limits */
+
+SYSCTL_NODE(_kperf, OID_AUTO, limits, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
+    "limits");
+
+enum kperf_limit_request {
+	REQ_LIM_PERIOD_NS,
+	REQ_LIM_BG_PERIOD_NS,
+	REQ_LIM_PET_PERIOD_NS,
+	REQ_LIM_BG_PET_PERIOD_NS,
+};
+
+static int
+kperf_sysctl_limits SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg2)
+	enum kperf_limit_request type = (enum kperf_limit_request)arg1;
+	uint64_t limit = 0;
+
+	switch (type) {
+	case REQ_LIM_PERIOD_NS:
+		limit = KP_MIN_PERIOD_NS;
+		break;
+
+	case REQ_LIM_BG_PERIOD_NS:
+		limit = KP_MIN_PERIOD_BG_NS;
+		break;
+
+	case REQ_LIM_PET_PERIOD_NS:
+		limit = KP_MIN_PERIOD_PET_NS;
+		break;
+
+	case REQ_LIM_BG_PET_PERIOD_NS:
+		limit = KP_MIN_PERIOD_PET_BG_NS;
+		break;
+
+	default:
+		return ENOENT;
+	}
+
+	return sysctl_io_number(req, limit, sizeof(limit), &limit, NULL);
+}
+
+SYSCTL_PROC(_kperf_limits, OID_AUTO, timer_min_period_ns,
+    CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
+    (void *)REQ_LIM_PERIOD_NS, sizeof(uint64_t), kperf_sysctl_limits,
+    "Q", "Minimum timer period in nanoseconds");
+SYSCTL_PROC(_kperf_limits, OID_AUTO, timer_min_bg_period_ns,
+    CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
+    (void *)REQ_LIM_BG_PERIOD_NS, sizeof(uint64_t), kperf_sysctl_limits,
+    "Q", "Minimum background timer period in nanoseconds");
+SYSCTL_PROC(_kperf_limits, OID_AUTO, timer_min_pet_period_ns,
+    CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
+    (void *)REQ_LIM_PET_PERIOD_NS, sizeof(uint64_t), kperf_sysctl_limits,
+    "Q", "Minimum PET timer period in nanoseconds");
+SYSCTL_PROC(_kperf_limits, OID_AUTO, timer_min_bg_pet_period_ns,
+    CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
+    (void *)REQ_LIM_BG_PET_PERIOD_NS, sizeof(uint64_t), kperf_sysctl_limits,
+    "Q", "Minimum background PET timer period in nanoseconds");
 
 /* debug */
 SYSCTL_INT(_kperf, OID_AUTO, debug_level, CTLFLAG_RW | CTLFLAG_LOCKED,
-           &kperf_debug_level, 0, "debug level");
+    &kperf_debug_level, 0, "debug level");
 
 #if DEVELOPMENT || DEBUG
 SYSCTL_QUAD(_kperf, OID_AUTO, already_pending_ipis,
-            CTLFLAG_RD | CTLFLAG_LOCKED,
-            &kperf_pending_ipis, "");
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &kperf_pending_ipis, "");
 #endif /* DEVELOPMENT || DEBUG */

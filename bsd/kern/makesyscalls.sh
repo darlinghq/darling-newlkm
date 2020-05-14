@@ -35,6 +35,7 @@ output_syshdrfile=0
 output_syscalltablefile=0
 output_auditevfile=0
 output_tracecodes=0
+output_systrace=0
 
 use_stdout=0
 
@@ -50,7 +51,7 @@ syscallprefix="SYS_"
 switchname="sysent"
 namesname="syscallnames"
 tracecodename="syscall.codes"
-
+systraceargsfile="systrace_args.c"
 # tmp files:
 syslegal="sysent.syslegal.$$"
 sysent="sysent.switch.$$"
@@ -61,10 +62,13 @@ syscallnamestempfile="syscallnamesfile.$$"
 syshdrtempfile="syshdrtempfile.$$"
 audittempfile="audittempfile.$$"
 tracecodetempfile="tracecodetempfile.$$"
+systraceargstempfile="systraceargstempfile.$$"
+systraceargdesctempfile="systraceargdesctempfile.$$"
+systracerettempfile="systracerettempfile.$$"
 
-trap "rm $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile $tracecodetempfile" 0
+trap "rm $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile $tracecodetempfile $systraceargstempfile $systraceargdesctempfile $systracerettempfile" 0
 
-touch $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile $tracecodetempfile
+touch $syslegal $sysent $sysinc $sysarg $sysprotoend $syscallnamestempfile $syshdrtempfile $audittempfile $tracecodetempfile $systraceargstempfile $systraceargdesctempfile $systracerettempfile
 
 case $# in
     0)
@@ -92,6 +96,9 @@ if [ -n "$1" ]; then
 	    ;;
 	audit)
 	    output_auditevfile=1
+	    ;;
+	systrace)
+	    output_systrace=1
 	    ;;
 	trace)
 	    output_tracecodes=1
@@ -141,6 +148,9 @@ s/\$//g
 		syscallnamestempfile = \"$syscallnamestempfile\"
 		syshdrfile = \"$syshdrfile\"
 		syshdrtempfile = \"$syshdrtempfile\"
+		systraceargstempfile = \"$systraceargstempfile\"
+		systraceargdesctempfile = \"$systraceargdesctempfile\"
+		systracerettempfile = \"$systracerettempfile\"
 		audittempfile = \"$audittempfile\"
 		tracecodetempfile = \"$tracecodetempfile\"
 		syscallprefix = \"$syscallprefix\"
@@ -233,6 +243,19 @@ s/\$//g
 		printf "#include <bsm/audit_kevents.h>\n\n" > audittempfile
 		printf "#if CONFIG_AUDIT\n\n" > audittempfile
 		printf "au_event_t sys_au_event[] = {\n" > audittempfile
+
+		printf "/*\n * System call argument to DTrace register array conversion.\n */\n" > systraceargstempfile
+		printf "#include <sys/systrace_args.h>\n" > systraceargstempfile
+		printf "void\nsystrace_args(int sysnum, void *params, uint64_t *uarg)\n{\n" > systraceargstempfile
+		printf "\tint64_t *iarg  = (int64_t *) uarg;\n" > systraceargstempfile
+		printf "\tswitch (sysnum) {\n" > systraceargstempfile
+
+		printf "void\nsystrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)\n{\n\tconst char *p = NULL;\n" > systraceargdesctempfile
+		printf "\tswitch (sysnum) {\n" > systraceargdesctempfile
+
+		printf "void\nsystrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)\n{\n\tconst char *p = NULL;\n" > systracerettempfile
+		printf "\tswitch (sysnum) {\n" > systracerettempfile
+
 		next
 	}
 	NF == 0 || $1 ~ /^;/ {
@@ -248,6 +271,9 @@ s/\$//g
 		print > syscallnamestempfile
 		print > sysprotoend
 		print > audittempfile
+		print > systraceargstempfile
+		print > systraceargdesctempfile
+		print > systracerettempfile
 		savesyscall = syscall_num
 		skip_for_header = 0
 		next
@@ -258,6 +284,9 @@ s/\$//g
 		print > syscallnamestempfile
 		print > sysprotoend
 		print > audittempfile
+		print > systraceargstempfile
+		print > systraceargdesctempfile
+		print > systracerettempfile
 		syscall_num = savesyscall
 		skip_for_header = 1
 		next
@@ -268,6 +297,9 @@ s/\$//g
 		print > syscallnamestempfile
 		print > sysprotoend
 		print > audittempfile
+		print > systraceargstempfile
+		print > systraceargdesctempfile
+		print > systracerettempfile
 		skip_for_header = 0
 		next
 	}
@@ -377,6 +409,9 @@ s/\$//g
 		current_field++
 		funcname = $current_field
 		argalias = funcname "_args"
+		if (substr(argalias, 1, 4) == "sys_") {
+			argalias = substr(argalias, 5)
+		}
 		current_field++ # bump past function name
 
 		if ($current_field != "(")
@@ -467,6 +502,40 @@ s/\$//g
 		size32 = 0
 
 		if ((funcname != "nosys" && funcname != "enosys") || (syscall_num == 0 && funcname == "nosys")) {
+			printf("\t/* %s */\n\tcase %d: {\n", funcname, syscall_num) > systraceargstempfile
+			printf("\t/* %s */\n\tcase %d:\n", funcname, syscall_num) > systraceargdesctempfile
+			printf("\t/* %s */\n\tcase %d:\n", funcname, syscall_num) > systracerettempfile
+			if (argc > 0) {
+				printf("\t\tswitch(ndx) {\n") > systraceargdesctempfile
+				printf("\t\tstruct %s *p = params;\n", argalias) > systraceargstempfile
+				for (i = 1; i <= argc; i++) {
+					arg = argtype[i]
+					sub("__restrict$", "", arg)
+					if (index(arg, "*") > 0)
+						printf("\t\tcase %d:\n\t\t\tp = \"userland %s\";\n\t\t\tbreak;\n", i - 1, arg) > systraceargdesctempfile
+					else
+						printf("\t\tcase %d:\n\t\t\tp = \"%s\";\n\t\t\tbreak;\n", i - 1, arg) > systraceargdesctempfile
+					if (index(arg, "*") > 0 || arg == "caddr_t")
+						printf("\t\tuarg[%d] = (intptr_t) p->%s; /* %s */\n", \
+							i - 1, \
+							argname[i], arg) > systraceargstempfile
+					else if (substr(arg, 1, 1) == "u" || arg == "size_t")
+						printf("\t\tuarg[%d] = p->%s; /* %s */\n", \
+							i - 1, \
+							argname[i], arg) > systraceargstempfile
+					else
+						printf("\t\tiarg[%d] = p->%s; /* %s */\n", \
+							i - 1, \
+							argname[i], arg) > systraceargstempfile
+				}
+				printf("\t\tdefault:\n\t\t\tbreak;\n\t\t};\n") > systraceargdesctempfile
+
+			}
+			printf("\t\tbreak;\n\t}\n", argc) > systraceargstempfile
+			printf("\t\tif (ndx == 0 || ndx == 1)\n") > systracerettempfile
+			printf("\t\t\tp = \"%s\";\n", returntype) > systracerettempfile
+			printf("\t\tbreak;\n") > systracerettempfile
+			printf("\t\tbreak;\n") > systraceargdesctempfile
 			if (argc != 0) {
 				if (add_sysproto_entry == 1) {
 					printf("struct %s {\n", argalias) > sysarg
@@ -615,6 +684,9 @@ s/\$//g
 		# output to syscalls.c
 		if (add_sysnames_entry == 1) {
 			tempname = funcname
+			if (substr(tempname, 1, 4) == "sys_") {
+				tempname = substr(tempname, 5)
+			}
 			if (funcname == "nosys" || funcname == "enosys") {
 				if (syscall_num == 0)
 					tempname = "syscall"
@@ -635,6 +707,9 @@ s/\$//g
 		# output to syscalls.h
 		if (add_sysheader_entry == 1) {
 			tempname = funcname
+			if (substr(tempname, 1, 4) == "sys_") {
+				tempname = substr(tempname, 5)
+			}
 			if (syscall_num == 0) {
 				tempname = "syscall"
 			}
@@ -696,7 +771,7 @@ s/\$//g
 		printf("\n#endif /* !%s */\n", sysproto_h) > sysprotoend
 
 		printf("};\n") > sysent
-		printf("unsigned int	nsysent = sizeof(sysent) / sizeof(sysent[0]);\n") > sysent
+		printf("const unsigned int	nsysent = sizeof(sysent) / sizeof(sysent[0]);\n") > sysent
 
 		printf("};\n") > syscallnamestempfile
 		printf("#define\t%sMAXSYSCALL\t%d\n", syscallprefix, syscall_num) \
@@ -707,6 +782,10 @@ s/\$//g
 		printf("#endif /* !%s */\n", syscall_h) > syshdrtempfile
 		printf("};\n\n") > audittempfile
 		printf("#endif /* AUDIT */\n") > audittempfile
+
+		printf "\tdefault:\n\t\tbreak;\n\t};\n}\n" > systraceargstempfile
+		printf "\tdefault:\n\t\tbreak;\n\t};\n\tif (p != NULL)\n\t\tstrlcpy(desc, p, descsz);\n}\n" > systraceargdesctempfile
+		printf "\tdefault:\n\t\tbreak;\n\t};\n\tif (p != NULL)\n\t\tstrlcpy(desc, p, descsz);\n}\n" > systracerettempfile
 	} '
 
 # define value in syscall table file to permit redifintion because of the way
@@ -733,6 +812,12 @@ if [ $output_auditevfile -eq 1 ]; then
     cat $syslegal $audittempfile > $auditevfile
 fi
 
+if [ $output_systrace -eq 1 ]; then
+	cat $systraceargstempfile > $systraceargsfile
+	cat $systraceargdesctempfile >> $systraceargsfile
+	cat $systracerettempfile >> $systraceargsfile
+fi
+
 if [ $output_tracecodes -eq 1 ]; then
 	if [ $use_stdout -eq 1 ]; then
 		cat $tracecodetempfile
@@ -740,3 +825,4 @@ if [ $output_tracecodes -eq 1 ]; then
 		cat $tracecodetempfile > $tracecodename
 	fi
 fi
+

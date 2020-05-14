@@ -2,7 +2,7 @@
  * Copyright (c) 2005-2008 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- * 
+ *
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- * 
+ *
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- * 
+ *
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,7 +22,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- * 
+ *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*
@@ -75,11 +75,15 @@
 #include <i386/misc_protos.h>
 #include <i386/cpuid.h>
 
+#if MONOTONIC
+#include <kern/monotonic.h>
+#endif /* MONOTONIC */
+
 #define PERMIT_PERMCHECK (0)
 
 diagWork        dgWork;
 uint64_t        lastRuptClear = 0ULL;
-boolean_t	diag_pmc_enabled = FALSE;
+boolean_t       diag_pmc_enabled = FALSE;
 void cpu_powerstats(void *);
 
 typedef struct {
@@ -94,7 +98,7 @@ typedef struct {
 	uint64_t cpu_insns;
 	uint64_t cpu_ucc;
 	uint64_t cpu_urc;
-#if	DIAG_ALL_PMCS
+#if     DIAG_ALL_PMCS
 	uint64_t gpmcs[4];
 #endif /* DIAG_ALL_PMCS */
 } core_energy_stat_t;
@@ -121,15 +125,15 @@ typedef struct {
 } pkg_energy_statistics_t;
 
 
-int 
+int
 diagCall64(x86_saved_state_t * state)
 {
-	uint64_t	curpos, i, j;
-	uint64_t	selector, data;
-	uint64_t	currNap, durNap;
-	x86_saved_state64_t	*regs;
-	boolean_t 	diagflag;
-	uint32_t	rval = 0;
+	uint64_t        curpos, i, j;
+	uint64_t        selector, data;
+	uint64_t        currNap, durNap;
+	x86_saved_state64_t     *regs;
+	boolean_t       diagflag;
+	uint32_t        rval = 0;
 
 	assert(is_saved_state64(state));
 	regs = saved_state64(state);
@@ -137,46 +141,47 @@ diagCall64(x86_saved_state_t * state)
 	diagflag = ((dgWork.dgFlags & enaDiagSCs) != 0);
 	selector = regs->rdi;
 
-	switch (selector) {	/* Select the routine */
-	case dgRuptStat:	/* Suck Interruption statistics */
+	switch (selector) {     /* Select the routine */
+	case dgRuptStat:        /* Suck Interruption statistics */
 		(void) ml_set_interrupts_enabled(TRUE);
 		data = regs->rsi; /* Get the number of processors */
 
 		if (data == 0) { /* If no location is specified for data, clear all
-				  * counts
-				  */
-			for (i = 0; i < real_ncpus; i++) {	/* Cycle through
-								 * processors */
-				for (j = 0; j < 256; j++)
+			          * counts
+			          */
+			for (i = 0; i < real_ncpus; i++) {      /* Cycle through
+				                                 * processors */
+				for (j = 0; j < 256; j++) {
 					cpu_data_ptr[i]->cpu_hwIntCnt[j] = 0;
+				}
 			}
 
-			lastRuptClear = mach_absolute_time();	/* Get the time of clear */
-			rval = 1;	/* Normal return */
+			lastRuptClear = mach_absolute_time();   /* Get the time of clear */
+			rval = 1;       /* Normal return */
 			(void) ml_set_interrupts_enabled(FALSE);
 			break;
 		}
 
-		(void) copyout((char *) &real_ncpus, data, sizeof(real_ncpus));	/* Copy out number of
-										 * processors */
-		currNap = mach_absolute_time();	/* Get the time now */
-		durNap = currNap - lastRuptClear;	/* Get the last interval
-							 * duration */
-		if (durNap == 0)
-			durNap = 1;	/* This is a very short time, make it
-					 * bigger */
+		(void) copyout((char *) &real_ncpus, data, sizeof(real_ncpus)); /* Copy out number of
+		                                                                 * processors */
+		currNap = mach_absolute_time(); /* Get the time now */
+		durNap = currNap - lastRuptClear;       /* Get the last interval
+		                                         * duration */
+		if (durNap == 0) {
+			durNap = 1;     /* This is a very short time, make it
+			                 * bigger */
+		}
+		curpos = data + sizeof(real_ncpus);     /* Point to the next
+		                                         * available spot */
 
-		curpos = data + sizeof(real_ncpus);	/* Point to the next
-							 * available spot */
-
-		for (i = 0; i < real_ncpus; i++) {	/* Move 'em all out */
-			(void) copyout((char *) &durNap, curpos, 8);	/* Copy out the time
-									 * since last clear */
-			(void) copyout((char *) &cpu_data_ptr[i]->cpu_hwIntCnt, curpos + 8, 256 * sizeof(uint32_t));	/* Copy out interrupt
-															 * data for this
-															 * processor */
-			curpos = curpos + (256 * sizeof(uint32_t) + 8);	/* Point to next out put
-									 * slot */
+		for (i = 0; i < real_ncpus; i++) {      /* Move 'em all out */
+			(void) copyout((char *) &durNap, curpos, 8);    /* Copy out the time
+			                                                 * since last clear */
+			(void) copyout((char *) &cpu_data_ptr[i]->cpu_hwIntCnt, curpos + 8, 256 * sizeof(uint32_t));    /* Copy out interrupt
+			                                                                                                 * data for this
+			                                                                                                 * processor */
+			curpos = curpos + (256 * sizeof(uint32_t) + 8); /* Point to next out put
+			                                                 * slot */
 		}
 		rval = 1;
 		(void) ml_set_interrupts_enabled(FALSE);
@@ -230,6 +235,7 @@ diagCall64(x86_saved_state_t * state)
 		 */
 		switch (cpuid_cpufamily()) {
 		case CPUFAMILY_INTEL_SKYLAKE:
+		case CPUFAMILY_INTEL_KABYLAKE:
 			ia_perf_limits = MSR_IA32_IA_PERF_LIMIT_REASONS_SKL;
 			break;
 		default:
@@ -261,7 +267,7 @@ diagCall64(x86_saved_state_t * state)
 		curpos = regs->rsi + sizeof(pkes);
 
 		mp_cpus_call(CPUMASK_ALL, ASYNC, cpu_powerstats, NULL);
-		
+
 		for (i = 0; i < real_ncpus; i++) {
 			(void) ml_set_interrupts_enabled(FALSE);
 
@@ -276,14 +282,16 @@ diagCall64(x86_saved_state_t * state)
 
 			cest.citime_total = cpu_data_ptr[i]->cpu_itime_total;
 			cest.crtime_total = cpu_data_ptr[i]->cpu_rtime_total;
- 			cest.cpu_idle_exits = cpu_data_ptr[i]->cpu_idle_exits;
- 			cest.cpu_insns = cpu_data_ptr[i]->cpu_cur_insns;
- 			cest.cpu_ucc = cpu_data_ptr[i]->cpu_cur_ucc;
- 			cest.cpu_urc = cpu_data_ptr[i]->cpu_cur_urc;
+			cest.cpu_idle_exits = cpu_data_ptr[i]->cpu_idle_exits;
+#if MONOTONIC
+			cest.cpu_insns = cpu_data_ptr[i]->cpu_monotonic.mtc_counts[MT_CORE_INSTRS];
+			cest.cpu_ucc = cpu_data_ptr[i]->cpu_monotonic.mtc_counts[MT_CORE_CYCLES];
+			cest.cpu_urc = cpu_data_ptr[i]->cpu_monotonic.mtc_counts[MT_CORE_REFCYCLES];
+#endif /* MONOTONIC */
 #if DIAG_ALL_PMCS
 			bcopy(&cpu_data_ptr[i]->cpu_gpmcs[0], &cest.gpmcs[0], sizeof(cest.gpmcs));
 #endif /* DIAG_ALL_PMCS */
- 			(void) ml_set_interrupts_enabled(TRUE);
+			(void) ml_set_interrupts_enabled(TRUE);
 
 			copyout(&cest, curpos, sizeof(cest));
 			curpos += sizeof(cest);
@@ -291,10 +299,10 @@ diagCall64(x86_saved_state_t * state)
 		rval = 1;
 		(void) ml_set_interrupts_enabled(FALSE);
 	}
-		break;
- 	case dgEnaPMC:
- 	{
- 		boolean_t enable = TRUE;
+	break;
+	case dgEnaPMC:
+	{
+		boolean_t enable = TRUE;
 		uint32_t cpuinfo[4];
 		/* Require architectural PMC v2 or higher, corresponding to
 		 * Merom+, or equivalent virtualised facility.
@@ -304,10 +312,10 @@ diagCall64(x86_saved_state_t * state)
 			mp_cpus_call(CPUMASK_ALL, ASYNC, cpu_pmc_control, &enable);
 			diag_pmc_enabled = TRUE;
 		}
- 		rval = 1;
- 	}
- 	break;
-#if	DEVELOPMENT || DEBUG
+		rval = 1;
+	}
+	break;
+#if     DEVELOPMENT || DEBUG
 	case dgGzallocTest:
 	{
 		(void) ml_set_interrupts_enabled(TRUE);
@@ -322,17 +330,18 @@ diagCall64(x86_saved_state_t * state)
 #endif
 
 #if DEVELOPMENT || DEBUG
-	case	dgPermCheck:
+	case    dgPermCheck:
 	{
 		(void) ml_set_interrupts_enabled(TRUE);
-		if (diagflag)
+		if (diagflag) {
 			rval = pmap_permissions_verify(kernel_pmap, kernel_map, 0, ~0ULL);
+		}
 		(void) ml_set_interrupts_enabled(FALSE);
 	}
- 		break;
+	break;
 #endif /* DEVELOPMENT || DEBUG */
-	default:		/* Handle invalid ones */
-		rval = 0;	/* Return an exception */
+	default:                /* Handle invalid ones */
+		rval = 0;       /* Return an exception */
 	}
 
 	regs->rax = rval;
@@ -341,7 +350,9 @@ diagCall64(x86_saved_state_t * state)
 	return rval;
 }
 
-void cpu_powerstats(__unused void *arg) {
+void
+cpu_powerstats(__unused void *arg)
+{
 	cpu_data_t *cdp = current_cpu_datap();
 	__unused int cnum = cdp->cpu_number;
 	uint32_t cl = 0, ch = 0, mpl = 0, mph = 0, apl = 0, aph = 0;
@@ -366,9 +377,13 @@ void cpu_powerstats(__unused void *arg) {
 	cdp->cpu_c7res = ((uint64_t)ch << 32) | cl;
 
 	if (diag_pmc_enabled) {
+#if MONOTONIC
+		mt_update_fixed_counts();
+#else /* MONOTONIC */
 		uint64_t insns = read_pmc(FIXED_PMC0);
 		uint64_t ucc = read_pmc(FIXED_PMC1);
 		uint64_t urc = read_pmc(FIXED_PMC2);
+#endif /* !MONOTONIC */
 #if DIAG_ALL_PMCS
 		int i;
 
@@ -376,25 +391,32 @@ void cpu_powerstats(__unused void *arg) {
 			cdp->cpu_gpmcs[i] = read_pmc(i);
 		}
 #endif /* DIAG_ALL_PMCS */
+#if !MONOTONIC
 		cdp->cpu_cur_insns = insns;
 		cdp->cpu_cur_ucc = ucc;
 		cdp->cpu_cur_urc = urc;
+#endif /* !MONOTONIC */
 	}
 }
 
-void cpu_pmc_control(void *enablep) {
+void
+cpu_pmc_control(void *enablep)
+{
+#if !MONOTONIC
 	boolean_t enable = *(boolean_t *)enablep;
-	cpu_data_t	*cdp = current_cpu_datap();
+	cpu_data_t      *cdp = current_cpu_datap();
 
 	if (enable) {
 		wrmsr64(0x38F, 0x70000000FULL);
 		wrmsr64(0x38D, 0x333);
 		set_cr4(get_cr4() | CR4_PCE);
-
 	} else {
 		wrmsr64(0x38F, 0);
 		wrmsr64(0x38D, 0);
 		set_cr4((get_cr4() & ~CR4_PCE));
 	}
 	cdp->cpu_fixed_pmcs_enabled = enable;
+#else /* !MONOTONIC */
+#pragma unused(enablep)
+#endif /* MONOTONIC */
 }
