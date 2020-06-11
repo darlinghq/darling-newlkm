@@ -64,7 +64,7 @@ void duct_vm_map_init (void)
 #if defined (__DARLING__)
 #else
     vm_size_t entry_zone_alloc_size;
-    const char *mez_name = "VM map entries";
+    const char *mez_name = "VM_map_entries";
 #endif
 
     vm_map_zone = zinit((vm_map_size_t) sizeof(struct _vm_map), 40*1024,
@@ -93,11 +93,11 @@ void duct_vm_map_init (void)
 //
 //     vm_map_entry_reserved_zone = zinit((vm_map_size_t) sizeof(struct vm_map_entry),
 //                    kentry_data_size * 64, kentry_data_size,
-//                    "Reserved VM map entries");
+//                    "Reserved_VM_map_entries");
 //     zone_change(vm_map_entry_reserved_zone, Z_NOENCRYPT, TRUE);
 //
 //     vm_map_copy_zone = zinit((vm_map_size_t) sizeof(struct vm_map_copy),
-//                  16*1024, PAGE_SIZE, "VM map copies");
+//                  16*1024, PAGE_SIZE, "VM_map_copies");
 //     zone_change(vm_map_copy_zone, Z_NOENCRYPT, TRUE);
 //
 //     /*

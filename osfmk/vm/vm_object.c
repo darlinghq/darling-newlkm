@@ -598,7 +598,7 @@ vm_object_bootstrap(void)
 	vm_object_zone = zinit(vm_object_size,
 			       round_page(512*1024),
 			       round_page(12*1024),
-			       "vm objects");
+			       "vm_objects");
 	zone_change(vm_object_zone, Z_CALLERACCT, FALSE); /* don't charge caller */
 	zone_change(vm_object_zone, Z_NOENCRYPT, TRUE);
 
@@ -628,7 +628,7 @@ vm_object_bootstrap(void)
 			zinit((vm_size_t) sizeof (struct vm_object_hash_entry),
 			      round_page(512*1024),
 			      round_page(12*1024),
-			      "vm object hash entries");
+			      "vm_object_hash_entries");
 	zone_change(vm_object_hash_zone, Z_CALLERACCT, FALSE);
 	zone_change(vm_object_hash_zone, Z_NOENCRYPT, TRUE);
 

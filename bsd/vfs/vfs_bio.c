@@ -2058,7 +2058,7 @@ bufzoneinit(void)
 					meta_zones[i].mz_name);
 		zone_change(meta_zones[i].mz_zone, Z_CALLERACCT, FALSE);
 	}
-	buf_hdr_zone = zinit(sizeof(struct buf), 32, PAGE_SIZE, "buf headers");
+	buf_hdr_zone = zinit(sizeof(struct buf), 32, PAGE_SIZE, "buf_headers");
 	zone_change(buf_hdr_zone, Z_CALLERACCT, FALSE);
 }
 

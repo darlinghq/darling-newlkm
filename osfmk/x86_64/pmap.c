@@ -785,7 +785,7 @@ pmap_init(void)
 	pmap_zone = zinit(s, 400*s, 4096, "pmap"); /* XXX */
         zone_change(pmap_zone, Z_NOENCRYPT, TRUE);
 
-	pmap_anchor_zone = zinit(PAGE_SIZE, task_max, PAGE_SIZE, "pagetable anchors");
+	pmap_anchor_zone = zinit(PAGE_SIZE, task_max, PAGE_SIZE, "pagetable_anchors");
 	zone_change(pmap_anchor_zone, Z_NOENCRYPT, TRUE);
 
 	/* The anchor is required to be page aligned. Zone debugging adds

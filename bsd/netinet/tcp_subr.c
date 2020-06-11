@@ -546,7 +546,7 @@ tcp_init(struct protosw *pp, struct domain *dp)
 
 	str_size = P2ROUNDUP(sizeof(struct sackhole), sizeof(u_int64_t));
 	sack_hole_zone = zinit(str_size, 120000*str_size, 8192,
-	    "sack_hole zone");
+	    "sack_hole_zone");
 	zone_change(sack_hole_zone, Z_CALLERACCT, FALSE);
 	zone_change(sack_hole_zone, Z_EXPAND, TRUE);
 

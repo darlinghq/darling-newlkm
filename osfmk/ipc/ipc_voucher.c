@@ -219,13 +219,13 @@ ipc_voucher_init(void)
 	ipc_voucher_zone = zinit(sizeof(struct ipc_voucher),
 				 ipc_voucher_max * sizeof(struct ipc_voucher),
 				 sizeof(struct ipc_voucher),
-				 "ipc vouchers");
+				 "ipc_vouchers");
 	zone_change(ipc_voucher_zone, Z_NOENCRYPT, TRUE);
 
 	ipc_voucher_attr_control_zone = zinit(sizeof(struct ipc_voucher_attr_control),
 				 attr_manager_max * sizeof(struct ipc_voucher_attr_control),
 				 sizeof(struct ipc_voucher_attr_control),
-				 "ipc voucher attr controls");
+				 "ipc_voucher_attr_controls");
 	zone_change(ipc_voucher_attr_control_zone, Z_NOENCRYPT, TRUE);
 
 	/* initialize voucher hash */

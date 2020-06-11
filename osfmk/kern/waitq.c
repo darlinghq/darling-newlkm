@@ -1782,7 +1782,7 @@ void waitq_bootstrap(void)
 	waitq_set_zone = zinit(sizeof(struct waitq_set),
 			       WAITQ_SET_MAX * sizeof(struct waitq_set),
 			       sizeof(struct waitq_set),
-			       "waitq sets");
+			       "waitq_sets");
 	zone_change(waitq_set_zone, Z_NOENCRYPT, TRUE);
 
 	/* initialize the global waitq link table */

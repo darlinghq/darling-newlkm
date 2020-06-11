@@ -278,7 +278,7 @@ pipeinit(void)
 	vm_size_t zone_size;
  
 	zone_size = 8192 * sizeof(struct pipe);
-        pipe_zone = zinit(sizeof(struct pipe), zone_size, 4096, "pipe zone");
+        pipe_zone = zinit(sizeof(struct pipe), zone_size, 4096, "pipe_zone");
 
 
 	/* allocate lock group attribute and group for pipe mutexes */
@@ -294,7 +294,7 @@ pipeinit(void)
 	zone_size = (PIPE_GARBAGE_QUEUE_LIMIT + 20) *
 	    sizeof(struct pipe_garbage);
         pipe_garbage_zone = (zone_t)zinit(sizeof(struct pipe_garbage),
-	    zone_size, 4096, "pipe garbage zone");
+	    zone_size, 4096, "pipe_garbage_zone");
 	pipe_garbage_lock = lck_mtx_alloc_init(pipe_mtx_grp, pipe_mtx_attr);
 	
 }

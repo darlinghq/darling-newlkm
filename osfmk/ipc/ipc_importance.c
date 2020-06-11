@@ -3762,13 +3762,13 @@ ipc_importance_init(void)
 	ipc_importance_task_zone = zinit(sizeof(struct ipc_importance_task),
 					 ipc_importance_max * sizeof(struct ipc_importance_task),
 					 sizeof(struct ipc_importance_task),
-					 "ipc task importance");
+					 "ipc_task_importance");
 	zone_change(ipc_importance_task_zone, Z_NOENCRYPT, TRUE);
 
 	ipc_importance_inherit_zone = zinit(sizeof(struct ipc_importance_inherit),
 					    ipc_importance_max * sizeof(struct ipc_importance_inherit),
 					    sizeof(struct ipc_importance_inherit),
-					    "ipc importance inherit");
+					    "ipc_importance_inherit");
 	zone_change(ipc_importance_inherit_zone, Z_NOENCRYPT, TRUE);
 
 

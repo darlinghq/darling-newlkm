@@ -353,7 +353,7 @@ flipc_init(void)
     flipc_port_zone = zinit(sizeof(struct flipc_port),
                             (ipc_port_max>>4) * sizeof(struct flipc_port),
                             sizeof(struct flipc_port),
-                            "flipc ports");
+                            "flipc_ports");
 
     zone_change(flipc_port_zone, Z_CALLERACCT, FALSE);
     zone_change(flipc_port_zone, Z_NOENCRYPT, TRUE);

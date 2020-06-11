@@ -432,7 +432,7 @@ socketinit(void)
 	    + get_inpcb_str_size() + 4 + get_tcp_str_size());
 
 	so_cache_zone = zinit(so_cache_zone_element_size,
-	    (120000 * so_cache_zone_element_size), 8192, "socache zone");
+	    (120000 * so_cache_zone_element_size), 8192, "socache_zone");
 	zone_change(so_cache_zone, Z_CALLERACCT, FALSE);
 	zone_change(so_cache_zone, Z_NOENCRYPT, TRUE);
 

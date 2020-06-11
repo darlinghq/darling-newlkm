@@ -749,7 +749,7 @@ vm_map_init(
 	void)
 {
 	vm_size_t entry_zone_alloc_size;
-	const char *mez_name = "VM map entries";
+	const char *mez_name = "VM_map_entries";
 
 	vm_map_zone = zinit((vm_map_size_t) sizeof(struct _vm_map), 40*1024,
 			    PAGE_SIZE, "maps");
@@ -768,15 +768,15 @@ vm_map_init(
 
 	vm_map_entry_reserved_zone = zinit((vm_map_size_t) sizeof(struct vm_map_entry),
 				   kentry_data_size * 64, kentry_data_size,
-				   "Reserved VM map entries");
+				   "Reserved_VM_map_entries");
 	zone_change(vm_map_entry_reserved_zone, Z_NOENCRYPT, TRUE);
 
 	vm_map_copy_zone = zinit((vm_map_size_t) sizeof(struct vm_map_copy),
-				 16*1024, PAGE_SIZE, "VM map copies");
+				 16*1024, PAGE_SIZE, "VM_map_copies");
 	zone_change(vm_map_copy_zone, Z_NOENCRYPT, TRUE);
 
 	vm_map_holes_zone = zinit((vm_map_size_t) sizeof(struct vm_map_links),
-				 16*1024, PAGE_SIZE, "VM map holes");
+				 16*1024, PAGE_SIZE, "VM_map_holes");
 	zone_change(vm_map_holes_zone, Z_NOENCRYPT, TRUE);
 
 	/*

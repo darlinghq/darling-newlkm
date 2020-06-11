@@ -390,7 +390,7 @@ thread_init(void)
 		sizeof(struct thread_qos_override),
 		4 * thread_max * sizeof(struct thread_qos_override),
 		PAGE_SIZE,
-		"thread qos override");
+		"thread_qos_override");
 	zone_change(thread_qos_override_zone, Z_EXPAND, TRUE);
 	zone_change(thread_qos_override_zone, Z_COLLECT, TRUE);
 	zone_change(thread_qos_override_zone, Z_CALLERACCT, FALSE);

@@ -73,7 +73,7 @@ os_reason_init()
 	 * Create OS reason zone.
 	 */
 	os_reason_zone = zinit(sizeof(struct os_reason), OS_REASON_MAX_COUNT * sizeof(struct os_reason),
-				OS_REASON_MAX_COUNT, "os reasons");
+				OS_REASON_MAX_COUNT, "os_reasons");
 	if (os_reason_zone == NULL) {
 		panic("failed to initialize os_reason_zone");
 	}
