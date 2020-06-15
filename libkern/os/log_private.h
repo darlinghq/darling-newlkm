@@ -112,6 +112,12 @@ API_AVAILABLE(macosx(10.12.4), ios(10.3), tvos(10.2), watchos(3.2))
 void
 os_log_pack_send(os_log_pack_t pack, os_log_t log, os_log_type_t type);
 
+// needed for libc
+// not entirely sure how these should be defined
+#define os_log_pack_size(fmt, ...) _os_log_pack_size(sizeof(fmt))
+// this one is definitely wrong (it's missing the va_args)
+#define os_log_pack_fill(pack, size, errno, fmt, ...) _os_log_pack_fill(pack, size, errno, NULL, fmt)
+
 __END_DECLS
 
 #endif // __os_log_private_h
