@@ -104,6 +104,7 @@ add_custom_target(lkm
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 	DEPENDS
 		lkm_generate
+		rtsig_h
 )
 
 add_custom_target(lkm_install

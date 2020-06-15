@@ -160,9 +160,9 @@ CFLAGS_notify_user.o := $(miggen_cflags)
 CFLAGS_mach_voucher_server.o := $(miggen_cflags)
 CFLAGS_mach_voucher_attr_control_server.o := $(miggen_cflags)
 CFLAGS_OSAtomicOperations.o := $(atomic_cflags)
-CFLAGS_mach_exc_server.o := $(atomic_cflags)
-CFLAGS_mach_exc_user.o := $(atomic_cflags)
-CFLAGS_exc_user.o := $(atomic_cflags)
+CFLAGS_mach_exc_server.o := $(miggen_cflags)
+CFLAGS_mach_exc_user.o := $(miggen_cflags)
+CFLAGS_exc_user.o := $(miggen_cflags)
 
 # This takes effect on Linux 5.4+
 CFLAGS_$(MIGDIR_REL)/osfmk/mach/task_server.o := $(miggen_cflags)
