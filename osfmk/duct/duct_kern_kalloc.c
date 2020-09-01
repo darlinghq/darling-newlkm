@@ -53,7 +53,11 @@ void * duct_kalloc (vm_size_t size)
 void * duct_kalloc_noblock (vm_size_t size)
 {
         // extern void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+        return __vmalloc (size, GFP_ATOMIC | __GFP_HIGHMEM);
+#else
         return __vmalloc (size, GFP_ATOMIC | __GFP_HIGHMEM, PAGE_KERNEL);
+#endif
 }
     
 extern void duct_kfree (void * data, vm_size_t size)
