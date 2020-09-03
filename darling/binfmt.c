@@ -144,7 +144,11 @@ int macho_load(struct linux_binprm* bprm)
 	
 	// Remove the running executable
 	// This is the point of no return.
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+	err = begin_new_exec(bprm);
+	#else
 	err = flush_old_exec(bprm);
+	#endif
 	if (err)
 		goto out;
 
@@ -221,7 +225,9 @@ int setup_space(struct linux_binprm* bprm, struct load_results* lr)
 	unsigned long stackAddr = commpage_address(!test_thread_flag(TIF_IA32));
 
 	setup_new_exec(bprm);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
 	install_exec_creds(bprm);
+	#endif
 
 	// TODO: Mach-O supports executable stacks
 

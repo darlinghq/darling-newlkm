@@ -284,7 +284,11 @@ mach_vm_region(
 #endif
 				return KERN_FAILURE;
 
+			#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+			down_read(&mm->mmap_lock);
+			#else
 			down_read(&mm->mmap_sem);
+			#endif
 
 			vma = find_vma(mm, *address);
 			if (vma == NULL)
@@ -359,7 +363,11 @@ mach_vm_region(
 			}
 
 out:
+			#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+			up_read(&mm->mmap_lock);
+			#else
 			up_read(&mm->mmap_sem);
+			#endif
 			mmput(mm);
 
 			if (object_name)
@@ -398,7 +406,11 @@ mach_vm_region_recurse(
 #endif
 		return KERN_FAILURE;
 
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+	down_read(&mm->mmap_lock);
+	#else
 	down_read(&mm->mmap_sem);
+	#endif
 
 	vma = find_vma(mm, *address);
 	if (vma == NULL)
@@ -450,7 +462,11 @@ mach_vm_region_recurse(
 		rv = KERN_INVALID_ARGUMENT;
 
 out:
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+	up_read(&mm->mmap_lock);
+	#else
 	up_read(&mm->mmap_sem);
+	#endif
 	mmput(mm);
 
 	return rv;
@@ -498,7 +514,11 @@ mach_vm_remap(
 	unsigned int gup_flags = FOLL_WRITE | FOLL_POPULATE;
 	unsigned int map_prot = PROT_READ | PROT_WRITE;
 
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+	down_read(&src_map->linux_task->mm->mmap_lock);
+	#else
 	down_read(&src_map->linux_task->mm->mmap_sem);
+	#endif
 
 	unsigned long page_start = memory_address & LINUX_PAGE_MASK;
 	unsigned long nr_pages = ((memory_address + size + PAGE_SIZE - page_start - 1) >> PAGE_SHIFT);
@@ -521,7 +541,11 @@ mach_vm_remap(
 			pages, NULL, NULL);
 	}
 
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+	up_read(&src_map->linux_task->mm->mmap_lock);
+	#else
 	up_read(&src_map->linux_task->mm->mmap_sem);
+	#endif
 
 	if (got_pages != nr_pages)
 	{

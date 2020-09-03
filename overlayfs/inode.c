@@ -5,6 +5,7 @@
  */
 
 #include <linux/fs.h>
+#include <linux/fiemap.h>
 #include <linux/slab.h>
 #include <linux/cred.h>
 #include <linux/xattr.h>
