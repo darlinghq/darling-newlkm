@@ -112,11 +112,11 @@ extern void duct_panic(const char* reason, ...);
 #undef hw_lock_to
 #undef hw_lock_unlock
 
-#define hw_lock_init(lck)           spin_lock_init ((spinlock_t *) lck)
-#define hw_lock_try(lck)            spin_trylock ((spinlock_t *) lck)
-#define hw_lock_held(lck)           spin_is_locked ((spinlock_t *) lck)
-#define hw_lock_to(lock, timeout)   spin_lock ((spinlock_t *) lck)
-#define hw_lock_unlock(lock)        spin_unlock ((spinlock_t *) lck)
+#define hw_lock_init(lck)              spin_lock_init ((spinlock_t *) lck)
+#define hw_lock_try(lck, grp)          spin_trylock ((spinlock_t *) lck)
+#define hw_lock_held(lck)              spin_is_locked ((spinlock_t *) lck)
+#define hw_lock_to(lock, timeout, grp) spin_lock ((spinlock_t *) lck)
+#define hw_lock_unlock(lock)           spin_unlock ((spinlock_t *) lck)
 
 
 /* wait queue locks */

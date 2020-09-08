@@ -70,6 +70,11 @@
  *	Functions to initialize the IPC system.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_debug.h>
 
 #include <mach/port.h>
@@ -106,6 +111,10 @@
 #include <ipc/ipc_importance.h>
 
 #include <mach/machine/ndr_def.h>   /* NDR_record */
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 vm_map_t ipc_kernel_map;
 vm_size_t ipc_kernel_map_size = 1024 * 1024;
@@ -251,6 +260,12 @@ vm_size_t msg_ool_size_small;
 void
 ipc_init(void)
 {
+#ifdef __DARLING__
+	extern vm_map_t duct_vm_map_create(struct task_struct* t);
+
+	msg_ool_size_small = MSG_OOL_SIZE_SMALL_MAX;
+	ipc_kernel_map = duct_vm_map_create(NULL);
+#else
 	kern_return_t retval;
 	vm_offset_t min;
 
@@ -292,6 +307,7 @@ ipc_init(void)
 	}
 	/* account for overhead to avoid spilling over a page */
 	msg_ool_size_small -= cpy_kdata_hdr_sz;
+#endif
 
 	ipc_host_init();
 	ux_handler_init();

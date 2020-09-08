@@ -56,6 +56,11 @@
 /*
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -91,6 +96,10 @@
 #include <string.h>
 
 #include <pexpert/pexpert.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 bool panic_on_exception_triage = false;
 
@@ -498,10 +507,12 @@ exception_triage_thread(
 	}
 
 out:
+#ifndef __DARLING__
 	if ((exception != EXC_CRASH) && (exception != EXC_RESOURCE) &&
 	    (exception != EXC_GUARD) && (exception != EXC_CORPSE_NOTIFY)) {
 		thread_exception_return();
 	}
+#endif
 	return kr;
 }
 

@@ -86,7 +86,9 @@ extern int      strncmp(const char *, const char *, size_t);
 
 extern int      strcasecmp(const char *s1, const char *s2);
 extern int      strncasecmp(const char *s1, const char *s2, size_t n);
+#ifndef __DARLING__
 extern char     *strnstr(char *s, const char *find, size_t slen);
+#endif
 extern char     *strchr(const char *s, int c);
 #ifdef XNU_KERNEL_PRIVATE
 extern char     *strrchr(const char *s, int c);
@@ -142,6 +144,9 @@ __nochk_bcopy(const void *src, void *dest, size_t len)
 #define BOS_COPY_TYPE 0
 #endif
 
+// we don't have compiler-rt
+#ifndef __DARLING__
+
 #if __has_builtin(__builtin___memcpy_chk)
 #define memcpy(dest, src, len) __builtin___memcpy_chk(dest, src, len, XNU_BOS(dest, BOS_COPY_TYPE))
 #endif
@@ -175,7 +180,12 @@ __nochk_bcopy(const void *src, void *dest, size_t len)
 #endif
 
 #if __has_builtin(__builtin___memmove_chk)
+#ifdef __DARLING__
+#undef bcopy // shut up a compiler warning
+#endif
 #define bcopy(src, dest, len) __builtin___memmove_chk(dest, src, len, XNU_BOS(dest, BOS_COPY_TYPE))
+#endif
+
 #endif
 
 #endif /* _chk macros */

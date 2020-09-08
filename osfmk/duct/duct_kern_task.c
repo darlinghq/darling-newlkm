@@ -66,6 +66,8 @@ lck_attr_t      task_lck_attr;
 lck_grp_t       task_lck_grp;
 lck_grp_attr_t  task_lck_grp_attr;
 
+os_refgrp_decl(static, task_refgrp, "task", NULL);
+
 extern void duct_vm_map_deallocate(vm_map_t map);
 
 void duct_task_init (void)
@@ -139,228 +141,51 @@ void duct_task_destroy(task_t task)
 
 kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_memory, boolean_t is_64bit, task_t * child_task, struct task_struct* ltask)
 {
-        task_t            new_task;
+	// this function is pretty much a heavy trim of the real `task_create_internal`,
+	// with a few Darling-specific additions
+	task_t new_task;
 
-    #if defined (__DARLING__)
-    #else
-        vm_shared_region_t    shared_region;
+	new_task = (task_t) zalloc(task_zone);
 
-        ledger_t        ledger = NULL;
-    #endif
+	if (new_task == TASK_NULL) {
+		return KERN_RESOURCE_SHORTAGE;
+	}
 
-        new_task = (task_t) duct_zalloc(task_zone);
+	// take advantadge of C99 and initialize everything to zero
+	// allows us to eliminate a lot of unnecessary initialization
+	*new_task = (struct task){0};
 
-        if (ltask != NULL && ltask->mm != NULL)
-            pth_proc_hashinit(new_task);
+	/* one ref for just being alive; one for our caller */
+	os_ref_init_count(&new_task->ref_count, &task_refgrp, 2);
 
-        // printk (KERN_NOTICE "task create internal's new task: 0x%x", (unsigned int) new_task);
+#if defined(CONFIG_SCHED_MULTIQ)
+	new_task->sched_group = sched_group_create();
+#endif
 
-        if (new_task == TASK_NULL)
-            return(KERN_RESOURCE_SHORTAGE);
+	lck_mtx_init(&new_task->lock, &task_lck_grp, &task_lck_attr);
+	queue_init(&new_task->threads);
+	new_task->active = TRUE;
+	new_task->returnwait_inheritor = current_thread();
 
-        /* one ref for just being alive; one for our caller */
-        new_task->ref_count = 2;
-        new_task->vchroot = NULL;
-        new_task->vchroot_path = (char*) __get_free_page(GFP_KERNEL);
-		new_task->sigexc = FALSE;
+	queue_init(&new_task->semaphore_list);
 
-        // /* allocate with active entries */
-        // assert(task_ledger_template != NULL);
-        // if ((ledger = ledger_instantiate(task_ledger_template,
-        //         LEDGER_CREATE_ACTIVE_ENTRIES)) == NULL) {
-        //     zfree(task_zone, new_task);
-        //     return(KERN_RESOURCE_SHORTAGE);
-        // }
-        // new_task->ledger = ledger;
+	ipc_task_init(new_task, parent_task);
 
+	if (parent_task != TASK_NULL) {
+		new_task->sec_token = parent_task->sec_token;
+		new_task->audit_token = parent_task->audit_token;
+	} else {
+		new_task->sec_token = KERNEL_SECURITY_TOKEN;
+		new_task->audit_token = KERNEL_AUDIT_TOKEN;
+	}
 
-    #if defined (__DARLING__)
-    #else
-        // /* if inherit_memory is true, parent_task MUST not be NULL */
-        // if (inherit_memory)
-        //     new_task->map = vm_map_fork(ledger, parent_task->map);
-        // else
-        //     new_task->map = vm_map_create(pmap_create(ledger, 0, is_64bit),
-        //             (vm_map_offset_t)(VM_MIN_ADDRESS),
-        //             (vm_map_offset_t)(VM_MAX_ADDRESS), TRUE);
-        //
-        // /* Inherit memlock limit from parent */
-        // if (parent_task)
-        //     vm_map_set_user_wire_limit(new_task->map, (vm_size_t)parent_task->map->user_wire_limit);
-    #endif
-    //
-        lck_mtx_init(&new_task->lock, &task_lck_grp, &task_lck_attr);
-        queue_init(&new_task->threads);
-        new_task->suspend_count = 0;
-        new_task->thread_count = 0;
-        new_task->active_thread_count = 0;
-        new_task->user_stop_count = 0;
-        // new_task->role = TASK_UNSPECIFIED;
-        new_task->active = TRUE;
-        new_task->halting = FALSE;
-        new_task->user_data = NULL;
-        new_task->faults = 0;
-        new_task->cow_faults = 0;
-        new_task->pageins = 0;
-        new_task->messages_sent = 0;
-        new_task->messages_received = 0;
-        new_task->syscalls_mach = 0;
-        new_task->priv_flags = 0;
-        new_task->syscalls_unix=0;
-        new_task->c_switch = new_task->p_switch = new_task->ps_switch = 0;
-        // new_task->taskFeatures[0] = 0;                /* Init task features */
-        // new_task->taskFeatures[1] = 0;                /* Init task features */
+	ipc_task_enable(new_task);
 
-        // zinfo_task_init(new_task);
+	// Darling-specific code
+	new_task->vchroot_path = (char*)__get_free_page(GFP_KERNEL);
 
-    // #ifdef MACH_BSD
-    //     new_task->bsd_info = NULL;
-    // #endif /* MACH_BSD */
-
-    // #if defined(__i386__) || defined(__x86_64__)
-    //     new_task->i386_ldt = 0;
-    //     new_task->task_debug = NULL;
-    // #endif
-
-
-        queue_init(&new_task->semaphore_list);
-        // queue_init(&new_task->lock_set_list);
-        new_task->semaphores_owned = 0;
-        // new_task->lock_sets_owned = 0;
-
-        if (ltask != NULL && ltask->mm != NULL)
-        {
-            new_task->map = duct_vm_map_create(ltask);
-        }
-
-    #if CONFIG_MACF_MACH
-        new_task->label = labelh_new(1);
-        mac_task_label_init (&new_task->maclabel);
-    #endif
-
-        new_task->t_flags = 0;
-        ipc_task_init(new_task, parent_task);
-
-        new_task->total_user_time = 0;
-        new_task->total_system_time = 0;
-
-        new_task->vtimers = 0;
-
-        new_task->shared_region = NULL;
-
-        new_task->affinity_space = NULL;
-    //
-    // #if CONFIG_COUNTERS
-    //     new_task->t_chud = 0U;
-    // #endif
-    //
-         new_task->pidsuspended = FALSE;
-    //     new_task->frozen = FALSE;
-    //     new_task->rusage_cpu_flags = 0;
-    //     new_task->rusage_cpu_percentage = 0;
-    //     new_task->rusage_cpu_interval = 0;
-    //     new_task->rusage_cpu_deadline = 0;
-    //     new_task->rusage_cpu_callt = NULL;
-    //     new_task->proc_terminate = 0;
-    // #if CONFIG_EMBEDDED
-    //     queue_init(&new_task->task_watchers);
-    //     new_task->appstate = TASK_APPSTATE_ACTIVE;
-    //     new_task->num_taskwatchers  = 0;
-    //     new_task->watchapplying  = 0;
-    // #endif /* CONFIG_EMBEDDED */
-
-    //     new_task->uexc_range_start = new_task->uexc_range_size = new_task->uexc_handler = 0;
-    //
-        if (parent_task != TASK_NULL) {
-                new_task->sec_token     = parent_task->sec_token;
-                new_task->audit_token   = parent_task->audit_token;
-
-                // printk (KERN_NOTICE "- new task audit[5]: 0x%x\n", new_task->audit_token.val[5]);
-
-            #if defined (__DARLING__)
-            #else
-                /* inherit the parent's shared region */
-                // shared_region = vm_shared_region_get(parent_task);
-                // vm_shared_region_set(new_task, shared_region);
-            #endif
-    //
-    //         if(task_has_64BitAddr(parent_task))
-    //             task_set_64BitAddr(new_task);
-    //         new_task->all_image_info_addr = parent_task->all_image_info_addr;
-    //         new_task->all_image_info_size = parent_task->all_image_info_size;
-    //
-    // #if defined (__DARLING__)
-    // #else
-    // // #if defined(__i386__) || defined(__x86_64__)
-    // //         if (inherit_memory && parent_task->i386_ldt)
-    // //             new_task->i386_ldt = user_ldt_copy(parent_task->i386_ldt);
-    // // #endif
-    //         if (inherit_memory && parent_task->affinity_space)
-    //             task_affinity_create(parent_task, new_task);
-    // #endif
-    //
-    // #if defined (__DARLING__)
-    // #else
-    //         new_task->pset_hint = parent_task->pset_hint = task_choose_pset(parent_task);
-    // #endif
-    //
-    //         new_task->policystate = parent_task->policystate;
-    //         /* inherit the self action state */
-    //         new_task->appliedstate = parent_task->appliedstate;
-    //         new_task->ext_policystate = parent_task->ext_policystate;
-    // #if NOTYET
-    //         /* till the child lifecycle is cleared do not inherit external action */
-    //         new_task->ext_appliedstate = parent_task->ext_appliedstate;
-    // #else
-    //         new_task->ext_appliedstate = default_task_null_policy;
-    // #endif
-        }
-        else {
-                new_task->sec_token     = KERNEL_SECURITY_TOKEN;
-                new_task->audit_token   = KERNEL_AUDIT_TOKEN;
-
-    // // #ifdef __LP64__
-    // //         if(is_64bit)
-    // //             task_set_64BitAddr(new_task);
-    // // #endif
-    //         new_task->all_image_info_addr = (mach_vm_address_t)0;
-    //         new_task->all_image_info_size = (mach_vm_size_t)0;
-    //
-    //         new_task->pset_hint = PROCESSOR_SET_NULL;
-    //         new_task->policystate = default_task_proc_policy;
-    //         new_task->ext_policystate = default_task_proc_policy;
-    //         new_task->appliedstate = default_task_null_policy;
-    //         new_task->ext_appliedstate = default_task_null_policy;
-        }
-
-    //
-    //     if (kernel_task == TASK_NULL) {
-    //         new_task->priority = BASEPRI_KERNEL;
-    //         new_task->max_priority = MAXPRI_KERNEL;
-    //     }
-    //     else {
-    //         new_task->priority = BASEPRI_DEFAULT;
-    //         new_task->max_priority = MAXPRI_USER;
-    //     }
-    //
-    //     bzero(&new_task->extmod_statistics, sizeof(new_task->extmod_statistics));
-    //     new_task->task_timer_wakeups_bin_1 = new_task->task_timer_wakeups_bin_2 = 0;
-    //
-    //     lck_mtx_lock(&tasks_threads_lock);
-    //     queue_enter(&tasks, new_task, task_t, tasks);
-    //     tasks_count++;
-    //     lck_mtx_unlock(&tasks_threads_lock);
-    //
-        #if defined (__DARLING__)
-        #else
-            // if (vm_backing_store_low && parent_task != NULL)
-            //     new_task->priv_flags |= (parent_task->priv_flags&VM_BACKING_STORE_PRIV);
-        #endif
-
-        ipc_task_enable (new_task);
-
-        *child_task = new_task;
-        return(KERN_SUCCESS);
+	*child_task = new_task;
+	return KERN_SUCCESS;
 }
 
 
@@ -447,39 +272,6 @@ static void __thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut
         *ut = cputime.utime;
         *st = cputime.stime;
 }
-
-#ifndef TASK_VM_INFO
-
-// Copied from newer XNU
-#define TASK_VM_INFO		22
-#define TASK_VM_INFO_PURGEABLE	23
-struct task_vm_info {
-        mach_vm_size_t  virtual_size;	    /* virtual memory size (bytes) */
-	integer_t	region_count;	    /* number of memory regions */
-	integer_t	page_size;
-        mach_vm_size_t  resident_size;	    /* resident memory size (bytes) */
-        mach_vm_size_t  resident_size_peak; /* peak resident size (bytes) */
-
-	mach_vm_size_t	device;
-	mach_vm_size_t	device_peak;
-	mach_vm_size_t	internal;
-	mach_vm_size_t	internal_peak;
-	mach_vm_size_t	external;
-	mach_vm_size_t	external_peak;
-	mach_vm_size_t	reusable;
-	mach_vm_size_t	reusable_peak;
-	mach_vm_size_t	purgeable_volatile_pmap;
-	mach_vm_size_t	purgeable_volatile_resident;
-	mach_vm_size_t	purgeable_volatile_virtual;
-	mach_vm_size_t	compressed;
-	mach_vm_size_t	compressed_peak;
-	mach_vm_size_t	compressed_lifetime;
-};
-typedef struct task_vm_info	task_vm_info_data_t;
-typedef struct task_vm_info	*task_vm_info_t;
-#define TASK_VM_INFO_COUNT	((mach_msg_type_number_t) \
-		(sizeof (task_vm_info_data_t) / sizeof (natural_t)))
-#endif
 
 kern_return_t
 task_info(
@@ -1081,40 +873,15 @@ kern_return_t
 task_suspend(
 	task_t		task)
 {
-	kern_return_t	 		kr;
-	mach_port_t			port, send, old_notify;
-	mach_port_name_t		name;
+	kern_return_t                   kr;
+	mach_port_t                     port;
+	mach_port_name_t                name;
 
-	if (task == TASK_NULL || task == kernel_task)
-		return (KERN_INVALID_ARGUMENT);
+	if (task == TASK_NULL || task == kernel_task) {
+		return KERN_INVALID_ARGUMENT;
+	}
 
 	task_lock(task);
-
-	/* 
-	 * Claim a send right on the task resume port, and request a no-senders
-	 * notification on that port (if none outstanding). 
-	 */
-	if (task->itk_resume == IP_NULL) {
-		task->itk_resume = ipc_port_alloc_kernel();
-		if (!IP_VALID(task->itk_resume))
-			panic("failed to create resume port");
-		ipc_kobject_set(task->itk_resume, (ipc_kobject_t)task, IKOT_TASK_RESUME);
-	}
-
-	port = task->itk_resume;
-	ip_lock(port);
-	assert(ip_active(port));
-
-	send = ipc_port_make_send_locked(port);
-	assert(IP_VALID(send));
-
-	if (port->ip_nsrequest == IP_NULL) {
-		ipc_port_nsrequest(port, port->ip_mscount, ipc_port_make_sonce_locked(port), &old_notify);
-		assert(old_notify == IP_NULL);
-		/* port unlocked */
-	} else {
-		ip_unlock(port);
-	}
 
 	/*
 	 * place a legacy hold on the task.
@@ -1122,9 +889,16 @@ task_suspend(
 	kr = place_task_hold(task, TASK_HOLD_LEGACY);
 	if (kr != KERN_SUCCESS) {
 		task_unlock(task);
-		ipc_port_release_send(send);
 		return kr;
 	}
+
+	/*
+	 * Claim a send right on the task resume port, and request a no-senders
+	 * notification on that port (if none outstanding).
+	 */
+	(void)ipc_kobject_make_send_lazy_alloc_port(&task->itk_resume,
+	    (ipc_kobject_t)task, IKOT_TASK_RESUME);
+	port = task->itk_resume;
 
 	task_unlock(task);
 
@@ -1133,17 +907,17 @@ task_suspend(
 	 * but we'll look it up when calling a traditional resume.  Any IPC operations that
 	 * deallocate the send right will auto-release the suspension.
 	 */
-	if ((kr = ipc_kmsg_copyout_object(current_task()->itk_space, (ipc_object_t)send,
-		MACH_MSG_TYPE_MOVE_SEND, &name)) != KERN_SUCCESS) {
+	if ((kr = ipc_kmsg_copyout_object(current_task()->itk_space, ip_to_object(port),
+		MACH_MSG_TYPE_MOVE_SEND, NULL, NULL, &name)) != KERN_SUCCESS) {
 #ifndef __DARLING__
 		printf("warning: %s(%d) failed to copyout suspension token for pid %d with error: %d\n",
 				proc_name_address(current_task()->bsd_info), proc_pid(current_task()->bsd_info),
 				task_pid(task), kr);
 #endif
-		return (kr);
+		return kr;
 	}
 
-	return (kr);
+	return kr;
 }
 
 /*

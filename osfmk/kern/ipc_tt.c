@@ -68,6 +68,11 @@
  *	Task and thread related IPC functions.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -100,6 +105,11 @@
 
 #if CONFIG_CSR
 #include <sys/csr.h>
+#endif
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 #if CONFIG_EMBEDDED && !SECURE_KERNEL
@@ -1155,6 +1165,11 @@ task_get_special_port(
 	}
 	itk_unlock(task);
 
+#ifdef __DARLING__
+	debug_msg("- task_get_special_port(%s) (task: 0x%p, ->itk_bootstrap: 0x%p, which: %d) to return port: 0x%p\n",
+		linux_current->comm, task, task->itk_bootstrap, which, port);
+#endif
+
 	*portp = port;
 	return KERN_SUCCESS;
 }
@@ -1181,6 +1196,11 @@ task_set_special_port(
 	int             which,
 	ipc_port_t      port)
 {
+#if defined (__DARLING__)
+	debug_msg("- task_set_special_port(%s) (task: 0x%p, which: %d, port: 0x%p) called\n",
+		linux_current->comm, task, which, port);
+#endif
+
 	if (task == TASK_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
@@ -1858,7 +1878,9 @@ convert_port_to_map(
 	}
 
 	map = task->map;
+#ifndef __DARLING__
 	vm_map_reference_swap(map);
+#endif
 	task_unlock(task);
 	return map;
 }

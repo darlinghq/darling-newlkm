@@ -97,7 +97,7 @@ UNDAlertCompletedWithResult_rpc (
         return 0;
 }
 
-void set_sched_pri(thread_t thread, int priority)
+void set_sched_pri(thread_t thread, int priority, set_sched_pri_options_t options)
 {
     kprintf("not implemented: set_sched_pri\n");
 }
@@ -231,6 +231,9 @@ mach_memory_info(
 	mach_msg_type_number_t   *memoryInfoCntp)
 {
        kprintf("not implemented: mach_memory_info()");
+       // NOTE(@facekapow): i'm adding `return 0` because that's what all the neighboring functions are doing,
+       //                   but maybe we (and maybe all the other functions) should be returning `KERN_FAILURE` instead
+       return 0;
 }
 
 #if 0

@@ -32,18 +32,42 @@
  * the terms and conditions for use and redistribution.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
+#ifndef __DARLING__
 #include <sys/param.h>
+#endif
 
 #include <mach/boolean.h>
 #include <mach/exception.h>
 #include <mach/kern_return.h>
 
+#ifndef __DARLING__
 #include <sys/proc.h>
 #include <sys/user.h>
 #include <sys/systm.h>
 #include <sys/vmparam.h>        /* MAXSSIZ */
+#endif
 
 #include <sys/ux_exception.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+
+#define SIGSTOP XNU_SIGSTOP
+#define SIGSEGV XNU_SIGSEGV
+#define SIGBUS XNU_SIGBUS
+#define SIGILL XNU_SIGILL
+#define SIGFPE XNU_SIGFPE
+#define SIGSYS XNU_SIGSYS
+#define SIGPIPE XNU_SIGPIPE
+#define SIGABRT XNU_SIGABRT
+#define SIGKILL XNU_SIGKILL
+#define SIGTRAP XNU_SIGTRAP
+#endif
 
 /*
  * Translate Mach exceptions to UNIX signals.
@@ -52,7 +76,11 @@
  * a signal.  Calls machine_exception (machine dependent)
  * to attempt translation first.
  */
+#ifdef __DARLING__
+int
+#else
 static int
+#endif
 ux_exception(int                        exception,
     mach_exception_code_t      code,
     mach_exception_subcode_t   subcode)
@@ -78,8 +106,10 @@ ux_exception(int                        exception,
 	case EXC_ARITHMETIC:
 		return SIGFPE;
 
+#ifndef __DARLING__
 	case EXC_EMULATION:
 		return SIGEMT;
+#endif
 
 	case EXC_SOFTWARE:
 		switch (code) {
@@ -101,6 +131,8 @@ ux_exception(int                        exception,
 	return 0;
 }
 
+// we have our own duct-taped version of it
+#ifndef __DARLING__
 /*
  * Sends the corresponding UNIX signal to a thread that has triggered a Mach exception.
  */
@@ -178,3 +210,4 @@ handle_ux_exception(thread_t                    thread,
 
 	return KERN_SUCCESS;
 }
+#endif

@@ -1,3 +1,4 @@
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/semaphore.h>
 #include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)

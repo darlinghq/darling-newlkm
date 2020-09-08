@@ -89,19 +89,19 @@
 
 struct processor_set    pset0;
 struct pset_node        pset_node0;
-decl_simple_lock_data(static,pset_node_lock)
+decl_simple_lock_data(static,pset_node_lock);
 
 queue_head_t            tasks;
 queue_head_t            terminated_tasks;   /* To be used ONLY for stackshot. */
 int                     tasks_count;
 queue_head_t            threads;
 int                     threads_count;
-decl_lck_mtx_data(,tasks_threads_lock)
+decl_lck_mtx_data(,tasks_threads_lock);
 
 processor_t             processor_list;
 unsigned int            processor_count;
 static processor_t      processor_list_tail;
-decl_simple_lock_data(,processor_list_lock)
+decl_simple_lock_data(,processor_list_lock);
 
 uint32_t                processor_avail_count;
 
@@ -149,14 +149,14 @@ processor_pset(
     processor_t processor)
 {
         kprintf("not implemented: processor_pset()\n");
-        return KERN_FAILURE;
+        return PROCESSOR_SET_NULL;
 }
 
 pset_node_t
 pset_node_root(void)
 {
         kprintf("not implemented: pset_node_root()\n");
-        return KERN_FAILURE;
+        return PSET_NODE_NULL;
 }
 
 processor_set_t
@@ -164,7 +164,7 @@ pset_create(
     pset_node_t         node)
 {
         kprintf("not implemented: pset_create()\n");
-        return KERN_FAILURE;
+        return PROCESSOR_SET_NULL;
 }
 
 /*

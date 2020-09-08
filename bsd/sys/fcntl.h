@@ -441,6 +441,10 @@
 #define F_VOLPOSMODE    4               /* specify volume starting postion */
 #endif /* (_POSIX_C_SOURCE && !_DARWIN_C_SOURCE) */
 
+#ifdef __DARLING__
+#define flock xnu_flock
+#endif
+
 /*
  * Advisory file segment locking data type -
  * information passed to system by user

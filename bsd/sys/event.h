@@ -1095,7 +1095,12 @@ struct filterops {
 #define filter_call(_ops, call)  \
 	        ((_ops)->f_extended_codes ? (_ops)->call : !!((_ops)->call))
 
+#ifdef __DARLING__
+struct evpsetfd_ctx;
+SLIST_HEAD(klist, evpsetfd_ctx);
+#else
 SLIST_HEAD(klist, knote);
+#endif
 extern void     knote_init(void);
 extern void     klist_init(struct klist *list);
 

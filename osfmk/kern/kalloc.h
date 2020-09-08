@@ -86,10 +86,14 @@ extern vm_size_t
 kalloc_bucket_size(
 	vm_size_t                          size);
 
+#ifdef __DARLING__
+extern void *kalloc(vm_size_t   size) __attribute__((alloc_size(1)));
+#else
 #define kalloc(size)                                \
 	({ VM_ALLOC_SITE_STATIC(0, 0);                  \
 	vm_size_t tsize = (size);                       \
 	kalloc_canblock(&tsize, TRUE, &site); })
+#endif
 
 #define kalloc_tag(size, itag)                      \
 	({ VM_ALLOC_SITE_STATIC(0, (itag));             \
@@ -101,10 +105,14 @@ kalloc_bucket_size(
 	vm_size_t tsize = (size);                       \
 	kalloc_canblock(&tsize, TRUE, &site); })
 
+#ifdef __DARLING__
+extern void *kalloc_noblock(vm_size_t   size) __attribute__((alloc_size(1)));
+#else
 #define kalloc_noblock(size)                        \
 	({ VM_ALLOC_SITE_STATIC(0, 0);                  \
 	vm_size_t tsize = (size);                       \
 	kalloc_canblock(&tsize, FALSE, &site); })
+#endif
 
 #define kalloc_noblock_tag(size, itag)              \
 	({ VM_ALLOC_SITE_STATIC(0, (itag));             \
@@ -144,6 +152,7 @@ kalloc_bucket_size(
 extern void kfree(void          *data,
     vm_size_t     size);
 
+#ifndef __DARLING__
 #define kfree(data, size) \
 _Pragma("clang diagnostic push") \
 _Pragma("clang diagnostic ignored \"-Wshadow\"") \
@@ -155,6 +164,7 @@ _Pragma("clang diagnostic ignored \"-Wshadow\"") \
 	        (kfree)(__tmp_addr, __tmp_size); \
 	} while (0) \
 _Pragma("clang diagnostic pop")
+#endif
 
 #define kfree_addr(addr) \
 _Pragma("clang diagnostic push") \

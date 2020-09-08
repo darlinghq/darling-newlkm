@@ -63,12 +63,21 @@
  *	Notification-sending functions.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/port.h>
 #include <mach/message.h>
 #include <mach/mach_notify.h>
 #include <kern/misc_protos.h>
 #include <ipc/ipc_notify.h>
 #include <ipc/ipc_port.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	ipc_notify_port_deleted

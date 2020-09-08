@@ -50,26 +50,31 @@ extern  unsigned int    LckDisablePreemptCheck;
 #endif /* MACH_KERNEL_PRIVATE */
 
 #if     defined(MACH_KERNEL_PRIVATE)
+#ifndef __DARLING__
 typedef struct {
 	volatile uintptr_t      interlock;
 #if     MACH_LDEBUG
 	unsigned long   lck_spin_pad[9];        /* XXX - usimple_lock_data_t */
 #endif
 } lck_spin_t;
+#endif
 
 #define LCK_SPIN_TAG_DESTROYED          0x00002007      /* lock marked as Destroyed */
 
 #else /* MACH_KERNEL_PRIVATE */
 #ifdef  KERNEL_PRIVATE
+#ifndef __DARLING__
 typedef struct {
 	unsigned long    opaque[10];
 } lck_spin_t;
+#endif
 #else /* KERNEL_PRIVATE */
 typedef struct __lck_spin_t__   lck_spin_t;
 #endif
 #endif
 
 #ifdef  MACH_KERNEL_PRIVATE
+#ifndef __DARLING__
 /* The definition of this structure, including the layout of the
  * state bitfield, is tailored to the asm implementation in i386_lock.s
  */
@@ -101,6 +106,7 @@ typedef struct _lck_mtx_ {
 		};
 	};
 } lck_mtx_t;
+#endif
 
 #define LCK_MTX_WAITERS_MSK             0x0000ffff
 #define LCK_MTX_WAITER                  0x00000001

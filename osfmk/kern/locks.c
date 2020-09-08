@@ -56,6 +56,14 @@
 
 #define LOCK_PRIVATE 1
 
+#ifdef __DARLING__
+#include <duct/duct__pre_linux_types.h>
+#include <linux/delay.h> // for usleep_range
+
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_ldebug.h>
 #include <debug.h>
 
@@ -77,6 +85,10 @@
 #include <string.h>
 
 #include <sys/kdebug.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #define LCK_MTX_SLEEP_CODE              0
 #define LCK_MTX_SLEEP_DEADLINE_CODE     1
@@ -493,6 +505,14 @@ lck_attr_free(
 {
 	kfree(attr, sizeof(lck_attr_t));
 }
+
+#ifdef __DARLING__
+#undef hw_lock_init
+#undef hw_lock_try
+#undef hw_lock_held
+#undef hw_lock_to
+#undef hw_lock_unlock
+#endif
 
 /*
  * Routine:	hw_lock_init
@@ -1226,6 +1246,7 @@ lck_mtx_sleep_deadline(
  * steal the lock without having to wait for the last waiter to make forward progress.
  */
 
+#ifndef __DARLING__
 /*
  * Routine: lck_mtx_lock_wait
  *
@@ -1407,6 +1428,7 @@ lck_mtx_unlock_wakeup(
 
 	return mutex->lck_mtx_waiters > 0;
 }
+#endif
 
 /*
  * Routine:     mutex_pause
@@ -1439,17 +1461,22 @@ mutex_pause(uint32_t collisions)
 	}
 	back_off = collision_backoffs[collisions];
 
+#ifdef __DARLING__
+	usleep_range(back_off, back_off);
+#else
 	wait_result = assert_wait_timeout((event_t)mutex_pause, THREAD_UNINT, back_off, NSEC_PER_USEC);
 	assert(wait_result == THREAD_WAITING);
 
 	wait_result = thread_block(THREAD_CONTINUE_NULL);
 	assert(wait_result == THREAD_TIMED_OUT);
+#endif
 }
 
 
 unsigned int mutex_yield_wait = 0;
 unsigned int mutex_yield_no_wait = 0;
 
+#ifndef __DARLING__
 void
 lck_mtx_yield(
 	lck_mtx_t   *lck)
@@ -1475,6 +1502,7 @@ lck_mtx_yield(
 		lck_mtx_lock(lck);
 	}
 }
+#endif
 
 
 /*

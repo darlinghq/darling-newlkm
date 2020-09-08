@@ -1213,7 +1213,7 @@ int pid_for_task_entry(task_t task, struct pid_for_task* in_args)
 int tid_for_thread_entry(task_t task, void* tport_in)
 {
 	int tid;
-	thread_t t = port_name_to_thread((int)(long) tport_in);
+	thread_t t = port_name_to_thread((int)(long) tport_in, PORT_TO_THREAD_NONE);
 
 	if (!t || !t->linux_task)
 		return -1;
@@ -1405,7 +1405,7 @@ int set_tracer_entry(task_t self, struct set_tracer_args* in_args)
 int pthread_markcancel_entry(task_t task, void* tport_in)
 {
 	// mark as canceled if cancelable
-	thread_t t = port_name_to_thread((int)(long) tport_in);
+	thread_t t = port_name_to_thread((int)(long) tport_in, PORT_TO_THREAD_NONE);
 
 	if (!t)
 		return -LINUX_ESRCH;
@@ -1986,7 +1986,9 @@ int fileport_makefd_entry(task_t task, void* port_in)
 	kern_return_t kr;
 	int err;
 
-	kr = ipc_object_copyin(task->itk_space, send, MACH_MSG_TYPE_COPY_SEND, (ipc_object_t*) &port);
+	// NOTE(@facekapow): `ipc_object_copyin` got a few extra parameters in the last update; i just followed suit with what the XNU code passes in for them
+	//                   we might need to revisit them later on (particularly `IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND`), but they seem pretty harmless
+	kr = ipc_object_copyin(task->itk_space, send, MACH_MSG_TYPE_COPY_SEND, (ipc_object_t*) &port, 0, NULL, IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND);
 
 	if (kr != KERN_SUCCESS)
 	{

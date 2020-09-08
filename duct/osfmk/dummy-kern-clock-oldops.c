@@ -99,7 +99,7 @@ typedef struct alarm    alarm_data_t;
 #define ALARM_DONE  4       /* alarm has expired */
 
 /* local data declarations */
-decl_simple_lock_data(static,alarm_lock)    /* alarm synchronization */
+decl_simple_lock_data(static,alarm_lock);   /* alarm synchronization */
 static struct   zone        *alarm_zone;    /* zone for user alarms */
 static struct   alarm       *alrmfree;      /* alarm free list pointer */
 static struct   alarm       *alrmdone;      /* alarm done list pointer */

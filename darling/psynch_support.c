@@ -37,6 +37,7 @@
 #include <kern/task.h>
 #include <kern/thread_call.h>
 #include <kern/kern_types.h>
+#include <kern/ipc_tt.h>
 #include <duct/duct_kern_printf.h>
 #include <duct/duct_post_xnu.h>
 
@@ -113,6 +114,7 @@ static int __test_prints__;
 DEFINE_MUTEX(pthread_list_mlock);
 #define LIST_ENTRY(where) struct list_head
 #define LIST_INIT INIT_LIST_HEAD
+#define LIST_HEAD(name) struct list_head name = LIST_HEAD_INIT(name)
 
 #define TAILQ_FIRST(head) (list_empty(head) ? NULL : list_first_entry(head, struct ksyn_waitq_element, kwe_list))
 #define TAILQ_LAST(head, member) list_last_entry(head, struct ksyn_waitq_element, kwe_list)
@@ -441,7 +443,6 @@ int ksyn_wqfind(user_addr_t mutex, uint32_t mgen, uint32_t ugen, uint32_t rw_wc,
 void ksyn_wqrelease(ksyn_wait_queue_t mkwq, ksyn_wait_queue_t ckwq, int qfreenow, int wqtype);
 extern int ksyn_findobj(uint64_t mutex, uint64_t * object, uint64_t * offset);
 static void UPDATE_CVKWQ(ksyn_wait_queue_t kwq, uint32_t mgen, uint32_t ugen, uint32_t rw_wc, uint64_t tid, int wqtype);
-extern thread_t port_name_to_thread(mach_port_name_t port_name);
 
 kern_return_t ksyn_block_thread_locked(ksyn_wait_queue_t kwq, uint64_t abstime, ksyn_waitq_element_t kwe, int log, thread_continue_t, void * parameter);
 kern_return_t ksyn_wakeup_thread(ksyn_wait_queue_t kwq, ksyn_waitq_element_t kwe);
@@ -1054,7 +1055,7 @@ psynch_cvsignal(__unused proc_t p, struct psynch_cvsignal_args * uap, uint32_t *
 
 	/* If we are looking for a specific thread, grab a reference for it */
 	if (threadport != 0) {
-		th = (thread_t)port_name_to_thread((mach_port_name_t)threadport);
+		th = (thread_t)port_name_to_thread((mach_port_name_t)threadport, PORT_TO_THREAD_NONE);
 		if (th == THREAD_NULL) {
 			error = LINUX_ESRCH;
 			goto out;

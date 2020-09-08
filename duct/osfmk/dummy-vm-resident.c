@@ -241,7 +241,7 @@ unsigned int    vm_page_free_count_minimum; /* debugging */
  */
 zone_t  vm_page_zone;
 vm_locks_array_t vm_page_locks;
-decl_lck_mtx_data(,vm_page_alloc_lock)
+decl_lck_mtx_data(,vm_page_alloc_lock);
 lck_mtx_ext_t vm_page_alloc_lock_ext;
 
 unsigned int io_throttle_zero_fill;
@@ -260,7 +260,7 @@ struct vplq     *vm_page_local_q = NULL;
  *  For debugging, this should be a strange value
  *  that the pmap module can recognize in assertions.
  */
-ppnum_t vm_page_fictitious_addr = (ppnum_t) -1;
+const ppnum_t vm_page_fictitious_addr = (ppnum_t) -1;
 
 /*
  *  Guard pages are not accessible so they don't
@@ -270,7 +270,7 @@ ppnum_t vm_page_fictitious_addr = (ppnum_t) -1;
  *  we don't use a real physical page with that
  *  physical address.
  */
-ppnum_t vm_page_guard_addr = (ppnum_t) -2;
+const ppnum_t vm_page_guard_addr = (ppnum_t) -2;
 
 /*
  *  Resident page structures are also chained on
@@ -581,10 +581,9 @@ vm_page_lookup(
  */
 void
 vm_page_rename(
-    register vm_page_t      mem,
-    register vm_object_t        new_object,
-    vm_object_offset_t      new_offset,
-    boolean_t           encrypted_ok)
+    vm_page_t               mem,
+    vm_object_t             new_object,
+    vm_object_offset_t      new_offset)
 {
         kprintf("not implemented: vm_page_rename()\n");
 }

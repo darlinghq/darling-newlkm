@@ -116,17 +116,18 @@ kmem_free(
 	vfree((void*) addr);
 }
 
+kern_return_t kmem_alloc_external(vm_map_t map, vm_offset_t* addrp, vm_size_t size) {
+	return kmem_alloc(map, addrp, size, 0);
+}
+
 kern_return_t
 kmem_alloc(
     vm_map_t    map,
     vm_offset_t *addrp,
-    vm_size_t   size)
+    vm_size_t   size,
+    vm_tag_t    tag)
 {
-	*addrp = (vm_offset_t) vmalloc(size);
-	if (*addrp)
-		return KERN_SUCCESS;
-	else
-		return KERN_NO_SPACE;
+	return kernel_memory_allocate(map, addrp, size, 0, 0, tag);
 }
 
 kern_return_t    kernel_memory_allocate(

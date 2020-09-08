@@ -70,6 +70,10 @@
  *	Operations on kernel messages.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
 
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
@@ -138,6 +142,11 @@
 
 #include <sys/kdebug.h>
 #include <libkern/OSAtomic.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
+#endif
 
 #pragma pack(4)
 
@@ -217,6 +226,7 @@ mm_copy_options_string64(
 
 void db_print_msg_uid64(mach_msg_header_t *);
 
+#ifndef __DARLING__
 static void
 ipc_msg_body_print64(void *body, int size)
 {
@@ -237,7 +247,7 @@ ipc_msg_body_print64(void *body, int size)
 		kprintf("\n    %p: ", word);
 	}
 }
-
+#endif
 
 const char *
 ipc_type_name64(
@@ -384,11 +394,13 @@ ipc_msg_print64(
 	    msgh->msgh_id,
 	    msgh->msgh_size);
 
+#ifndef __DARLING__
 	if (mbits & MACH_MSGH_BITS_COMPLEX) {
 		ipc_msg_print_untyped64((mach_msg_body_t *) (msgh + 1));
 	}
 
 	ipc_msg_body_print64((void *)(msgh + 1), msgh->msgh_size);
+#endif
 }
 
 
@@ -1654,6 +1666,16 @@ ipc_kmsg_get(
 	kmsg->ikm_header->msgh_local_port       = CAST_MACH_NAME_TO_PORT(legacy_base.header.msgh_local_port);
 	kmsg->ikm_header->msgh_voucher_port             = legacy_base.header.msgh_voucher_port;
 	kmsg->ikm_header->msgh_id                       = legacy_base.header.msgh_id;
+
+#ifdef __DARLING__
+	debug_msg("- ikm_header->msgh_size: %d, bits: 0x%x rport: 0x%x, lport: 0x%x, reserved: 0x%x, id: %d\n",
+		kmsg->ikm_header->msgh_size,
+		kmsg->ikm_header->msgh_bits,
+		kmsg->ikm_header->msgh_remote_port,
+		kmsg->ikm_header->msgh_local_port,
+		kmsg->ikm_header->msgh_reserved,
+		kmsg->ikm_header->msgh_id);
+#endif
 
 	DEBUG_KPRINT_SYSCALL_IPC("ipc_kmsg_get header:\n"
 	    "  size:		0x%.8x\n"
@@ -3682,6 +3704,16 @@ ipc_kmsg_copyin(
 	if (mr != MACH_MSG_SUCCESS) {
 		return mr;
 	}
+
+#ifdef __DARLING__
+	debug_msg("- copyin_header->msgh_size: %d, bits: 0x%x rport: 0x%p, lport: 0x%p, reserved: 0x%x, id: %d\n",
+		kmsg->ikm_header->msgh_size,
+		kmsg->ikm_header->msgh_bits,
+		kmsg->ikm_header->msgh_remote_port,
+		kmsg->ikm_header->msgh_local_port,
+		kmsg->ikm_header->msgh_reserved,
+		kmsg->ikm_header->msgh_id);
+#endif
 
 	KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_IPC, MACH_IPC_MSG_SEND) | DBG_FUNC_NONE,
 	    VM_KERNEL_ADDRPERM((uintptr_t)kmsg),

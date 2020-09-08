@@ -69,6 +69,10 @@
  * Version 2.0.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
 
 #include <mach/port.h>
 #include <mach/message.h>
@@ -100,6 +104,11 @@
 #endif
 
 #include <sys/event.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
+#endif
 
 extern char     *proc_name_address(void *p);
 
@@ -1100,6 +1109,11 @@ ipc_mqueue_receive_on_thread(
 	int                     interruptible,
 	thread_t                thread)
 {
+#if defined (__DARLING__)
+	debug_msg("- ipc_mqueue_receive_on_thread (mqueue: 0x%p, option: 0x%x, rcv_timeout: %d) called\n",
+		mqueue, option, (int)rcv_timeout);
+#endif
+
 	wait_result_t           wresult;
 	uint64_t                deadline;
 	struct turnstile        *rcv_turnstile = TURNSTILE_NULL;

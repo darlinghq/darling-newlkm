@@ -114,7 +114,7 @@
 
 
 memory_object_default_t memory_manager_default = MEMORY_OBJECT_DEFAULT_NULL;
-decl_lck_mtx_data(, memory_manager_default_lock)
+decl_lck_mtx_data(, memory_manager_default_lock);
 
 
 /*
@@ -448,7 +448,8 @@ kern_return_t    memory_object_iopl_request(
     upl_t           *upl_ptr,
     upl_page_info_array_t   user_page_list,
     unsigned int        *page_list_count,
-    upl_control_flags_t *flags)
+    upl_control_flags_t *flags,
+    vm_tag_t tag)
 {
         kprintf("not implemented: memory_object_iopl_request()\n");
         return 0;
@@ -471,7 +472,8 @@ memory_object_upl_request(
     upl_t           *upl_ptr,
     upl_page_info_array_t   user_page_list,
     unsigned int        *page_list_count,
-    int         cntrl_flags)
+    int         cntrl_flags,
+    int tag)
 {
         kprintf("not implemented: memory_object_upl_request()\n");
         return 0;
@@ -497,7 +499,8 @@ memory_object_super_upl_request(
     upl_t           *upl,
     upl_page_info_t     *user_page_list,
     unsigned int        *page_list_count,
-    int         cntrl_flags)
+    int         cntrl_flags,
+    int tag)
 {
         kprintf("not implemented: memory_object_super_upl_request()\n");
         return 0;

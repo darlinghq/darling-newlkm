@@ -390,8 +390,13 @@ struct efi_aurr_extended_panic_log {
 
 __BEGIN_DECLS
 
+#ifdef __DARLING__
+__printflike(1,2)
+extern void duct_panic(const char* string, ...);
+#else
 __abortlike __printflike(1, 2)
 extern void panic(const char *string, ...);
+#endif
 
 __END_DECLS
 
@@ -507,6 +512,20 @@ __BEGIN_DECLS
 #define LINE_NUMBER(x) __STRINGIFY(x)
 #define PANIC_LOCATION __FILE__ ":" LINE_NUMBER(__LINE__)
 
+// we only have to redefine these for Darling so that they use `duct_panic` instead of `panic`
+#ifdef __DARLING__
+#if CONFIG_EMBEDDED
+#define panic(ex, ...)  ({ \
+	        __asm__("" ::: "memory"); \
+	        (duct_panic)(# ex, ## __VA_ARGS__); \
+	})
+#else
+#define panic(ex, ...)  ({ \
+	        __asm__("" ::: "memory"); \
+	        (duct_panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__); \
+	})
+#endif
+#else
 #if CONFIG_EMBEDDED
 #define panic(ex, ...)  ({ \
 	        __asm__("" ::: "memory"); \
@@ -517,6 +536,7 @@ __BEGIN_DECLS
 	        __asm__("" ::: "memory"); \
 	        (panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__); \
 	})
+#endif
 #endif
 
 __abortlike __printflike(4, 5)

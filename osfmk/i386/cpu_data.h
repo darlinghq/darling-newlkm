@@ -477,11 +477,15 @@ get_interrupt_level(void)
 {
 	CPU_DATA_GET(cpu_interrupt_level, int)
 }
+#ifdef __DARLING__
+int get_cpu_number(void);
+#else
 static inline int
 get_cpu_number(void)
 {
 	CPU_DATA_GET(cpu_number, int)
 }
+#endif
 static inline int
 get_cpu_phys_number(void)
 {
@@ -718,6 +722,9 @@ disable_preemption_internal(void)
 static inline void
 enable_preemption_internal(void)
 {
+#ifdef __DARLING__
+	printf("STUB: enable_preemption_internal\n");
+#else
 	assert(get_preemption_level() > 0);
 	pltrace(TRUE);
 	os_compiler_barrier(release);
@@ -736,6 +743,7 @@ enable_preemption_internal(void)
                         : "eax", "ecx", "edx", "cc", "memory");
 #endif
 	os_compiler_barrier(acquire);
+#endif
 }
 
 static inline void

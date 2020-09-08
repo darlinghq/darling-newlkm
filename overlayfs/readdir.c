@@ -4,6 +4,7 @@
  * Copyright (C) 2011 Novell Inc.
  */
 
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/namei.h>

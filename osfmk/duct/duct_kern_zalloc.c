@@ -70,3 +70,13 @@ void duct_zfree (zone_t zone, void * elem)
 {
         kmem_cache_free ((struct kmem_cache *) zone, elem);
 }
+
+boolean_t kdp_is_in_zone(void* addr, const char* zone_name) {
+	// this isn't too important; it's only used in debug/development mode inside asserts
+	// TODO: how are we actually supposed to check this? as far as i can tell,
+	// Linux doesn't have a way to lookup a slab via an address
+	// well, since we would only lookup caches that we ourselves allocate, we could keep a list of
+	// the ones we have, but that's a lot of unnecessary work for something that is only
+	// ever really used in development
+	return 1;
+};

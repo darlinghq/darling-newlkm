@@ -320,6 +320,8 @@ kmem_suballoc(
     vm_size_t   size,
     boolean_t   pageable,
     int     flags,
+    vm_map_kernel_flags_t vmk_flags,
+    vm_tag_t    tag,
     vm_map_t    *new_map)
 {
         kprintf("not implemented: kmem_suballoc()\n");

@@ -98,6 +98,10 @@
 
 #include <sys/cdefs.h>
 
+#ifdef __DARLING__
+#include <darling/pthread_internal.h>
+#endif
+
 #ifdef  MACH_KERNEL_PRIVATE
 
 #include <mach_assert.h>
@@ -612,6 +616,27 @@ struct thread {
 	    guard_exc_fatal:1,
 	    thread_bitfield_unused:12;
 
+#ifdef __DARLING__
+	struct task_struct*  linux_task;
+	boolean_t            in_sigprocess;
+	int                  pending_signal;
+	//linux_wait_queue_t lwait;
+	uint32_t             uu_rval[1];
+	unsigned long        dispatch_qaddr;
+	unsigned long        pthread_handle;
+#ifdef __x86_64__
+	unsigned long        cont_jmpbuf[8];
+#endif
+	struct ksyn_waitq_element uu_kwe;
+	uint64_t                  triggered_watchpoint_address;
+	unsigned int              triggered_watchpoint_operation;
+#ifdef __x86_64__
+	x86_thread_state_t   thread_state;
+	x86_float_state_t    float_state;
+	// TODO: debug regs state?
+#endif
+#endif
+
 	mach_port_name_t                ith_voucher_name;
 	ipc_voucher_t                   ith_voucher;
 #if CONFIG_IOSCHED
@@ -663,7 +688,7 @@ struct thread {
 	         ((msgt_name) == MACH_MSG_TYPE_PORT_RECEIVE || \
 	         (msgt_name) == MACH_MSG_TYPE_PORT_SEND_ONCE))
 
-#if MACH_ASSERT
+#if MACH_ASSERT && !defined(__DARLING__)
 #define assert_thread_magic(thread) assertf((thread)->thread_magic == THREAD_MAGIC, \
 	                                    "bad thread magic 0x%llx for thread %p, expected 0x%llx", \
 	                                    (thread)->thread_magic, (thread), THREAD_MAGIC)

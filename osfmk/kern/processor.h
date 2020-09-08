@@ -172,8 +172,10 @@ struct processor_set {
 #endif /* SCHED_PSET_TLOCK*/
 #endif
 
+#ifndef __DARLING__
 #if defined(CONFIG_SCHED_TRADITIONAL) || defined(CONFIG_SCHED_MULTIQ)
 	struct run_queue        pset_runq;      /* runq for this processor set */
+#endif
 #endif
 	struct rt_queue         rt_runq;        /* realtime runq for this processor set */
 #if CONFIG_SCHED_CLUTCH
@@ -271,8 +273,10 @@ struct processor {
 	                                                 * to ourselves for primaries or non-SMT */
 	processor_t             processor_secondary;
 
+#ifndef __DARLING__
 #if defined(CONFIG_SCHED_TRADITIONAL) || defined(CONFIG_SCHED_MULTIQ)
 	struct run_queue        runq;                   /* runq for this processor */
+#endif
 #endif
 
 #if defined(CONFIG_SCHED_TRADITIONAL)

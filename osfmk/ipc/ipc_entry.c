@@ -63,6 +63,11 @@
  *	Primitive functions to manipulate translation entries.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_debug.h>
 
 #include <mach/kern_return.h>
@@ -80,6 +85,10 @@
 #include <ipc/ipc_port.h>
 #include <string.h>
 #include <sys/kdebug.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	ipc_entry_lookup
@@ -559,6 +568,11 @@ ipc_entry_grow_table(
 	uint64_t rescan_count = 0;
 #endif
 	assert(is_active(space));
+#ifdef __DARLING__
+	lck_spin_unlock(&space->is_lock_data);
+	mutex_lock(&space->is_mutex_lock);
+	lck_spin_lock(&space->is_lock_data);
+#endif
 
 	if (is_growing(space)) {
 		/*
@@ -636,7 +650,11 @@ ipc_entry_grow_table(
 		is_write_lock(space);
 		is_done_growing(space);
 		is_write_unlock(space);
+#ifdef __DARLING__
+		mutex_unlock(&space->is_mutex_lock);
+#else
 		thread_wakeup((event_t) space);
+#endif
 		return KERN_RESOURCE_SHORTAGE;
 	}
 
@@ -722,7 +740,11 @@ rescan:
 
 		is_done_growing(space);
 		is_write_unlock(space);
+#ifdef __DARLING__
+		mutex_unlock(&space->is_mutex_lock);
+#else
 		thread_wakeup((event_t) space);
+#endif
 		it_entries_free(its, table);
 		is_write_lock(space);
 		return KERN_SUCCESS;
@@ -769,7 +791,11 @@ rescan:
 	is_done_growing(space);
 	is_write_unlock(space);
 
+#ifdef __DARLING__
+	mutex_unlock(&space->is_mutex_lock);
+#else
 	thread_wakeup((event_t) space);
+#endif
 
 	/*
 	 *	Now we need to free the old table.

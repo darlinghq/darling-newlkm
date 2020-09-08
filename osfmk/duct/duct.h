@@ -45,6 +45,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* WC - todo shouldn't be here */
 #define fsid_t              linux_fsid_t
 
+#undef asm_inline // shut up a compiler warning
+#define asm_inline asm
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -434,5 +436,44 @@ static inline void linux_spin_unlock(spinlock_t* l)
 
 #undef spin_unlock
 #define spin_unlock linux_spin_unlock
+
+// for xnu/bsd/sys/fcntl.h
+#undef O_RDONLY
+#undef O_WRONLY
+#undef O_RDWR
+#undef O_ACCMODE
+#undef O_NONBLOCK
+#undef O_APPEND
+#undef O_NOFOLLOW
+#undef O_CREAT
+#undef O_TRUNC
+#undef O_EXCL
+#undef AT_FDCWD
+#undef AT_SYMLINK_NOFOLLOW
+#undef AT_SYMLINK_FOLLOW
+#undef AT_REMOVEDIR
+#undef O_NOCTTY
+#undef O_DIRECTORY
+#undef O_CLOEXEC
+#undef FASYNC
+#undef F_GETOWN
+#undef F_SETOWN
+#undef F_GETLK
+#undef F_SETLK
+#undef F_SETLKW
+#undef F_OFD_SETLK
+#undef F_OFD_SETLKW
+#undef F_OFD_GETLK
+#undef F_DUPFD_CLOEXEC
+#undef F_RDLCK
+#undef F_WRLCK
+#undef LOCK_SH
+#undef LOCK_EX
+#undef LOCK_NB
+#undef LOCK_UN
+
+// for xnu/sys/queue.h
+#undef LIST_HEAD
+
 
 #endif // DUCT_H

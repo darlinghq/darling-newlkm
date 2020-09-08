@@ -171,7 +171,7 @@ kern_return_t duct_waitq_init (waitq_t wq, int policy)
 
 
 kern_return_t duct_waitq_set_init (waitq_set_t wqset, int policy, uint64_t *reserved_link,
-		                    void *prepost_hook)
+		                    waitq_set_prepost_hook_t *prepost_hook)
 {
         kern_return_t ret;
 

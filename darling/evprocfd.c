@@ -18,6 +18,7 @@
  */
 #include "evprocfd.h"
 #include "task_registry.h"
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/anon_inodes.h>

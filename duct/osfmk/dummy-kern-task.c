@@ -207,7 +207,8 @@ task_backing_store_privileged(
 void
 task_set_64bit(
         task_t task,
-        boolean_t is64bit)
+        boolean_t is64bit,
+        boolean_t is_64bit_data)
 {
         kprintf("not implemented: task_set_64bit()\n");
 }
@@ -739,14 +740,15 @@ task_pidresume(
  */
 kern_return_t
 task_freeze(
-    register task_t    task,
-    uint32_t           *purgeable_count,
-    uint32_t           *wired_count,
-    uint32_t           *clean_count,
-    uint32_t           *dirty_count,
-    uint32_t           dirty_budget,
-    boolean_t          *shared,
-    boolean_t          walk_only)
+    task_t task,
+    uint32_t* purgeable_count,
+    uint32_t* wired_count,
+    uint32_t* clean_count,
+    uint32_t* dirty_count,
+    uint32_t dirty_budget,
+    uint32_t* shared_count,
+    int* freezer_error_code,
+    boolean_t eval_only)
 {
         kprintf("not implemented: task_freeze()\n");
         return 0;

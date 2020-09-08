@@ -43,6 +43,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <kern/mach_param.h>
 #include <kern/thread.h>
 #include <kern/ipc_tt.h>
+#include <kern/policy_internal.h>
 
 #include "duct_post_xnu.h"
 #include <darling/task_registry.h>
@@ -75,6 +76,8 @@ static struct zone          *thread_zone;
 static lck_grp_attr_t       thread_lck_grp_attr;
 lck_attr_t                  thread_lck_attr;
 lck_grp_t                   thread_lck_grp;
+
+os_refgrp_decl(static, thread_refgrp, "thread", NULL);
 
 // decl_simple_lock_data(static,thread_stack_lock)
 // static queue_head_t     thread_stack_queue;
@@ -109,129 +112,107 @@ static uint64_t     thread_unique_id = 0;
 // static ledger_template_t thread_ledger_template = NULL;
 // void init_thread_ledgers(void);
 
-static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t priority, thread_continue_t continuation, int options, thread_t * out_thread);
-static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_thread, boolean_t from_user);
+static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t priority, thread_continue_t continuation, void* parameter, int options, thread_t * out_thread);
+static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_thread, boolean_t from_user, thread_continue_t continuation);
+static void thread_deallocate_complete(thread_t thread);
 
 kern_return_t duct_thread_terminate (thread_t thread);
 void duct_thread_deallocate (thread_t thread);
 
 void duct_thread_bootstrap (void)
 {
-        /*
-         *    Fill in a template thread for fast initialization.
-         */
-        // WC - the following is not necessary
+	/*
+	 *	Fill in a template thread for fast initialization.
+	 */
+	// Note for Darling, since static (and global) variables are always initialized to `0`,
+	// we can avoid unnecessarily copying lots of code (stuff like `thread_template.<blah> = 0`)
 
-        thread_template.runq = PROCESSOR_NULL;
+	thread_template.runq = PROCESSOR_NULL;
 
-        thread_template.ref_count = 2;
+	thread_template.reason = AST_NONE;
+	thread_template.at_safe_point = FALSE;
+	thread_template.wait_event = NO_EVENT64;
+	thread_template.waitq = NULL;
+	thread_template.wait_result = THREAD_WAITING;
+	thread_template.options = THREAD_ABORTSAFE;
+	thread_template.state = TH_WAIT | TH_UNINT;
+	thread_template.wake_active = FALSE;
+	thread_template.continuation = THREAD_CONTINUE_NULL;
+	thread_template.parameter = NULL;
 
-        thread_template.reason = 0;
-        thread_template.at_safe_point = FALSE;
-        thread_template.wait_event = NO_EVENT64;
-        thread_template.waitq = NULL;
-        thread_template.wait_result = THREAD_WAITING;
-        thread_template.options = THREAD_ABORTSAFE;
-        thread_template.state = TH_WAIT | TH_UNINT;
-        thread_template.wake_active = FALSE;
-        thread_template.continuation = THREAD_CONTINUE_NULL;
-        thread_template.parameter = NULL;
+	thread_template.sched_mode = TH_MODE_NONE;
+	thread_template.saved_mode = TH_MODE_NONE;
+	thread_template.th_sched_bucket = TH_BUCKET_RUN;
 
-        thread_template.importance = 0;
-        thread_template.sched_mode = TH_MODE_NONE;
-        thread_template.sched_flags = 0;
-        thread_template.saved_mode = TH_MODE_NONE;
-        thread_template.safe_release = 0;
+	thread_template.sfi_class = SFI_CLASS_UNSPECIFIED;
+	thread_template.sfi_wait_class = SFI_CLASS_UNSPECIFIED;
 
-        // thread_template.priority = 0;
-        thread_template.sched_pri = 0;
-        thread_template.max_priority = 0;
-        thread_template.task_priority = 0;
-        thread_template.promotions = 0;
-        thread_template.pending_promoter_index = 0;
-        thread_template.pending_promoter[0] =
-        thread_template.pending_promoter[1] = NULL;
+	thread_template.base_pri = BASEPRI_DEFAULT;
+	thread_template.waiting_for_mutex = NULL;
 
-        thread_template.realtime.deadline = UINT64_MAX;
+	thread_template.realtime.deadline = UINT64_MAX;
 
-        // thread_template.current_quantum = 0;
-        thread_template.last_run_time = 0;
-        // thread_template.last_quantum_refill_time = 0;
+	thread_template.last_made_runnable_time = THREAD_NOT_RUNNABLE;
+	thread_template.last_basepri_change_time = THREAD_NOT_RUNNABLE;
 
-        thread_template.computation_metered = 0;
-        thread_template.computation_epoch = 0;
-
-        thread_template.c_switch = thread_template.p_switch = thread_template.ps_switch = 0;
-
-        thread_template.bound_processor = PROCESSOR_NULL;
-        thread_template.last_processor = PROCESSOR_NULL;
-
-        thread_template.sched_call = sched_call_null;
-
-    #if defined (__DARLING__)
-    #else
-        timer_init(&thread_template.user_timer);
-        timer_init(&thread_template.system_timer);
-    #endif
-
-        thread_template.user_timer_save = 0;
-        thread_template.system_timer_save = 0;
-        thread_template.vtimer_user_save = 0;
-        thread_template.vtimer_prof_save = 0;
-        thread_template.vtimer_rlim_save = 0;
-
-        thread_template.wait_timer_is_set = FALSE;
-        thread_template.wait_timer_active = 0;
-
-        thread_template.depress_timer_active = 0;
-
-        //thread_template.special_handler.handler = special_handler;
-        //thread_template.special_handler.next = NULL;
-
-        //thread_template.funnel_lock = THR_FUNNEL_NULL;
-        //thread_template.funnel_state = 0;
-        thread_template.recover = (vm_offset_t)NULL;
-
-        thread_template.map = VM_MAP_NULL;
-
-    #if CONFIG_DTRACE
-        thread_template.t_dtrace_predcache = 0;
-        thread_template.t_dtrace_vtime = 0;
-        thread_template.t_dtrace_tracing = 0;
-    #endif /* CONFIG_DTRACE */
-
-        // thread_template.t_chud = 0;
-        thread_template.t_page_creation_count = 0;
-        thread_template.t_page_creation_time = 0;
-
-        thread_template.affinity_set = NULL;
-
-        thread_template.syscalls_unix = 0;
-        thread_template.syscalls_mach = 0;
-
-        thread_template.t_ledger = LEDGER_NULL;
-        thread_template.t_threadledger = LEDGER_NULL;
-
- 
-#if 0
-		thread_template.appliedstate = default_task_null_policy;
-        thread_template.ext_appliedstate = default_task_null_policy;
-        thread_template.policystate = default_task_proc_policy;
-        thread_template.ext_policystate = default_task_proc_policy;
+#if defined(CONFIG_SCHED_TIMESHARE_CORE)
+	thread_template.pri_shift = INT8_MAX;
 #endif
-    #if CONFIG_EMBEDDED
-        thread_template.taskwatch = NULL;
-        thread_template.saved_importance = 0;
-    #endif /* CONFIG_EMBEDDED */
 
-        init_thread = thread_template;
+	thread_template.bound_processor = PROCESSOR_NULL;
+	thread_template.last_processor = PROCESSOR_NULL;
+
+	thread_template.sched_call = NULL;
+
+	thread_template.wait_timer_is_set = FALSE;
+
+	thread_template.recover = (vm_offset_t)NULL;
+
+	thread_template.map = VM_MAP_NULL;
+#if DEVELOPMENT || DEBUG
+	thread_template.pmap_footprint_suspended = FALSE;
+#endif /* DEVELOPMENT || DEBUG */
+
+#if KPC
+	thread_template.kpc_buf = NULL;
+#endif
+
+#if HYPERVISOR
+	thread_template.hv_thread_target = NULL;
+#endif /* HYPERVISOR */
+
+	thread_template.affinity_set = NULL;
+
+	thread_template.t_ledger = LEDGER_NULL;
+	thread_template.t_threadledger = LEDGER_NULL;
+	thread_template.t_bankledger = LEDGER_NULL;
+
+	thread_template.requested_policy = (struct thread_requested_policy) {};
+	thread_template.effective_policy = (struct thread_effective_policy) {};
+
+	bzero(&thread_template.overrides, sizeof(thread_template.overrides));
+
+	thread_template.iotier_override = THROTTLE_LEVEL_NONE;
+	thread_template.thread_io_stats = NULL;
+#if CONFIG_EMBEDDED
+	thread_template.taskwatch = NULL;
+#endif /* CONFIG_EMBEDDED */
+
+	thread_template.ith_voucher_name = MACH_PORT_NULL;
+	thread_template.ith_voucher = IPC_VOUCHER_NULL;
+
+	thread_template.th_work_interval = NULL;
+
+	init_thread = thread_template;
+
+	/* fiddle with init thread to skip asserts in set_sched_pri */
+	init_thread.sched_pri = MAXPRI_KERNEL;
 
 #warning Init thread initialization disabled!
-    #if defined (__DARLING__) && 0
-        // machine_set_current_thread(&init_thread);
-        linux_current->mach_thread      = (void *) &init_thread;
-        init_thread.linux_task          = linux_current;
-    #endif
+#if 0
+	linux_current->mach_thread = (void*)&init_thread;
+	init_thread.linux_task = linux_current;
+#endif
 }
 
 
@@ -262,241 +243,145 @@ void duct_thread_init (void)
 
 }
 
+#define TH_OPTION_NONE          0x00
+#define TH_OPTION_NOCRED        0x01
+#define TH_OPTION_NOSUSP        0x02
+#define TH_OPTION_WORKQ         0x04
 
-kern_return_t duct_thread_create (task_t task, thread_t * new_thread)
+#ifdef current_thread
+#undef current_thread
+#endif
+
+static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t priority, thread_continue_t continuation, void* parameter, int options, thread_t * out_thread)
 {
-        return duct_thread_create_internal2 (task, new_thread, FALSE);
-}
+	thread_t new_thread;
+	static thread_t first_thread = THREAD_NULL;
 
-static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t priority, thread_continue_t continuation, int options, thread_t * out_thread)
-{
-#define TH_OPTION_NONE        0x00
-#define TH_OPTION_NOCRED    0x01
-#define TH_OPTION_NOSUSP    0x02
+	/*
+	 *	Allocate a thread and initialize static fields
+	 */
+	if (first_thread == THREAD_NULL) {
+		new_thread = first_thread = current_thread();
+	} else {
+		new_thread = (thread_t)duct_zalloc(thread_zone);
+	}
+	if (new_thread == THREAD_NULL) {
+		return KERN_RESOURCE_SHORTAGE;
+	}
 
-        thread_t                new_thread;
-        static thread_t         first_thread = THREAD_NULL;
+	if (new_thread != first_thread) {
+		*new_thread = thread_template;
+	}
 
-        /*
-         *    Allocate a thread and initialize static fields
-         */
-        if (first_thread == THREAD_NULL)
-                new_thread = first_thread = current_thread();
+	os_ref_init_count(&new_thread->ref_count, &thread_refgrp, 2);
 
-        new_thread      = (thread_t) duct_zalloc(thread_zone);
-        if (new_thread == THREAD_NULL)
-                return (KERN_RESOURCE_SHORTAGE);
+	new_thread->task = parent_task;
 
-        if (new_thread != first_thread)
-                *new_thread = thread_template;
-
-
-        // WC - todo: compat_uthread_alloc
-#warning compat_uthread disabled
-#if 0
-		new_thread->compat_uthread = (void *) compat_uthread_alloc (parent_task, new_thread);
+	// Darling addition
+#ifdef MACH_ASSERT
+	new_thread->thread_magic = THREAD_MAGIC;
 #endif
 
-// #ifdef MACH_BSD
-//     new_thread->uthread = uthread_alloc(parent_task, new_thread, (options & TH_OPTION_NOCRED) != 0);
-//     if (new_thread->uthread == NULL) {
-//         zfree(thread_zone, new_thread);
-//         return (KERN_RESOURCE_SHORTAGE);
-//     }
-// #endif  /* MACH_BSD */
+	thread_lock_init(new_thread);
 
-//     if (machine_thread_create(new_thread, parent_task) != KERN_SUCCESS) {
-// #ifdef MACH_BSD
-//         void *ut = new_thread->uthread;
-//
-//         new_thread->uthread = NULL;
-//         /* cred free may not be necessary */
-//         uthread_cleanup(parent_task, ut, parent_task->bsd_info);
-//         uthread_cred_free(ut);
-//         uthread_zone_free(ut);
-// #endif  /* MACH_BSD */
-//
-//         zfree(thread_zone, new_thread);
-//         return (KERN_FAILURE);
-//     }
+	lck_mtx_init(&new_thread->mutex, &thread_lck_grp, &thread_lck_attr);
 
-        new_thread->task = parent_task;
-        new_thread->ref_count = 2;
-        new_thread->waitq = NULL;
-        new_thread->thread_magic = THREAD_MAGIC;
-        new_thread->dispatch_qaddr = 0;
+	ipc_thread_init(new_thread);
 
-        thread_lock_init(new_thread);
-        // wake_lock_init(new_thread);
+	new_thread->continuation = continuation;
+	new_thread->parameter = parameter;
+	new_thread->inheritor_flags = TURNSTILE_UPDATE_FLAGS_NONE;
+	priority_queue_init(&new_thread->sched_inheritor_queue, PRIORITY_QUEUE_BUILTIN_MAX_HEAP);
+	priority_queue_init(&new_thread->base_inheritor_queue, PRIORITY_QUEUE_BUILTIN_MAX_HEAP);
+#if CONFIG_SCHED_CLUTCH
+	priority_queue_entry_init(&new_thread->sched_clutchpri_link);
+#endif /* CONFIG_SCHED_CLUTCH */
 
-        lck_mtx_init(&new_thread->mutex, &thread_lck_grp, &thread_lck_attr);
+	// do we still need this in Darling?
+	/* Allocate I/O Statistics structure */
+	new_thread->thread_io_stats = (io_stat_info_t)duct_kalloc(sizeof(struct io_stat_info));
+	assert(new_thread->thread_io_stats != NULL);
+	bzero(new_thread->thread_io_stats, sizeof(struct io_stat_info));
 
-        ipc_thread_init(new_thread);
+#if CONFIG_IOSCHED
+	/* Clear out the I/O Scheduling info for AppleFSCompression */
+	new_thread->decmp_upl = NULL;
+#endif /* CONFIG_IOSCHED */
 
-#if defined (__DARLING__)
-#else
-        // queue_init(&new_thread->held_ulocks);
-        // new_thread->continuation = continuation;
-#endif
+	lck_mtx_lock(&tasks_threads_lock);
+	task_lock(parent_task);
 
-        lck_mtx_lock(&tasks_threads_lock);
+	/*
+	 * Fail thread creation if parent task is being torn down or has too many threads
+	 * If the caller asked for TH_OPTION_NOSUSP, also fail if the parent task is suspended
+	 */
+	if (parent_task->active == 0 || parent_task->halting ||
+	    (parent_task->suspend_count > 0 && (options & TH_OPTION_NOSUSP) != 0) ||
+	    (parent_task->thread_count >= task_threadmax && parent_task != kernel_task)) {
+		task_unlock(parent_task);
+		lck_mtx_unlock(&tasks_threads_lock);
 
-        task_lock(parent_task);
+		ipc_thread_disable(new_thread);
+		ipc_thread_terminate(new_thread);
+		kfree(new_thread->thread_io_stats, sizeof(struct io_stat_info));
+		lck_mtx_destroy(&new_thread->mutex, &thread_lck_grp);
+		zfree(thread_zone, new_thread);
+		return KERN_FAILURE;
+	}
 
-        if (!parent_task->active || parent_task->halting ||
-            ((options & TH_OPTION_NOSUSP) != 0 &&
-            parent_task->suspend_count > 0)    ||
-            (parent_task->thread_count >= task_threadmax &&
-            parent_task != kernel_task)        ) {
+	/* Protected by the tasks_threads_lock */
+	new_thread->thread_id = ++thread_unique_id;
 
-                task_unlock(parent_task);
-                lck_mtx_unlock(&tasks_threads_lock);
+	task_reference_internal(parent_task);
 
-// #ifdef MACH_BSD
-//         {
-//             void *ut = new_thread->uthread;
-//
-//             new_thread->uthread = NULL;
-//             uthread_cleanup(parent_task, ut, parent_task->bsd_info);
-//             /* cred free may not be necessary */
-//             uthread_cred_free(ut);
-//             uthread_zone_free(ut);
-//         }
-// #endif  /* MACH_BSD */
-                ipc_thread_disable(new_thread);
-                ipc_thread_terminate(new_thread);
-                lck_mtx_destroy(&new_thread->mutex, &thread_lck_grp);
-                // machine_thread_destroy(new_thread);
-                zfree(thread_zone, new_thread);
-                return (KERN_FAILURE);
-        }
+#if defined(CONFIG_SCHED_MULTIQ)
+	/* Cache the task's sched_group */
+	new_thread->sched_group = parent_task->sched_group;
+#endif /* defined(CONFIG_SCHED_MULTIQ) */
 
-        // /* New threads inherit any default state on the task */
-        // machine_thread_inherit_taskwide(new_thread, parent_task);
+	/* Cache the task's map */
+	new_thread->map = parent_task->map;
 
-        task_reference_internal (parent_task);
-//
-#if defined (__DARLING__)
-#else
-        if (new_thread->task->rusage_cpu_flags & TASK_RUSECPU_FLAGS_PERTHR_LIMIT) {
-                /*
-                 * This task has a per-thread CPU limit; make sure this new thread
-                 * gets its limit set too, before it gets out of the kernel.
-                 */
-                set_astledger(new_thread);
-        }
+	timer_call_setup(&new_thread->wait_timer, thread_timer_expire, new_thread);
 
+	/* Set the thread's scheduling parameters */
+	new_thread->max_priority = parent_task->max_priority;
+	new_thread->task_priority = parent_task->priority;
+	int new_priority = (priority < 0) ? parent_task->priority: priority;
+	new_priority = (priority < 0)? parent_task->priority: priority;
+	if (new_priority > new_thread->max_priority) {
+		new_priority = new_thread->max_priority;
+	}
+#if CONFIG_EMBEDDED
+	if (new_priority < MAXPRI_THROTTLE) {
+		new_priority = MAXPRI_THROTTLE;
+	}
+#endif /* CONFIG_EMBEDDED */
+	new_thread->importance = new_priority - new_thread->task_priority;
 
-        new_thread->t_threadledger = LEDGER_NULL;    /* per thread ledger is not inherited */
-        new_thread->t_ledger = new_thread->task->ledger;
+	/* Chain the thread onto the task's list */
+	queue_enter(&parent_task->threads, new_thread, thread_t, task_threads);
+	parent_task->thread_count++;
 
-        if (new_thread->t_ledger)
-                ledger_reference(new_thread->t_ledger);
-#endif
+	/* So terminating threads don't need to take the task lock to decrement */
+	os_atomic_inc(&parent_task->active_thread_count, relaxed);
 
-        /* Cache the task's map */
-        new_thread->map = parent_task->map;
+	new_thread->active = TRUE;
+	// we might need to do this later if things break
+	//new_thread->turnstile = turnstile_alloc();
 
-//
-//         /* Chain the thread onto the task's list */
-         queue_enter(&parent_task->threads, new_thread, thread_t, task_threads);
-         parent_task->thread_count++;
-//
-//         /* So terminating threads don't need to take the task lock to decrement */
-         hw_atomic_add(&parent_task->active_thread_count, 1);
-//
-//         /* Protected by the tasks_threads_lock */
-//         new_thread->thread_id = ++thread_unique_id;
-//
-//         queue_enter(&threads, new_thread, thread_t, threads);
-//         threads_count++;
-//
-// #if defined (__DARLING__)
-// #else
-         timer_call_setup(&new_thread->wait_timer, thread_timer_expire, new_thread);
-//         timer_call_setup(&new_thread->depress_timer, thread_depress_expire, new_thread);
-// #endif
+	// Darling additions
+	get_task_struct(linux_current);
+	new_thread->linux_task = linux_current;
+	new_thread->in_sigprocess = FALSE;
 
-// #if CONFIG_COUNTERS
-//     /*
-//      * If parent task has any reservations, they need to be propagated to this
-//      * thread.
-//      */
-//     new_thread->t_chud = (TASK_PMC_FLAG == (parent_task->t_chud & TASK_PMC_FLAG)) ?
-//         THREAD_PMC_FLAG : 0U;
-// #endif
+	*out_thread = new_thread;
 
-
-    // /* Set the thread's scheduling parameters */
-    // new_thread->sched_mode = SCHED(initial_thread_sched_mode)(parent_task);
-    // new_thread->sched_flags = 0;
-    // new_thread->max_priority = parent_task->max_priority;
-    // new_thread->task_priority = parent_task->priority;
-    // new_thread->priority = (priority < 0)? parent_task->priority: priority;
-    // if (new_thread->priority > new_thread->max_priority)
-    //     new_thread->priority = new_thread->max_priority;
-// #if CONFIG_EMBEDDED
-//     if (new_thread->priority < MAXPRI_THROTTLE) {
-//         new_thread->priority = MAXPRI_THROTTLE;
-//     }
-// #endif /* CONFIG_EMBEDDED */
-    // new_thread->importance =
-    //                 new_thread->priority - new_thread->task_priority;
-// #if CONFIG_EMBEDDED
-//     new_thread->saved_importance = new_thread->importance;
-//     /* apple ios daemon starts all threads in darwin background */
-//     if (parent_task->ext_appliedstate.apptype == PROC_POLICY_IOS_APPLE_DAEMON) {
-//         /* Cannot use generic routines here so apply darwin bacground directly */
-//         new_thread->policystate.hw_bg = TASK_POLICY_BACKGROUND_ATTRIBUTE_ALL;
-//         /* set thread self backgrounding */
-//         new_thread->appliedstate.hw_bg = new_thread->policystate.hw_bg;
-//         /* priority will get recomputed suitably bit later */
-//         new_thread->importance = INT_MIN;
-//         /* to avoid changes to many pri compute routines, set the effect of those here */
-//         new_thread->priority = MAXPRI_THROTTLE;
-//     }
-// #endif /* CONFIG_EMBEDDED */
-
-
-// #if defined(CONFIG_SCHED_TRADITIONAL)
-//     new_thread->sched_stamp = sched_tick;
-//     new_thread->pri_shift = sched_pri_shift;
-// #endif
-//     SCHED(compute_priority)(new_thread, FALSE);
-// #endif
-
-
-        new_thread->active = TRUE;
-        get_task_struct(linux_current);
-        new_thread->linux_task = linux_current;
-        new_thread->in_sigprocess = FALSE;
-        *out_thread = new_thread;
-
-    // {
-    //     long    dbg_arg1, dbg_arg2, dbg_arg3, dbg_arg4;
-    //
-    //     kdbg_trace_data(parent_task->bsd_info, &dbg_arg2);
-    //
-    //     KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
-    //         TRACEDBG_CODE(DBG_TRACE_DATA, 1) | DBG_FUNC_NONE,
-    //         (vm_address_t)(uintptr_t)thread_tid(new_thread), dbg_arg2, 0, 0, 0);
-    //
-    //     kdbg_trace_string(parent_task->bsd_info,
-    //                         &dbg_arg1, &dbg_arg2, &dbg_arg3, &dbg_arg4);
-    //
-    //     KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
-    //         TRACEDBG_CODE(DBG_TRACE_STRING, 1) | DBG_FUNC_NONE,
-    //         dbg_arg1, dbg_arg2, dbg_arg3, dbg_arg4, 0);
-    // }
-    //
-    // DTRACE_PROC1(lwp__create, thread_t, *out_thread);
-
-        task_unlock(parent_task);
-        return (KERN_SUCCESS);
+	return KERN_SUCCESS;
 }
 
 
-static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_thread, boolean_t from_user)
+static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_thread, boolean_t from_user, thread_continue_t continuation)
 {
         kern_return_t       result;
         thread_t            thread;
@@ -505,7 +390,7 @@ static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_t
                 return (KERN_INVALID_ARGUMENT);
 
         result  =
-        duct_thread_create_internal (task, -1, (thread_continue_t) thread_bootstrap_return, TH_OPTION_NONE, &thread);
+        duct_thread_create_internal (task, -1, continuation, NULL, TH_OPTION_NONE, &thread);
         if (result != KERN_SUCCESS)
                 return (result);
 
@@ -526,10 +411,18 @@ static kern_return_t duct_thread_create_internal2 (task_t task, thread_t * new_t
         return (KERN_SUCCESS);
 }
 
+kern_return_t duct_thread_create(task_t task, thread_t* new_thread) {
+	return duct_thread_create_internal2(task, new_thread, FALSE, (thread_continue_t)thread_bootstrap_return);
+}
 
-#ifdef current_thread
-#undef current_thread
-#endif
+kern_return_t duct_thread_create_from_user(task_t task, thread_t* new_thread) {
+	return duct_thread_create_internal2(task, new_thread, TRUE, (thread_continue_t)thread_bootstrap_return);
+}
+
+kern_return_t duct_thread_create_with_continuation(task_t task, thread_t* new_thread, thread_continue_t continuation) {
+	return duct_thread_create_internal2(task, new_thread, FALSE, continuation);
+}
+
 thread_t current_thread (void)
 {
         // kprintf ("calling current thread on linux task: 0x%x\n", (unsigned int) linux_current);
@@ -543,72 +436,62 @@ void duct_thread_destroy(thread_t thread)
 	thread->linux_task = NULL;
 	
 	thread->active = FALSE;
-	hw_atomic_add(&task->active_thread_count, -1);
+	os_atomic_dec(&task->active_thread_count, relaxed);
 	
 	duct_thread_deallocate(thread);
 }
 
-void duct_thread_deallocate (thread_t thread)
+static bool thread_ref_release(thread_t thread)
 {
-        task_t                task;
+	if (thread == THREAD_NULL) {
+		return false;
+	}
 
-        if (thread == THREAD_NULL) {
-                return;
-        }
+	return os_ref_release(&thread->ref_count) == 0;
+}
 
-        timer_call_cancel(&thread->wait_timer);
+void duct_thread_deallocate(thread_t thread)
+{
+	if (thread_ref_release(thread)) {
+		thread_deallocate_complete(thread);
+	}
+}
 
-        task    = thread->task;
+static void thread_deallocate_complete(thread_t thread)
+{
+	task_t task;
 
-        if (hw_atomic_sub(&(thread)->ref_count, 1) > 0) {
-                return;
-        }
+	ipc_thread_terminate(thread);
 
-        ipc_thread_terminate (thread);
+	task = thread->task;
 
-    // #ifdef MACH_BSD
-    //     {
-    //         void *ut = thread->uthread;
-    //
-    //         thread->uthread = NULL;
-    //         uthread_zone_free(ut);
-    //     }
-    // #endif  /* MACH_BSD */
+	// NOTE(@facekapow): we might need to uncomment this later if it turns out we really need turnstiles
+	/*
+	if (thread->turnstile) {
+		turnstile_deallocate(thread->turnstile);
+	}
+	*/
 
-#if 0
-        void      * uthread     = thread->compat_uthread;
-        thread->compat_uthread  = NULL;
-        // WC - todo check below: should use zone free (), not uthread_free
-        compat_uthread_zone_free (uthread);
-        // compat_uthread_free (thread->compat_uthread);
-#endif
+	if (IPC_VOUCHER_NULL != thread->ith_voucher) {
+		ipc_voucher_release(thread->ith_voucher);
+	}
 
-        // if (thread->t_ledger)
-        //         ledger_dereference(thread->t_ledger);
-        // if (thread->t_threadledger)
-        //         ledger_dereference(thread->t_threadledger);
+	if (thread->thread_io_stats) {
+		duct_kfree(thread->thread_io_stats, sizeof(struct io_stat_info));
+	}
 
-        // if (thread->kernel_stack != 0)
-        //         stack_free (thread);
+	task_lock(task);
 
-        // WC - todo check below
-        // lck_mtx_destroy (&thread->mutex, &thread_lck_grp);
-        // machine_thread_destroy (thread);
+	queue_remove(&task->threads, thread, thread_t, task_threads);
+	task->thread_count--;
 
-        // Remove itself from thread list
-        task_lock(task);
+	task_deallocate(task);
 
-        queue_remove(&task->threads, thread, thread_t, task_threads);
-        task->thread_count--;
+	if (thread->linux_task != NULL)
+		put_task_struct(thread->linux_task);
 
-        task_unlock(task);
-
-        task_deallocate (task);
-		if (thread->linux_task != NULL)
-	        put_task_struct(thread->linux_task);
-
-        debug_msg("Deallocating thread %p\n", thread);
-        duct_zfree (thread_zone, thread);
+	debug_msg("Deallocating thread %p\n", thread);
+	duct_zfree(thread_zone, thread);
 }
 
 struct task_struct* thread_get_linux_task(thread_t thread)

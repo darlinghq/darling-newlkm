@@ -69,6 +69,11 @@
  *	Functions to manipulate IPC ports.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <zone_debug.h>
 #include <mach_assert.h>
 
@@ -97,6 +102,12 @@
 #include <security/mac_mach_internal.h>
 
 #include <string.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+
+boolean_t kdp_is_in_zone(void* addr, const char* zone_name);
+#endif
 
 decl_lck_spin_data(, ipc_port_multiple_lock_data);
 ipc_port_timestamp_t    ipc_port_timestamp_data;
@@ -2986,6 +2997,7 @@ ipc_port_init_debug(
 		port->ip_spares[i] = 0;
 	}
 
+#ifndef __DARLING__
 #ifdef MACH_BSD
 	task_t task = current_task();
 	if (task != TASK_NULL) {
@@ -2995,6 +3007,7 @@ ipc_port_init_debug(
 		}
 	}
 #endif /* MACH_BSD */
+#endif
 
 #if 0
 	lck_spin_lock(&port_alloc_queue_lock);

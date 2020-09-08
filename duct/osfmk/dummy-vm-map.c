@@ -424,6 +424,8 @@ vm_map_find_space(
 	vm_map_size_t		size,
 	vm_map_offset_t		mask,
 	int			flags,
+	vm_map_kernel_flags_t vmk_flags,
+	vm_tag_t tag,
 	vm_map_entry_t		*o_entry)	/* OUT */
 {
         kprintf("not implemented: vm_map_find_space()\n");
@@ -489,6 +491,8 @@ vm_map_enter_mem_object(
 	vm_map_size_t		initial_size,
 	vm_map_offset_t		mask,
 	int			flags,
+	vm_map_kernel_flags_t vmk_flags,
+	vm_tag_t tag,
 	ipc_port_t		port,
 	vm_object_offset_t	offset,
 	boolean_t		copy,
@@ -509,6 +513,8 @@ vm_map_enter_mem_object_control(
 	vm_map_size_t		initial_size,
 	vm_map_offset_t		mask,
 	int			flags,
+	vm_map_kernel_flags_t vmk_flags,
+	vm_tag_t tag,
 	memory_object_control_t	control,
 	vm_object_offset_t	offset,
 	boolean_t		copy,
@@ -1073,7 +1079,8 @@ vm_map_exec(
 	task_t		task,
 	boolean_t       is64bit,
 	void		*fsroot,
-	cpu_type_t	cpu)
+	cpu_type_t	cpu,
+	cpu_subtype_t cpu_subtype)
 {
         kprintf("not implemented: vm_map_exec()\n");
         return 0;
@@ -1213,7 +1220,8 @@ vm_map_region_walk(
 	vm_object_offset_t		offset,
 	vm_object_size_t		range,
 	vm_region_extended_info_t	extended,
-	boolean_t			look_for_pages)
+	boolean_t			look_for_pages,
+	mach_msg_type_number_t count)
 {
 		kprintf("not implemented: vm_map_region_walk()\n");
 }
@@ -1310,9 +1318,12 @@ vm_map_entry_t   vm_map_entry_insert(
                 unsigned        wired_count,
                 boolean_t       no_cache,
                 boolean_t       permanent,
+                boolean_t no_copy_on_read,
                 unsigned int        superpage_size,
                 boolean_t       clear_map_aligned,
-                boolean_t       is_submap)
+                boolean_t       is_submap,
+                boolean_t used_for_jit,
+                int alias)
 {
         kprintf("not implemented: vm_map_entry_insert()\n");
         return 0;
@@ -1341,6 +1352,8 @@ vm_map_remap(
 	vm_map_size_t		size,
 	vm_map_offset_t		mask,
 	int			flags,
+	vm_map_kernel_flags_t vmk_flags,
+	vm_tag_t tag,
 	vm_map_t		src_map,
 	vm_map_offset_t		memory_address,
 	boolean_t		copy,
@@ -1710,13 +1723,15 @@ kern_return_t vm_map_freeze_walk(
         return 0;
 }
 kern_return_t vm_map_freeze(
-             	vm_map_t map,
+             	task_t       task,
              	unsigned int *purgeable_count,
              	unsigned int *wired_count,
              	unsigned int *clean_count,
              	unsigned int *dirty_count,
              	unsigned int dirty_budget,
-             	boolean_t *has_shared)
+             	unsigned int *shared_count,
+             	int          *freezer_error_code,
+             	boolean_t    eval_only)
 {
         kprintf("not implemented: vm_map_freeze()\n");
         return 0;

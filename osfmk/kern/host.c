@@ -62,6 +62,11 @@
  *	Non-ipc host functions.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/host_info.h>
@@ -108,6 +113,20 @@
 #endif
 
 #include <pexpert/pexpert.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
+
+#include <linux/version.h>
+#include <linux/kernel_stat.h>
+#undef avenrun
+#include <linux/sched/loadavg.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0)
+#define global_zone_page_state global_page_state
+#endif
+#endif
 
 host_data_t realhost;
 
@@ -162,6 +181,10 @@ host_processors(host_priv_t host_priv, processor_array_t * out_array, mach_msg_t
 kern_return_t
 host_info(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_number_t * count)
 {
+#ifdef __DARLING__
+	extern kern_return_t darling_host_info(host_flavor_t flavor, host_info_t info, mach_msg_type_number_t* count);
+	return darling_host_info(flavor, info, count);
+#else
 	if (host == HOST_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
@@ -366,6 +389,7 @@ host_info(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_num
 
 	default: return KERN_INVALID_ARGUMENT;
 	}
+#endif
 }
 
 kern_return_t host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_number_t * count);
@@ -389,13 +413,29 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 
 		load_info = (host_load_info_t)info;
 
+#ifdef __DARLING__
+
+#ifndef LOAD_INT // until Linux 4.20
+#define LOAD_INT(x) ((x) >> FSHIFT)
+#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
+#endif // !LOAD_INT
+
+		for (int i = 0; i < 3; i++)
+		{
+			unsigned long v = avenrun[i] + FIXED_1/200; // This is what /proc/loadavg does
+			load_info->xnu_avenrun[i] = LOAD_INT(v) * 1000 + LOAD_FRAC(v) * 10;
+		}
+		memset(load_info->mach_factor, 0, sizeof(load_info->mach_factor));
+#else
 		bcopy((char *)avenrun, (char *)load_info->avenrun, sizeof avenrun);
 		bcopy((char *)mach_factor, (char *)load_info->mach_factor, sizeof mach_factor);
+#endif
 
 		*count = HOST_LOAD_INFO_COUNT;
 		return KERN_SUCCESS;
 	}
 
+#ifndef __DARLING__
 	case HOST_VM_INFO: {
 		processor_t processor;
 		vm_statistics64_t stat;
@@ -483,6 +523,7 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 
 		return KERN_SUCCESS;
 	}
+#endif
 
 	case HOST_CPU_LOAD_INFO: {
 		processor_t processor;
@@ -492,6 +533,26 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 			return KERN_FAILURE;
 		}
 
+#ifdef __DARLING__
+		int i;
+		cpu_load_info = (host_cpu_load_info_t)info;
+
+		for_each_possible_cpu(i) {
+			struct kernel_cpustat kcpustat;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
+			kcpustat_cpu_fetch(&kcpustat, i);
+#else
+			kcpustat = kcpustat_cpu(i);
+#endif
+
+			cpu_load_info->cpu_ticks[CPU_STATE_USER] = kcpustat.cpustat[CPUTIME_USER];
+			cpu_load_info->cpu_ticks[CPU_STATE_SYSTEM] = kcpustat.cpustat[CPUTIME_SYSTEM] + \
+				kcpustat.cpustat[CPUTIME_SOFTIRQ] + kcpustat.cpustat[CPUTIME_IRQ];
+			cpu_load_info->cpu_ticks[CPU_STATE_IDLE] = kcpustat.cpustat[CPUTIME_IDLE];
+			cpu_load_info->cpu_ticks[CPU_STATE_NICE] = kcpustat.cpustat[CPUTIME_NICE];
+		}
+#else
 #define GET_TICKS_VALUE(state, ticks)                                                      \
 	MACRO_BEGIN cpu_load_info->cpu_ticks[(state)] += (uint32_t)(ticks / hz_tick_interval); \
 	MACRO_END
@@ -544,11 +605,14 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 			}
 		}
 		simple_unlock(&processor_list_lock);
+#endif
 
 		*count = HOST_CPU_LOAD_INFO_COUNT;
 
 		return KERN_SUCCESS;
 	}
+
+#ifndef __DARLING__
 
 	case HOST_EXPIRED_TASK_INFO: {
 		if (*count < TASK_POWER_INFO_COUNT) {
@@ -581,7 +645,15 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 
 		return KERN_SUCCESS;
 	}
+#endif
+
+#ifdef __DARLING__
+	default:
+		printf("Unimplemented host_statistics: flavor %d\n", flavor);
+		return KERN_INVALID_ARGUMENT;
+#else
 	default: return KERN_INVALID_ARGUMENT;
+#endif
 	}
 }
 
@@ -809,6 +881,34 @@ host_statistics64(host_t host, host_flavor_t flavor, host_info64_t info, mach_ms
 		return KERN_INVALID_HOST;
 	}
 
+#ifdef __DARLING__
+	switch (flavor) {
+		case HOST_VM_INFO64:
+		{
+			vm_statistics64_t stat = (vm_statistics64_t) info;
+
+			if (*count < HOST_VM_INFO64_COUNT)
+				return (KERN_FAILURE);
+
+			memset(stat, 0, sizeof(*stat));
+
+			stat->free_count = global_zone_page_state(NR_FREE_PAGES) /*+ nr_blockdev_pages()*/;
+			stat->active_count = totalram_pages - stat->free_count;
+			stat->zero_fill_count = global_zone_page_state(NR_ZONE_INACTIVE_ANON);
+			stat->wire_count = global_zone_page_state(NR_ZONE_UNEVICTABLE);
+			stat->internal_page_count = global_zone_page_state(NR_ZONE_ACTIVE_ANON);
+			stat->external_page_count = global_zone_page_state(NR_ZONE_ACTIVE_FILE);
+			// stat->speculative_count = nr_blockdev_pages(); // not exported
+
+			*count = HOST_VM_INFO64_COUNT;
+
+			return KERN_SUCCESS;
+		}
+		default:
+			debug_msg("host_statistics64: Unsupported flavor %d\n", flavor);
+			return KERN_INVALID_ARGUMENT;
+	}
+#else
 	switch (flavor) {
 	case HOST_VM_INFO64: /* We were asked to get vm_statistics64 */
 	{
@@ -937,6 +1037,7 @@ host_statistics64(host_t host, host_flavor_t flavor, host_info64_t info, mach_ms
 	default: /* If we didn't recognize the flavor, send to host_statistics */
 		return host_statistics(host, flavor, (host_info_t)info, count);
 	}
+#endif
 }
 
 kern_return_t
@@ -1034,6 +1135,10 @@ get_pages_grabbed_count(void)
 kern_return_t
 get_sched_statistics(struct _processor_statistics_np * out, uint32_t * count)
 {
+#if defined (__DARLING__)
+	kprintf("not implemented: get_sched_statistics()\n");
+	return KERN_FAILURE;
+#else
 	processor_t processor;
 
 	if (!sched_stats_active) {
@@ -1080,6 +1185,7 @@ get_sched_statistics(struct _processor_statistics_np * out, uint32_t * count)
 	*count += (uint32_t)sizeof(struct _processor_statistics_np);
 
 	return KERN_SUCCESS;
+#endif
 }
 
 kern_return_t
@@ -1100,6 +1206,12 @@ host_page_size(host_t host, vm_size_t * out_page_size)
  */
 extern char version[];
 
+#ifdef __DARLING__
+#include <generated/utsrelease.h>
+#include <darling/api.h>
+static const char KERNEL_VERSION[] = "Darling Mach (API level " DARLING_MACH_API_VERSION_STR ") on Linux " UTS_RELEASE;
+#endif
+
 kern_return_t
 host_kernel_version(host_t host, kernel_version_t out_version)
 {
@@ -1107,7 +1219,11 @@ host_kernel_version(host_t host, kernel_version_t out_version)
 		return KERN_INVALID_ARGUMENT;
 	}
 
+#ifdef __DARLING__
+	(void)strncpy(out_version, KERNEL_VERSION, sizeof(KERNEL_VERSION));
+#else
 	(void)strncpy(out_version, version, sizeof(kernel_version_t));
+#endif
 
 	return KERN_SUCCESS;
 }

@@ -518,6 +518,10 @@ struct _vm_map {
 	/* boolean_t */ has_corpse_footprint:1,
 	/* reserved */ pad:20;
 	unsigned int            timestamp;      /* Version number */
+
+#if defined (__DARLING__)
+	struct task_struct* linux_task;
+#endif
 };
 
 #define CAST_TO_VM_MAP_ENTRY(x) ((struct vm_map_entry *)(uintptr_t)(x))

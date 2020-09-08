@@ -37,6 +37,11 @@
  *			machine-independent clock service layer.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 
 #include <kern/host.h>
@@ -60,6 +65,10 @@
 #include <mach/mach_host_server.h>
 #include <mach/host_priv_server.h>
 #include <libkern/section_keywords.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  * Actual clock alarm structure. Used for user clock_sleep() and

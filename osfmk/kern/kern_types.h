@@ -53,9 +53,11 @@ struct wait_queue { unsigned char opaque[32]; };
 typedef struct zone                     *zone_t;
 #define         ZONE_NULL                       ((zone_t) 0)
 
+#ifndef __DARLING__
 typedef struct wait_queue               *wait_queue_t;
 #define         WAIT_QUEUE_NULL         ((wait_queue_t) 0)
 #define                 SIZEOF_WAITQUEUE        sizeof(struct wait_queue)
+#endif
 
 typedef vm_offset_t                     ipc_kobject_t;
 #define         IKO_NULL                        ((ipc_kobject_t) 0)
@@ -206,6 +208,9 @@ typedef int wait_timeout_urgency_t;
 #ifdef  MACH_KERNEL_PRIVATE
 
 #include <kern/misc_protos.h>
+#ifdef __DARLING__
+#define clock_t xnu_clock_t
+#endif
 typedef  struct clock                   *clock_t;
 
 typedef struct mig_object               *mig_object_t;

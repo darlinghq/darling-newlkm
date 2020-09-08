@@ -61,6 +61,11 @@
 //#define KEEP_WAITQ_LINK_STATS
 //#define KEEP_WAITQ_PREPOST_STATS
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <kern/ast.h>
 #include <kern/backtrace.h>
 #include <kern/kern_types.h>
@@ -81,6 +86,10 @@
 #include <vm/vm_kern.h>
 
 #include <sys/kdebug.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #if defined(KEEP_WAITQ_LINK_STATS) || defined(KEEP_WAITQ_PREPOST_STATS)
 #  if !CONFIG_LTABLE_STATS
@@ -729,6 +738,7 @@ wqp_init(void)
 static void
 wq_prepost_refill_cpu_cache(uint32_t nalloc)
 {
+#ifndef __DARLING__
 	struct lt_elem *new_head, *old_head;
 	struct wqp_cache *cache;
 
@@ -766,6 +776,7 @@ wq_prepost_refill_cpu_cache(uint32_t nalloc)
 out:
 	enable_preemption();
 	return;
+#endif
 }
 
 static void
@@ -779,6 +790,7 @@ wq_prepost_ensure_free_space(void)
 		g_min_free_cache = (WQP_CACHE_MAX * ml_get_max_cpus());
 	}
 
+#ifndef __DARLING__
 	/*
 	 * Ensure that we always have a pool of per-CPU prepost elements
 	 */
@@ -790,6 +802,7 @@ wq_prepost_ensure_free_space(void)
 	if (free_elem < (WQP_CACHE_MAX / 3)) {
 		wq_prepost_refill_cpu_cache(WQP_CACHE_MAX - free_elem);
 	}
+#endif
 
 	/*
 	 * Now ensure that we have a sufficient amount of free table space
@@ -823,6 +836,7 @@ wq_prepost_alloc(int type, int nelem)
 		return NULL;
 	}
 
+#ifndef __DARLING__
 	/*
 	 * First try to grab the elements from the per-CPU cache if we are
 	 * allocating RESERVED elements
@@ -860,6 +874,7 @@ wq_prepost_alloc(int type, int nelem)
 		goto out;
 	}
 	enable_preemption();
+#endif
 
 do_alloc:
 	/* fall-back to standard table allocation */
@@ -1043,6 +1058,7 @@ wq_prepost_release_rlist(struct wq_prepost *wqp)
 
 	elem = &wqp->wqte;
 
+#ifndef __DARLING__
 	/*
 	 * These are reserved elements: release them back to the per-cpu pool
 	 * if our cache is running low.
@@ -1061,6 +1077,7 @@ wq_prepost_release_rlist(struct wq_prepost *wqp)
 		return;
 	}
 	enable_preemption();
+#endif
 
 	/* release these elements back to the main table */
 	nelem = lt_elem_list_release(&g_prepost_table, elem, LT_RESERVED);
@@ -1986,6 +2003,7 @@ waitq_bootstrap(void)
 #define hwLockTimeOut LockTimeOut
 #endif
 
+#ifndef __DARLING__
 void
 waitq_lock(struct waitq *wq)
 {
@@ -2021,7 +2039,7 @@ waitq_unlock(struct waitq *wq)
 #endif
 	waitq_lock_unlock(wq);
 }
-
+#endif
 
 /**
  * clear the thread-related waitq state
@@ -2392,6 +2410,28 @@ do_waitq_select_n_locked(struct waitq_select_args *args)
 	spl_t spl = 0;
 
 	assert(max_threads != 0);
+
+	#ifdef __DARLING__
+		// Special hack follows
+		//
+		// Explanation:
+		// In darling/evpsetfd.c, we implement a pollable driver that provides notifications on port set events.
+		// Linux polling mechanisms require the use of Linux wait_queue. There is no other way of providing
+		// an event to wait on besides passing a wait_queue to poll_wait(). The kernel then manages (de)registering
+		// with the wait_queue behind the scenes.
+		//
+		// XNU has its own wait queue (waitq) mechanism (this file). do_waitq_select_n_locked() ends up picking up threads
+		// to notify and wake up. This is incompatible with Linux wait_queue. Even if we knew which thread is currently
+		// waiting on a Linux wait_queue event to occur, the way file_operations.poll callback is invoked, we cannot know
+		// when such polling _ends_ (which would result in removing such thread from XNU waitq structures).
+		//
+		// If args.event is NO_EVENT64, we abuse this function to not only select thread_t objects for waking up,
+		// but also do a wake_up call on the Linux wait_queue object we added into waitq_set.
+		if (args->event == NO_EVENT64)
+		{
+			wake_up_interruptible(&waitq->linux_wq);
+		}
+	#endif
 
 	if (!waitq_irq_safe(waitq)) {
 		/* JMM - add flag to waitq to avoid global lookup if no waiters */
@@ -3307,6 +3347,10 @@ waitq_init(struct waitq *waitq, int policy)
 	} else {
 		queue_init(&waitq->waitq_queue);
 	}
+
+#ifdef __DARLING__
+	init_waitqueue_head(&waitq->linux_wq);
+#endif
 
 	waitq->waitq_isvalid = 1;
 	return KERN_SUCCESS;
@@ -4945,12 +4989,14 @@ waitq_alloc_prepost_reservation(int nalloc, struct waitq *waitq,
 	 * linkage!
 	 */
 	if (waitq) {
+#ifndef __DARLING__
 		disable_preemption();
 		cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
 		if (nalloc <= (int)cache->avail) {
 			goto do_alloc;
 		}
 		enable_preemption();
+#endif
 
 		/* unlock the waitq to perform the allocation */
 		*did_unlock = 1;

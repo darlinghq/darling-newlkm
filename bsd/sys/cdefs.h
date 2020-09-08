@@ -67,6 +67,10 @@
 #ifndef _CDEFS_H_
 #define _CDEFS_H_
 
+#ifdef __DARLING__
+#include <duct/compiler/gcc/has-builtin.h>
+#endif
+
 #if defined(__cplusplus)
 #define __BEGIN_DECLS   extern "C" {
 #define __END_DECLS     }
@@ -184,7 +188,9 @@
  * __kpi_deprecated() specifically indicates deprecation of kernel programming
  * interfaces in Kernel.framework used by KEXTs.
  */
+#ifndef __DARLING__
 #define __deprecated    __attribute__((__deprecated__))
+#endif
 
 #if __has_extension(attribute_deprecated_with_message) || \
         (defined(__GNUC__) && ((__GNUC__ >= 5) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5))))

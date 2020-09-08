@@ -17,6 +17,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
 #include <linux/cpumask.h>

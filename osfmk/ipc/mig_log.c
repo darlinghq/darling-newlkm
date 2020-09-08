@@ -61,12 +61,21 @@
  * $EndLog$
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #ifdef MACH_KERNEL
 #include <mig_debug.h>
 #endif
 
 #include <mach/message.h>
 #include <mach/mig_log.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 int mig_tracing, mig_errors, mig_full_tracing;
 

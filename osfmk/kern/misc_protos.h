@@ -55,6 +55,7 @@
 #define MAX(a, b) (((a)>(b))?(a):(b))
 #endif  /* MAX */
 
+#ifndef __DARLING__
 /* Set a bit in a bit array */
 extern void setbit(
 	int             which,
@@ -251,6 +252,7 @@ extern void bootstrap_create(void);
 extern boolean_t        no_bootstrap_task(void);
 extern ipc_port_t       get_root_master_device_port(void);
 #endif  /* DIPC */
+#endif // !__DARLING__
 
 extern kern_return_t    kernel_set_special_port(
 	host_priv_t     host_priv,
@@ -262,11 +264,13 @@ extern kern_return_t    kernel_get_special_port(
 	int             which,
 	ipc_port_t      *portp);
 
+#ifndef __DARLING__
 user_addr_t get_useraddr(void);
 
 /* symbol lookup */
 struct kmod_info_t;
 
 extern uint64_t early_random(void);
+#endif
 
 #endif  /* _MISC_PROTOS_H_ */

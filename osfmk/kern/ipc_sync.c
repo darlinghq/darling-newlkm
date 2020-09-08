@@ -30,6 +30,11 @@
  *
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <kern/sync_sema.h>
 #include <kern/sync_lock.h>
 #include <kern/ipc_kobject.h>
@@ -43,6 +48,9 @@
 #include <mach/mach_port_server.h>
 #include <mach/port.h>
 
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	port_name_to_semaphore

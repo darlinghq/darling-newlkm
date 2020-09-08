@@ -70,6 +70,11 @@
  *	Functions to manipulate IPC objects.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -93,6 +98,10 @@
 #include <ipc/ipc_pset.h>
 
 #include <security/mac_mach_internal.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 zone_t ipc_object_zones[IOT_NUMBER];
 

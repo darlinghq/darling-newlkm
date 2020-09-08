@@ -63,6 +63,11 @@
  *	Functions to manipulate IPC port sets.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/port.h>
 #include <mach/kern_return.h>
 #include <mach/message.h>
@@ -77,6 +82,10 @@
 
 #include <vm/vm_map.h>
 #include <libkern/section_keywords.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	ipc_pset_alloc
@@ -379,6 +388,8 @@ ipc_pset_destroy(
 	ips_unlock(pset);
 	ips_release(pset);       /* consume the ref our caller gave us */
 }
+
+#ifndef __DARLING__
 
 /*
  * Kqueue EVFILT_MACHPORT support
@@ -1244,3 +1255,4 @@ SECURITY_READ_ONLY_EARLY(struct filterops) machport_filtops = {
 	.f_process = filt_machportprocess,
 	.f_peek = filt_machportpeek,
 };
+#endif

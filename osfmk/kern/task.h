@@ -448,6 +448,14 @@ struct task {
 	int             task_disconnected_count;
 #endif
 
+#ifdef __DARLING__
+	struct list_head* p_pthhash;
+	int tracer;
+	struct vfsmount* vchroot;
+	char* vchroot_path;
+	boolean_t sigexc;
+#endif
+
 #if HYPERVISOR
 	void *hv_task_target; /* hypervisor virtual machine object associated with this task */
 #endif /* HYPERVISOR */
@@ -941,6 +949,10 @@ extern void task_bank_init(task_t task);
 #if CONFIG_ARCADE
 extern void task_prep_arcade(task_t task, thread_t thread);
 #endif /* CONFIG_ARCADE */
+
+#ifdef __DARLING__
+#define task_pid xnu_task_pid
+#endif
 
 extern int task_pid(task_t task);
 extern boolean_t task_has_assertions(task_t task);

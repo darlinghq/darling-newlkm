@@ -30,8 +30,12 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "duct_pe.h"
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
 #include "duct_pe_kprintf.h"
+#include <duct/duct_post_xnu.h>
+
+#include "duct_pe.h"
 
 void kprintf (const char * format, ...)
 {

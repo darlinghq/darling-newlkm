@@ -7,6 +7,7 @@
  * Copyright (C) 2017-2018 CTERA Networks. All Rights Reserved.
  */
 
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/fs.h>
 #include <linux/cred.h>
 #include <linux/mount.h>

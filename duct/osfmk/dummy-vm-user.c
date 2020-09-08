@@ -118,6 +118,8 @@
 #include <vm/vm_pageout.h>
 #include <vm/vm_protos.h>
 
+#include <duct/duct_vm_user.h>
+
 vm_size_t        upl_offset_to_pagelist = 0;
 
 #if	VM_CPM
@@ -1180,6 +1182,7 @@ kern_return_t vm_map_get_upl(
                 upl_page_info_array_t   page_info,
                 unsigned int        *page_infoCnt,
                 upl_control_flags_t *flags,
+                vm_tag_t                tag,
                 int         force_data_sync)
 {
         kprintf("not implemented: vm_map_get_upl()\n");

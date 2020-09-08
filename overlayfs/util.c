@@ -4,6 +4,7 @@
  * Copyright (C) 2016 Red Hat, Inc.
  */
 
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/fs.h>
 #include <linux/mount.h>
 #include <linux/slab.h>

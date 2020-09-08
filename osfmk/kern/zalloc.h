@@ -435,6 +435,7 @@ extern void             zfree(
 	zone_t          zone,
 	void            *elem);
 
+#ifndef __DARLING__
 #ifdef XNU_KERNEL_PRIVATE
 #define zfree(zone, elem) \
 _Pragma("clang diagnostic push") \
@@ -448,6 +449,7 @@ _Pragma("clang diagnostic ignored \"-Wshadow\"") \
 	} while (0) \
 _Pragma("clang diagnostic pop")
 #endif /* XNU_KERNEL_PRIVATE */
+#endif
 
 /* Create zone */
 extern zone_t   zinit(

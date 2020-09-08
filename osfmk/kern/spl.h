@@ -30,6 +30,19 @@
 
 #include <machine/machine_routines.h>
 
+#ifdef __DARLING__
+typedef unsigned long spl_t;
+
+extern unsigned long duct_ml_irqsave_setenabled(boolean_t enable);
+extern void duct_ml_irqrestore(unsigned long flags);
+
+#define	splhigh()       duct_ml_irqsave_setenabled(FALSE)
+#define	splsched()      duct_ml_irqsave_setenabled(FALSE)
+#define	splclock()      duct_ml_irqsave_setenabled(FALSE)
+#define	splx(flags)     duct_ml_irqrestore(flags)
+#define	spllo()         duct_ml_irqsave_setenabled(TRUE)
+
+#else
 typedef unsigned spl_t;
 
 #define splhigh()       (spl_t) ml_set_interrupts_enabled(FALSE)
@@ -37,5 +50,6 @@ typedef unsigned spl_t;
 #define splclock()      (spl_t) ml_set_interrupts_enabled(FALSE)
 #define splx(x)         (void) ml_set_interrupts_enabled(x)
 #define spllo()         (void) ml_set_interrupts_enabled(TRUE)
+#endif
 
 #endif  /* _KERN_SPL_H_ */

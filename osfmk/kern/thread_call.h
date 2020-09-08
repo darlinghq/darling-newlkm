@@ -356,6 +356,14 @@ typedef enum {
 	THREAD_CALL_INDEX_MAX           = 8,    /* count of thread call indexes */
 } thread_call_index_t;
 
+#ifdef __DARLING__
+#include <linux/workqueue.h>
+struct thread_call {
+	struct call_entry tc_call;
+	struct delayed_work tc_work;
+	int free;
+};
+#else
 struct thread_call {
 	struct call_entry               tc_call;                /* Must be first for queue macros */
 	uint64_t                        tc_submit_count;
@@ -366,6 +374,7 @@ struct thread_call {
 	uint32_t                        tc_flags;
 	int32_t                         tc_refs;
 };
+#endif
 
 #define THREAD_CALL_ALLOC       0x01    /* memory owned by thread_call.c */
 #define THREAD_CALL_WAIT        0x02    /* thread waiting for call to finish running */
@@ -380,6 +389,10 @@ struct thread_call {
 typedef struct thread_call thread_call_data_t;
 
 extern void             thread_call_initialize(void);
+
+#ifdef __DARLING__
+extern void thread_call_deinitialize(void);
+#endif
 
 extern void             thread_call_setup(
 	thread_call_t                   call,

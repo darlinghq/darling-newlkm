@@ -40,7 +40,7 @@
 
 #include "mach/host_notify_reply.h"
 
-decl_lck_mtx_data(,host_notify_lock)
+decl_lck_mtx_data(,host_notify_lock);
 
 lck_mtx_ext_t           host_notify_lock_ext;
 lck_grp_t               host_notify_lock_grp;

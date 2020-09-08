@@ -334,7 +334,7 @@ struct zone_page_table_entry *zone_page_table_lookup(zone_page_index_t pindex);
 /*
  *  Exclude more than one concurrent garbage collection
  */
-decl_lck_mtx_data(,     zone_gc_lock)
+decl_lck_mtx_data(,     zone_gc_lock);
 
 lck_attr_t      zone_lck_attr;
 lck_grp_t       zone_lck_grp;
@@ -355,7 +355,7 @@ lck_mtx_ext_t   zone_lck_ext;
  *  Protects first_zone, last_zone, num_zones,
  *  and the next_zone field of zones.
  */
-decl_simple_lock_data(, all_zones_lock)
+decl_simple_lock_data(, all_zones_lock);
 zone_t          first_zone;
 zone_t          *last_zone;
 unsigned int        num_zones;
@@ -993,9 +993,11 @@ struct {
  *  zones that are marked collectable looking for reclaimable
  *  pages.  zone_gc is called by consider_zone_gc when the system
  *  begins to run out of memory.
+ *
+ *  We should ensure that zone_gc never blocks.
  */
 void
-zone_gc(void)
+zone_gc(boolean_t consider_jetsams)
 {
         kprintf("not implemented: zone_gc()\n");
 }

@@ -18,7 +18,7 @@
  */
 #include <duct/duct.h>
 #include "evpsetfd.h"
-#include <mach/mach_types.h>
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/anon_inodes.h>
@@ -29,6 +29,7 @@
 #include <linux/wait.h>
 #include <duct/duct_pre_xnu.h>
 #include <duct/duct_kern_waitqueue.h>
+#include <mach/mach_types.h>
 #include <osfmk/ipc/ipc_types.h>
 #include <osfmk/ipc/ipc_object.h>
 #include <osfmk/ipc/ipc_space.h>

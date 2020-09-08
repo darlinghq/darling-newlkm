@@ -1135,7 +1135,7 @@ upl_range_needed(
  * It would be nice to be able to encrypt and decrypt in physical
  * mode but that might not always be more efficient...
  */
-decl_simple_lock_data(,vm_paging_lock)
+decl_simple_lock_data(,vm_paging_lock);
 #define VM_PAGING_NUM_PAGES 64
 vm_map_offset_t vm_paging_base_address = 0;
 boolean_t   vm_paging_page_inuse[VM_PAGING_NUM_PAGES] = { FALSE, };

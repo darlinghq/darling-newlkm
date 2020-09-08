@@ -1,3 +1,4 @@
+#include <duct/compiler/clang/asm-inline.h>
 #include <linux/module.h>
 #include <linux/cred.h>
 #include <linux/sched.h>

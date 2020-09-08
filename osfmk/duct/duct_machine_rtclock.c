@@ -44,23 +44,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // #define XNU_PROBE_IN_MACHTRAP_WRAPPERS_TIMEKEEPING
 
-
-// should be in machine/conf.c
-
-extern  struct clock_ops        sysclk_ops, calend_ops;
-
-/*
- * List of clock devices.
- */
-struct clock    clock_list[] = {
-        { &sysclk_ops, 0, 0 },
-        { &calend_ops, 0, 0 }
-};
-
-int     clock_count     = sizeof(clock_list) / sizeof(clock_list[0]);
-
-
-
 int rtclock_init (void)
 {
         // pe_arm_init_timebase(NULL);

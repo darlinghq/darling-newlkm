@@ -137,6 +137,8 @@ void duct_vm_map_deallocate(vm_map_t map)
 	}
 }
 
+os_refgrp_decl(static, map_refgrp, "vm_map", NULL);
+
 // Calling with a NULL task makes other funcs consider the map a kernel map
 vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 {
@@ -195,7 +197,7 @@ vm_map_t duct_vm_map_create (struct task_struct* linux_task)
 		get_task_struct(linux_task);
 	result->linux_task = linux_task;
     result->max_offset = darling_is_task_64bit() ? 0x7fffffffffffull : VM_MAX_ADDRESS;
-	result->ref_count = 1;
+	os_ref_init_count(&result->map_refcnt, &map_refgrp, 1);
     result->hdr.page_shift = PAGE_SHIFT;
 #endif
 

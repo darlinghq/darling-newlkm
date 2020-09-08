@@ -61,6 +61,12 @@
  *
  *	Routines to implement host ports.
  */
+
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/message.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_host_server.h>
@@ -78,6 +84,10 @@
 
 #if CONFIG_MACF
 #include <security/mac_mach_internal.h>
+#endif
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
 #endif
 
 /*
@@ -142,8 +152,10 @@ ipc_host_init(void)
 	/*
 	 *	And for master processor
 	 */
+#ifndef __DARLING__
 	ipc_processor_init(master_processor);
 	ipc_processor_enable(master_processor);
+#endif
 }
 
 /*

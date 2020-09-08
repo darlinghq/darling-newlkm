@@ -146,10 +146,10 @@ static lck_grp_attr_t       thread_lck_grp_attr;
 // lck_attr_t                  thread_lck_attr;
 // lck_grp_t                   thread_lck_grp;
 
-decl_simple_lock_data(static,thread_stack_lock)
+decl_simple_lock_data(static,thread_stack_lock);
 static queue_head_t     thread_stack_queue;
 
-decl_simple_lock_data(static,thread_terminate_lock)
+decl_simple_lock_data(static,thread_terminate_lock);
 static queue_head_t     thread_terminate_queue;
 
 static struct thread    thread_template, init_thread;
@@ -194,12 +194,12 @@ thread_terminate_enqueue(
         kprintf("not implemented: thread_terminate_enqueue()\n");
 }
 
-void thread_recompute_sched_pri(thread_t thread, boolean_t override_depress)
+void thread_recompute_sched_pri(thread_t thread, set_sched_pri_options_t options)
 {
         kprintf("not implemented: thread_recompute_sched_pri()\n");
 }
 
-void thread_guard_violation(thread_t thread, unsigned type)
+void thread_guard_violation(thread_t thread, mach_exception_data_type_t code, mach_exception_data_type_t subcode, boolean_t fatal)
 {
         kprintf("not implemented: thread_guard_violation()\n");
 }
@@ -392,7 +392,8 @@ void
 thread_read_times(
     thread_t        thread,
     time_value_t    *user_time,
-    time_value_t    *system_time)
+    time_value_t    *system_time,
+    time_value_t    *runnable_time)
 {
         kprintf("not implemented: thread_read_times()\n");
 }

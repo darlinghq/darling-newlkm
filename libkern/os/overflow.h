@@ -45,6 +45,9 @@
 #include <stdbool.h>
 #include <os/base.h>
 
+#ifdef __DARLING__
+static
+#endif
 bool __header_always_inline OS_WARN_RESULT
 __os_warn_unused(__const bool x)
 {

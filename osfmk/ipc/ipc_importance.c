@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/notify.h>
 #include <ipc/ipc_types.h>
@@ -46,6 +51,10 @@
 
 #include <mach/mach_voucher_attr_control.h>
 #include <mach/machine/sdt.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 extern int      proc_pid(void *);
 extern int      proc_selfpid(void);

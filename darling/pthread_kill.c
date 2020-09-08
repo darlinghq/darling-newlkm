@@ -55,7 +55,7 @@ int pthread_kill_trap(task_t task,
 	if (copy_from_user(&args, in_args, sizeof(args)))
 		return -LINUX_EFAULT;
 
-	thread = port_name_to_thread(args.thread_port);
+	thread = port_name_to_thread(args.thread_port, PORT_TO_THREAD_NONE);
 
 	if (thread == THREAD_NULL || !thread->linux_task)
 		return -LINUX_ESRCH;

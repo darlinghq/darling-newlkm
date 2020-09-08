@@ -30,8 +30,12 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "duct_pe.h"
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
 #include "duct_gen_bootargs.h"
+#include <duct/duct_post_xnu.h>
+
+#include "duct_pe.h"
 
 boolean_t duct_PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_arg)
 {
