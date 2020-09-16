@@ -117,3 +117,18 @@ thread_policy_get(
         kprintf("not implemented: thread_policy_get()\n");
         return 0;
 }
+
+boolean_t thread_recompute_user_promotion_locked(thread_t thread) {
+	kprintf("not implemented: thread_recompute_user_promotion_locked()\n");
+	return FALSE;
+};
+
+boolean_t thread_recompute_kernel_promotion_locked(thread_t thread) {
+	kprintf("not implemented: thread_recompute_kernel_promotion_locked()\n");
+	return FALSE;
+};
+
+thread_qos_t thread_get_requested_qos(thread_t thread, int* relpri) {
+	kprintf("not implemented: thread_get_requested_qos()\n");
+	return THREAD_QOS_UNSPECIFIED;
+};

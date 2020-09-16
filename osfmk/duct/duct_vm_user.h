@@ -38,6 +38,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/mach_types.h>
 #include <mach/vm_types.h>
 
-extern kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach_vm_size_t size, int flags);
+extern kern_return_t duct_mach_vm_allocate_external(vm_map_t map, mach_vm_offset_t * addr, mach_vm_size_t size, int flags);
 
 #endif // DUCT_VM_USER_H_

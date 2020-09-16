@@ -143,6 +143,52 @@ thread_call_allocate(
 	return call;
 }
 
+// <copied from="xnu://6153.61.1/osfmk/kern/thread_call.c" modified="true">
+
+thread_call_t
+thread_call_allocate_with_options(
+	thread_call_func_t              func,
+	thread_call_param_t             param0,
+	thread_call_priority_t          pri,
+	thread_call_options_t           options)
+{
+	thread_call_t call = thread_call_allocate(func, param0);
+
+#ifndef __DARLING__
+	switch (pri) {
+	case THREAD_CALL_PRIORITY_HIGH:
+		call->tc_index = THREAD_CALL_INDEX_HIGH;
+		break;
+	case THREAD_CALL_PRIORITY_KERNEL:
+		call->tc_index = THREAD_CALL_INDEX_KERNEL;
+		break;
+	case THREAD_CALL_PRIORITY_USER:
+		call->tc_index = THREAD_CALL_INDEX_USER;
+		break;
+	case THREAD_CALL_PRIORITY_LOW:
+		call->tc_index = THREAD_CALL_INDEX_LOW;
+		break;
+	case THREAD_CALL_PRIORITY_KERNEL_HIGH:
+		call->tc_index = THREAD_CALL_INDEX_KERNEL_HIGH;
+		break;
+	default:
+		panic("Invalid thread call pri value: %d", pri);
+		break;
+	}
+
+	if (options & THREAD_CALL_OPTIONS_ONCE) {
+		call->tc_flags |= THREAD_CALL_ONCE;
+	}
+	if (options & THREAD_CALL_OPTIONS_SIGNAL) {
+		call->tc_flags |= THREAD_CALL_SIGNAL | THREAD_CALL_ONCE;
+	}
+#endif
+
+	return call;
+}
+
+// </copied>
+
 boolean_t
 thread_call_free(
         thread_call_t       call)

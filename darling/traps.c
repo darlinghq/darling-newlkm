@@ -48,6 +48,9 @@
 #include <kern/queue.h>
 #include <kern/ipc_misc.h>
 #include <vm/vm_map.h>
+#include <sys/proc_internal.h>
+#include <sys/user.h>
+#include <sys/pthread_shims.h>
 #include <duct/duct_ipc_pset.h>
 #include <duct/duct_post_xnu.h>
 #include <uapi/linux/ptrace.h>
@@ -65,6 +68,8 @@
 #include "commpage.h"
 #include "foreign_mm.h"
 #include "continuation.h"
+#include "pthread_kext.h"
+#include "procs.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #define current linux_current
@@ -203,7 +208,8 @@ static int mach_init(void)
 
 	darling_task_init();
 	darling_xnu_init();
-	psynch_init();
+	darling_pthread_kext_init();
+	darling_procs_init();
 
 	commpage32 = commpage_setup(false);
 	commpage64 = commpage_setup(true);
@@ -229,7 +235,8 @@ fail:
 }
 static void mach_exit(void)
 {
-	psynch_exit();
+	darling_procs_exit();
+	darling_pthred_kext_exit();
 	darling_xnu_deinit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
@@ -323,6 +330,13 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		duct_task_destroy(new_task);
 		goto out;
 	}
+
+	// will automatically attach the BSD process to the Mach task
+	proc_t new_proc = darling_proc_create(new_task);
+
+	// grab the TGID from the Linux task
+	// (note that we use TGID, not PID, because Linux's PIDs are technically TIDs)
+	new_proc->p_pid = new_thread->linux_task->tgid;
 
 	debug_msg("thread %p refc %d at #1\n", new_thread, new_thread->ref_count);
 	darling_task_register(new_task);
@@ -1303,8 +1317,8 @@ failure:
 	int name##_trap(task_t task, struct name##_args* in_args) \
 	{ \
 		copyargs(args, in_args); \
-		uint32_t* retval = darling_thread_get_current()->uu_rval; \
-		int error = XNU_CONTINUATION_ENABLED(name(task, &args, retval)); \
+		uint32_t* retval = ((uthread_t)darling_thread_get_current()->uthread)->uu_rval; \
+		int error = XNU_CONTINUATION_ENABLED(name((proc_t)task->bsd_info, &args, retval)); \
 		if (error) \
 			return -error; \
 		return *retval; \

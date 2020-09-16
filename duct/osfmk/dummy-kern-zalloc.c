@@ -1114,3 +1114,12 @@ zone_debug_disable(
 
 
 #endif  /* ZONE_DEBUG */
+
+kern_return_t mach_zone_info_for_zone(host_priv_t host, mach_zone_name_t name, mach_zone_info_t* infop) {
+	kprintf("not implemented: mach_zone_info_for_zone()\n");
+	return 0;
+};
+
+void zone_require(void* addr, zone_t expected_zone) {
+	// do nothing. this is just a validation function anyways
+};

@@ -1392,10 +1392,12 @@ ipc_port_recv_update_inheritor(
 			}
 			break;
 
+#ifndef __DARLING__
 		case PORT_SYNC_LINK_WORKLOOP_KNOTE:
 			kn = port->ip_sync_inheritor_knote;
 			inheritor = filt_ipc_kqueue_turnstile(kn);
 			break;
+#endif
 
 		case PORT_SYNC_LINK_WORKLOOP_STASH:
 			inheritor = port->ip_sync_inheritor_ts;
@@ -1469,9 +1471,11 @@ ipc_port_send_update_inheritor(
 			inheritor = ipc_port_get_watchport_inheritor(port);
 			inheritor_flags = TURNSTILE_INHERITOR_THREAD;
 		}
+#ifndef __DARLING__
 	} else if (port->ip_sync_link_state == PORT_SYNC_LINK_WORKLOOP_KNOTE) {
 		/* Case 4. */
 		inheritor = filt_ipc_kqueue_turnstile(mqueue->imq_inheritor_knote);
+#endif
 	} else if (port->ip_sync_link_state == PORT_SYNC_LINK_WORKLOOP_STASH) {
 		/* Case 5. */
 		inheritor = mqueue->imq_inheritor_turnstile;
@@ -1481,12 +1485,14 @@ ipc_port_send_update_inheritor(
 			inheritor = port->ip_messages.imq_inheritor_thread_ref;
 			inheritor_flags = TURNSTILE_INHERITOR_THREAD;
 		}
+#ifndef __DARLING__
 	} else if ((kn = SLIST_FIRST(&mqueue->imq_klist))) {
 		/* Case 7. Push on a workloop that is interested */
 		if (filt_machport_kqueue_has_turnstile(kn)) {
 			assert(port->ip_sync_link_state == PORT_SYNC_LINK_ANY);
 			inheritor = filt_ipc_kqueue_turnstile(kn);
 		}
+#endif
 	}
 
 	turnstile_update_inheritor(send_turnstile, inheritor,
@@ -1759,10 +1765,12 @@ not_special:
 	}
 
 	if (flags & IPC_PORT_ADJUST_SR_LINK_WORKLOOP) {
+#ifndef __DARLING__
 		if (ITH_KNOTE_VALID(kn, MACH_MSG_TYPE_PORT_SEND_ONCE)) {
 			inheritor = filt_machport_stash_port(kn, special_reply_port,
 			    &sync_link_state);
 		}
+#endif
 	} else if (flags & IPC_PORT_ADJUST_SR_ALLOW_SYNC_LINKAGE) {
 		sync_link_state = PORT_SYNC_LINK_ANY;
 	}
@@ -1929,7 +1937,9 @@ ipc_port_adjust_port_locked(
 	assert(!port->ip_specialreply);
 
 	if (kn) {
+#ifndef __DARLING__
 		inheritor = filt_machport_stash_port(kn, port, &sync_link_state);
+#endif
 		if (sync_link_state == PORT_SYNC_LINK_WORKLOOP_KNOTE) {
 			inheritor = kn;
 		}

@@ -93,8 +93,12 @@ static lck_spin_t ipc_importance_lock_data;     /* single lock for now */
 	lck_spin_try_lock_grp(&ipc_importance_lock_data, &ipc_lck_grp)
 #define ipc_importance_unlock() \
 	lck_spin_unlock(&ipc_importance_lock_data)
+#ifdef __DARLING__
+#define ipc_importance_assert_held()
+#else
 #define ipc_importance_assert_held() \
 	lck_spin_assert(&ipc_importance_lock_data, LCK_ASSERT_OWNED)
+#endif
 
 #if IIE_REF_DEBUG
 #define incr_ref_counter(x) (os_atomic_inc(&(x), relaxed))
@@ -612,7 +616,9 @@ ipc_importance_task_check_transition(
 	boolean_t boost = (IIT_UPDATE_HOLD == type);
 	boolean_t before_boosted, after_boosted;
 
+#ifndef __DARLING__
 	ipc_importance_assert_held();
+#endif
 
 	if (!ipc_importance_task_is_any_receiver_type(task_imp)) {
 		return FALSE;
@@ -1096,7 +1102,9 @@ ipc_importance_task_propagate_assertion_locked(
 	queue_init(&updates);
 	queue_init(&propagate);
 
+#ifndef __DARLING__
 	ipc_importance_assert_held();
+#endif
 
 	/*
 	 * If we're going to update the policy for the provided task,
@@ -2663,7 +2671,9 @@ portupdate:
 		ip_lock(port);
 	}
 
+#ifndef __DARLING__
 	ipc_importance_assert_held();
+#endif
 
 #if IMPORTANCE_TRACE
 	if (kdebug_enable) {
@@ -3897,6 +3907,7 @@ ipc_importance_thread_call_init(void)
 	}
 }
 
+#ifndef __DARLING__
 /*
  * Routing: task_importance_list_pids
  * Purpose: list pids where task in donating importance.
@@ -3989,3 +4000,4 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 
 	return pidcount;
 }
+#endif

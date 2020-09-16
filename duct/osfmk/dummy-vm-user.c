@@ -148,14 +148,28 @@ ipc_port_t	dynamic_pager_control_port=NULL;
  *	map (which is limited to the same size as the kernel).
  */
 kern_return_t
-vm_allocate(
-	vm_map_t	map,
-	vm_offset_t	*addr,
-	vm_size_t	size,
-	int		flags)
+vm_allocate_external(
+	vm_map_t        map,
+	vm_offset_t     *addr,
+	vm_size_t       size,
+	int             flags)
 {
-        return mach_vm_allocate(map, (mach_vm_offset_t*) addr, size, flags);
+	vm_tag_t tag;
+	VM_GET_FLAGS_ALIAS(flags, tag);
+	return vm_allocate_kernel(map, addr, size, flags, tag);
 }
+
+kern_return_t
+vm_allocate_kernel(
+	vm_map_t        map,
+	vm_offset_t     *addr,
+	vm_size_t       size,
+	int             flags,
+	vm_tag_t        tag)
+{
+        return mach_vm_allocate_kernel(map, (mach_vm_offset_t*)addr, size, flags, tag);
+}
+
 /*
  *	mach_vm_deallocate -
  *	deallocates the specified range of addresses in the
@@ -665,7 +679,7 @@ vm_copy(
  *
  */
 kern_return_t
-mach_vm_map(
+mach_vm_map_external(
 	vm_map_t		target_map,
 	mach_vm_offset_t	*address,
 	mach_vm_size_t	initial_size,
@@ -787,7 +801,7 @@ vm_remap(
  *	[ To unwire the pages, specify VM_PROT_NONE. ]
  */
 kern_return_t
-mach_vm_wire(
+mach_vm_wire_external(
 	host_priv_t		host_priv,
 	vm_map_t		map,
 	mach_vm_offset_t	start,
@@ -1515,4 +1529,38 @@ kernel_object_iopl_request(
 {
         kprintf("not implemented: kernel_object_iopl_request()\n");
         return 0;
+}
+
+kern_return_t
+mach_vm_page_range_query(
+	vm_map_t                map,
+	mach_vm_offset_t        address,
+	mach_vm_size_t          size,
+	mach_vm_address_t       dispositions_addr,
+	mach_vm_size_t          *dispositions_count)
+{
+	kprintf("not implemented: mach_vm_page_range_query()\n");
+	return 0;
+}
+
+kern_return_t
+mach_memory_entry_ownership(
+	ipc_port_t      entry_port,
+	task_t          owner,
+	int             ledger_tag,
+	int             ledger_flags)
+{
+	kprintf("not implemented: mach_memory_entry_ownership()\n");
+	return 0;
+}
+
+kern_return_t
+mach_memory_entry_access_tracking(
+	ipc_port_t      entry_port,
+	int             *access_tracking,
+	uint32_t        *access_tracking_reads,
+	uint32_t        *access_tracking_writes)
+{
+	kprintf("not implemented: mach_memory_entry_access_tracking()\n");
+	return 0;
 }

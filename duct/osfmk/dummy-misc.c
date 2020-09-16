@@ -447,3 +447,9 @@ flush_dcache64(addr64_t addr, unsigned count, int phys)
 }
 
 #endif
+
+// i'm pretty sure this is used to drive macOS 10.15's new DriverKit extensions
+kern_return_t uext_server(ipc_kmsg_t requestkmsg, ipc_kmsg_t* pReply) {
+	kprintf("not implemented: uext_server()");
+	return KERN_NOT_SUPPORTED;
+};

@@ -43,20 +43,22 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // #include <kern/thread.h>
 // #include <libkern/version.h>
 
+extern void * duct_kalloc_canblock(vm_size_t * size, boolean_t canblock, vm_allocation_site_t * site) {
+	if (canblock) {
+		return vmalloc (*size);
+	} else {
+		return __vmalloc (*size, GFP_ATOMIC | __GFP_HIGHMEM, PAGE_KERNEL);
+	}
+};
 
-void * duct_kalloc (vm_size_t size)
-{
-        /* WC - potentially one should use kmalloc */
-        return vmalloc (size);
-}
+// because we use Linux's vmalloc and it doesn't require any size argument for `vfree`,
+// we implement `kfree_addr` and get `kfree` for free ;) (see what i did there?)
 
-void * duct_kalloc_noblock (vm_size_t size)
-{
-        // extern void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot);
-        return __vmalloc (size, GFP_ATOMIC | __GFP_HIGHMEM, PAGE_KERNEL);
-}
-    
+extern void kfree_addr(void* data) {
+	vfree(data);
+};
+
 extern void duct_kfree (void * data, vm_size_t size)
 {
-        vfree (data);
+	kfree_addr(data);
 }

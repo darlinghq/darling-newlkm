@@ -645,3 +645,7 @@ void dtrace_thread_bootstrap(void)
         kprintf("not implemented: dtrace_thread_bootstrap()\n");
 }
 #endif /* CONFIG_DTRACE */
+
+void thread_set_thread_name(thread_t th, const char* name) {
+	kprintf("not implemented: thread_set_thread_name()\n");
+};

@@ -145,6 +145,10 @@ void lck_mtx_lock_spin(lck_mtx_t* lck)
 {
 }
 
+void lck_mtx_lock_spin_always(lck_mtx_t* lck) {
+	kprintf("not implemented: lck_mtx_lock_spin_always()\n");
+};
+
 void lck_mtx_destroy(lck_mtx_t * lck, lck_grp_t * grp)
 {
         kprintf("not implemented: lck_mtx_destroy()\n");

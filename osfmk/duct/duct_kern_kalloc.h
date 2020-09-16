@@ -39,8 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mach/vm_types.h>
 #include <kern/kern_types.h>
 
-extern void * duct_kalloc (vm_size_t size);
-extern void * duct_kalloc_noblock (vm_size_t size);
+extern void * duct_kalloc_canblock(vm_size_t * size, boolean_t canblock, vm_allocation_site_t * site);
 extern void duct_kfree (void * data, vm_size_t size);
 
 #endif // DUCT_KERN_KALLOC_H

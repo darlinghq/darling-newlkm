@@ -115,3 +115,7 @@ uint64_t ml_get_timebase(void)
     return get_cycles();
 }
 
+// yes, i know it's weird that this is here and `mach_absolute_time` is in `duct_machine_rtclock.c`, but that's how XNU has it
+uint64_t mach_continuous_time(void) {
+	return ktime_to_ns(ktime_get_boottime());
+};

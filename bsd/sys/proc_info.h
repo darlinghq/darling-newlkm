@@ -38,10 +38,12 @@
 #include <sys/un.h>
 #include <sys/kern_control.h>
 #include <sys/event.h>
+#ifndef __DARLING__
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#endif
 #include <mach/machine.h>
 #include <uuid/uuid.h>
 
@@ -410,6 +412,7 @@ struct proc_threadwithpathinfo {
 #define INI_IPV4        0x1
 #define INI_IPV6        0x2
 
+#ifndef __DARLING__
 struct in4in6_addr {
 	u_int32_t               i46a_pad32[3];
 	struct in_addr          i46a_addr4;
@@ -444,6 +447,7 @@ struct in_sockinfo {
 		short                   in6_hops;
 	}                                       insi_v6;
 };
+#endif
 
 /*
  * TCP Sockets
@@ -468,6 +472,7 @@ struct in_sockinfo {
 #define TSI_S_TIME_WAIT         10      /* in 2*msl quiet wait after close */
 #define TSI_S_RESERVED          11      /* pseudo state: reserved */
 
+#ifndef __DARLING__
 struct tcp_sockinfo {
 	struct in_sockinfo              tcpsi_ini;
 	int                             tcpsi_state;
@@ -477,6 +482,7 @@ struct tcp_sockinfo {
 	uint32_t                        rfu_1;          /* reserved */
 	uint64_t                        tcpsi_tp;       /* opaque handle of TCP protocol control block */
 };
+#endif
 
 /*
  * Unix Domain Sockets
@@ -499,6 +505,11 @@ struct un_sockinfo {
 /*
  * PF_NDRV Sockets
  */
+
+#ifdef __DARLING__
+// copied from `bsd/net/if.h`
+#define IF_NAMESIZE     16
+#endif
 
 struct ndrv_info {
 	uint32_t        ndrvsi_if_family;
@@ -588,8 +599,10 @@ struct socket_info {
 	int                                     soi_kind;
 	uint32_t                                rfu_1;          /* reserved */
 	union {
+#ifndef __DARLING__
 		struct in_sockinfo      pri_in;                 /* SOCKINFO_IN */
 		struct tcp_sockinfo     pri_tcp;                /* SOCKINFO_TCP */
+#endif
 		struct un_sockinfo      pri_un;                 /* SOCKINFO_UN */
 		struct ndrv_info        pri_ndrv;               /* SOCKINFO_NDRV */
 		struct kern_event_info  pri_kern_event;         /* SOCKINFO_KERN_EVENT */

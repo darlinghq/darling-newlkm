@@ -856,6 +856,8 @@ hw_lock_held(hw_lock_t lock)
 	return ordered_load_hw(lock) != 0;
 }
 
+#ifndef __DARLING__
+
 #if     __SMP__
 static unsigned int
 hw_lock_bit_to_contended(hw_lock_bit_t *lock, uint32_t mask, uint32_t timeout LCK_GRP_ARG(lck_grp_t *grp));
@@ -1047,6 +1049,8 @@ hw_unlock_bit_nopreempt(hw_lock_bit_t * lock, unsigned int bit)
 	}
 	hw_unlock_bit_internal(lock, bit);
 }
+
+#endif
 
 /*
  * Routine:	lck_spin_sleep

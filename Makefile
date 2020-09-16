@@ -141,7 +141,8 @@ DEFINES := \
 	-DEVENTMETER \
 	-DCONFIG_APP_PROFILE=0 \
 	-DCC_USING_FENTRY=1 \
-	-DIMPORTANCE_INHERITANCE=1
+	-DIMPORTANCE_INHERITANCE=1 \
+	-DMACH_BSD
 
 OTHER_FLAGS := \
 	-std=gnu11
@@ -174,10 +175,12 @@ ccflags-y := $(WARNING_FLAGS) $(FEATURE_FLAGS) $(DEFINES) $(OTHER_FLAGS)
 OBJS_osfmk = \
 	$(OBJS_osfmk/ipc) \
 	$(OBJS_osfmk/kern) \
+	$(OBJS_osfmk/prng) \
 	$(OBJS_osfmk/duct)
 OBJS_osfmk/ipc = \
 	osfmk/ipc/ipc_entry.o \
 	osfmk/ipc/ipc_hash.o \
+	osfmk/ipc/ipc_importance.o \
 	osfmk/ipc/ipc_init.o \
 	osfmk/ipc/ipc_kmsg.o \
 	osfmk/ipc/ipc_mqueue.o \
@@ -208,24 +211,35 @@ OBJS_osfmk/kern = \
 	osfmk/kern/locks.o \
 	osfmk/kern/ltable.o \
 	osfmk/kern/mk_timer.o \
+	osfmk/kern/mpsc_queue.o \
+	osfmk/kern/priority_queue.o \
+	osfmk/kern/restartable.o \
 	osfmk/kern/sync_sema.o \
-	osfmk/kern/ux_handler.c \
-	osfmk/kern/waitq.o
+	osfmk/kern/turnstile.o \
+	osfmk/kern/ux_handler.o \
+	osfmk/kern/waitq.o \
+	osfmk/kern/work_interval.o
+OBJS_osfmk/prng = \
+	osfmk/prng/prng_random.o
 OBJS_osfmk/duct = \
 	osfmk/duct/darling_xnu_init.o \
+	osfmk/duct/duct_arch_thread.o \
 	osfmk/duct/duct_arm_locks_arm.o \
 	osfmk/duct/duct_atomic.o \
-	osfmk/duct/duct_ipc_importance.o \
 	osfmk/duct/duct_ipc_pset.o \
+	osfmk/duct/duct_kern_bsd_kern.o \
 	osfmk/duct/duct_kern_clock.o \
 	osfmk/duct/duct_kern_debug.o \
 	osfmk/duct/duct_kern_kalloc.o \
 	osfmk/duct/duct_kern_printf.o \
+	osfmk/duct/duct_kern_sched_prim.o \
 	osfmk/duct/duct_kern_startup.o \
 	osfmk/duct/duct_kern_sysctl.o \
 	osfmk/duct/duct_kern_task.o \
+	osfmk/duct/duct_kern_task_policy.o \
 	osfmk/duct/duct_kern_thread_act.o \
 	osfmk/duct/duct_kern_thread_call.o \
+	osfmk/duct/duct_kern_thread_policy.o \
 	osfmk/duct/duct_kern_thread.o \
 	osfmk/duct/duct_kern_timer_call.o \
 	osfmk/duct/duct_kern_zalloc.o \
@@ -242,11 +256,20 @@ OBJS_osfmk/duct = \
 # bsd/
 #
 OBJS_bsd = \
+	$(OBJS_bsd/kern) \
+	$(OBJS_bsd/pthread) \
 	$(OBJS_bsd/uxkern) \
 	$(OBJS_bsd/duct)
+OBJS_bsd/kern = \
+	bsd/kern/qsort.o
+OBJS_bsd/pthread = \
+	bsd/pthread/pthread_priority.o \
+	bsd/pthread/pthread_shims.o
 OBJS_bsd/uxkern = \
 	bsd/uxkern/ux_exception.o
 OBJS_bsd/duct = \
+	bsd/duct/duct_kern_kern_fork.o \
+	bsd/duct/duct_kern_kern_proc.o \
 	bsd/duct/duct_kern_kern_sig.o \
 	bsd/duct/duct_uxkern_ux_exception.o
 
@@ -257,6 +280,8 @@ OBJS_duct = \
 	$(OBJS_duct/osfmk) \
 	$(OBJS_duct/bsd)
 OBJS_duct/osfmk = \
+	duct/osfmk/dummy-arch-thread.o \
+	duct/osfmk/dummy-bank-bank.o \
 	duct/osfmk/dummy-kern-audit-sessionport.o \
 	duct/osfmk/dummy-kern-clock-oldops.o \
 	duct/osfmk/dummy-kern-host-notify.o \
@@ -264,7 +289,9 @@ OBJS_duct/osfmk = \
 	duct/osfmk/dummy-kern-locks.o \
 	duct/osfmk/dummy-kern-machine.o \
 	duct/osfmk/dummy-kern-mk-sp.o \
+	duct/osfmk/dummy-kern-priority.o \
 	duct/osfmk/dummy-kern-processor.o \
+	duct/osfmk/dummy-kern-sched-prim.o \
 	duct/osfmk/dummy-kern-sync-lock.o \
 	duct/osfmk/dummy-kern-syscall-emulation.o \
 	duct/osfmk/dummy-kern-task-policy.o \
@@ -292,9 +319,19 @@ OBJS_duct/bsd = \
 # libkern/
 #
 OBJS_libkern = \
-	$(OBJS_libkern/gen)
+	$(OBJS_libkern/libclosure) \
+	$(OBJS_libkern/gen) \
+	$(OBJS_libkern/os) \
+	$(OBJS_libkern/duct)
+OBJS_libkern/libclosure = \
+	libkern/libclosure/libclosuredata.o
 OBJS_libkern/gen = \
 	libkern/gen/OSAtomicOperations.o
+OBJS_libkern/os = \
+	libkern/os/refcnt.o
+OBJS_libkern/duct = \
+	libkern/duct/duct_cpp_OSRuntime.o \
+	libkern/duct/duct_libclosure_runtime.o
 
 #
 # pexpert/
@@ -317,6 +354,7 @@ OBJS_$(MIGDIR_REL)/osfmk/mach = \
 	$(MIGDIR_REL)/osfmk/mach/clock_reply_user.o \
 	$(MIGDIR_REL)/osfmk/mach/clock_server.o \
 	$(MIGDIR_REL)/osfmk/mach/exc_user.o \
+	$(MIGDIR_REL)/osfmk/mach/exc_server.o \
 	$(MIGDIR_REL)/osfmk/mach/host_priv_server.o \
 	$(MIGDIR_REL)/osfmk/mach/host_security_server.o \
 	$(MIGDIR_REL)/osfmk/mach/lock_set_server.o \
@@ -327,9 +365,11 @@ OBJS_$(MIGDIR_REL)/osfmk/mach = \
 	$(MIGDIR_REL)/osfmk/mach/mach_vm_server.o \
 	$(MIGDIR_REL)/osfmk/mach/mach_voucher_attr_control_server.o \
 	$(MIGDIR_REL)/osfmk/mach/mach_voucher_server.o \
+	$(MIGDIR_REL)/osfmk/mach/memory_entry_server.o \
 	$(MIGDIR_REL)/osfmk/mach/notify_user.o \
 	$(MIGDIR_REL)/osfmk/mach/processor_server.o \
 	$(MIGDIR_REL)/osfmk/mach/processor_set_server.o \
+	$(MIGDIR_REL)/osfmk/mach/restartable_server.o \
 	$(MIGDIR_REL)/osfmk/mach/task_server.o \
 	$(MIGDIR_REL)/osfmk/mach/thread_act_server.o
 OBJS_$(MIGDIR_REL)/osfmk/device = \
@@ -351,7 +391,9 @@ OBJS_darling = \
 	darling/foreign_mm.o \
 	darling/host_info.o \
 	darling/module.o \
+	darling/procs.o \
 	darling/psynch_support.o \
+	darling/pthread_kext.o \
 	darling/pthread_kill.o \
 	darling/task_registry.o \
 	darling/traps.o
@@ -407,6 +449,12 @@ INCLUDE_OVERRIDES_$(MIGDIR_REL)/osfmk/mach = \
 # other special flags
 #
 CFLAGS_osfmk = -I$(BUILD_ROOT)/osfmk/kern
+
+#
+# stop KBuild from tripping up Clang
+#
+CFLAGS_darling-mach.mod.o = \
+	-Wno-unknown-warning-option
 
 #
 # darling-mach-specific flags

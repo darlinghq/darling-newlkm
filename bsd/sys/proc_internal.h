@@ -793,7 +793,9 @@ void pth_proc_hashdelete(proc_t);
 void pth_global_hashinit(void);
 extern thread_call_t psynch_thcall;
 void psynch_wq_cleanup(__unused void *  param, __unused void * param1);
+#ifndef __DARLING__
 extern lck_mtx_t * pthread_list_mlock;
+#endif
 #endif /* PSYNCH */
 struct uthread * current_uthread(void);
 

@@ -21,6 +21,7 @@
 
 typedef struct task *task_t;
 typedef struct thread *thread_t;
+typedef struct uthread *uthread_t;
 
 enum {
 	TASK_KEY_PSYNCH_MUTEX = 0,
@@ -66,6 +67,15 @@ void darling_thread_cancelable(_Bool cancelable);
 typedef void(*task_key_dtor)(void*);
 _Bool darling_task_key_set(unsigned int key, void* value, task_key_dtor dtor);
 void* darling_task_key_get(unsigned int key);
+
+/**
+ * @brief Destroys the given BSD thread
+ *
+ * This will deregister the BSD thread from its Mach thread and from its BSD process, and it will also free the given BSD thread.
+ *
+ * @param uth The BSD thread to destroy
+ */
+void darling_uthread_destroy(uthread_t uth);
 
 #endif
 

@@ -110,16 +110,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef sigprocmask
 #define sigprocmask             xnu_sigprocmask
 
-
-// compats
-#define uthread                 compat_uthread
-#define uthread_t               compat_uthread_t
-
-struct compat_proc;
-#define proc                    compat_proc
-
-
 #undef fsid_t
 #define fsid_t xnu_fsid_
+
+// other
+#define guid_t                  xnu_guid_t
+#define user_msghdr             xnu_user_msghdr
+#define ifconf                  xnu_ifconf
 
 #endif // DUCT__PRE_XNU_TYPES_H

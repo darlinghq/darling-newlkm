@@ -85,7 +85,11 @@ struct waitq_set;
 
 #ifdef KERNEL
 #ifdef BSD_KERNEL_PRIVATE
+#ifdef __DARLING__
+#include <darling/pthread_internal.h>
+#else
 #include <sys/pthread_internal.h> /* for uu_kwe entry */
+#endif
 #include <sys/eventvar.h>
 #endif  /* BSD_KERNEL_PRIVATE */
 #ifdef __APPLE_API_PRIVATE

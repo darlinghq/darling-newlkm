@@ -1092,3 +1092,15 @@ mac_task_get_label(struct task *task)
         return 0;
 }
 #endif
+
+kern_return_t task_violated_guard(mach_exception_code_t code, mach_exception_subcode_t subcode, void *reason) {
+	kprintf("not implemented: task_violated_guard()\n");
+	// for now, we emulate the behavior of `task_violated_guard` when it's called on PID 1 (the init process),
+	// which is to effectively ignore the exception
+	return KERN_NOT_SUPPORTED;
+};
+
+kern_return_t task_inspect(task_inspect_t task_insp, task_inspect_flavor_t flavor, task_inspect_info_t info_out, mach_msg_type_number_t* size_in_out) {
+	kprintf("not implemented: task_inspect()\n");
+	return KERN_NOT_SUPPORTED;
+};

@@ -263,6 +263,11 @@ thread_depress_abort(
         return 0;
 }
 
+kern_return_t thread_depress_abort_from_user(thread_t thread) {
+	kprintf("not implemented: thread_depress_abort_from_user()\n");
+	return 0;
+};
+
 
 /*
  * Indicate that the activation should run its
@@ -359,6 +364,11 @@ thread_setstatus(
         return 0;
 }
 
+kern_return_t thread_setstatus_from_user(thread_t thread, int flavor, thread_state_t tstate, mach_msg_type_number_t count) {
+	kprintf("not implemented: thread_setstatus_from_user()\n");
+	return 0;
+};
+
 /*
  *  thread_getstatus:
  *
@@ -373,6 +383,17 @@ thread_getstatus(
 {
         kprintf("not implemented: thread_getstatus()\n");
         return 0;
+}
+
+kern_return_t
+thread_getstatus_to_user(
+	thread_t                thread,
+	int                     flavor,
+	thread_state_t          tstate,
+	mach_msg_type_number_t  *count)
+{
+	kprintf("not implemented: thread_getstatus_to_user()\n");
+	return 0;
 }
 
 /*
@@ -508,3 +529,7 @@ act_set_astmacf(
         kprintf("not implemented: act_set_astmacf()\n");
 }
 #endif
+
+void act_set_ast_reset_pcs(thread_t thread) {
+	kprintf("not implemented: act_set_ast_reset_pcs()\n");
+};

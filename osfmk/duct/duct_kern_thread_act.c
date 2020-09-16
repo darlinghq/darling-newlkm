@@ -178,15 +178,20 @@ thread_info(
 }
 
 kern_return_t
-thread_get_state(
+thread_get_state_internal(
     register thread_t       thread,
     int                     flavor,
     thread_state_t          state,          /* pointer to OUT array */
-    mach_msg_type_number_t  *state_count)   /*IN/OUT*/
+    mach_msg_type_number_t  *state_count,   /*IN/OUT*/
+    boolean_t               to_user)
 {
 	struct task_struct* ltask = thread->linux_task;
 	if (!ltask)
 		return KERN_FAILURE;
+
+	// to_user is used to indicate whether to perform any necessary conversions from kernel to user thread state representations
+	// it currently only does something on ARM64 when the authenticated pointers (`ptrauth_calls`) feature is enabled,
+	// so i think it's safe to say we can ignore it in Darling (even when we get ARM support)
 
 #ifdef __x86_64__
 	switch (flavor)
@@ -338,8 +343,8 @@ thread_get_state(
 			x86_debug_state64_t s64;
 			mach_msg_type_number_t count = x86_DEBUG_STATE64_COUNT;
 
-			kern_return_t kr = thread_get_state(thread, x86_DEBUG_STATE64,
-					(thread_state_t) &s64, &count);
+			kern_return_t kr = thread_get_state_internal(thread, x86_DEBUG_STATE64,
+					(thread_state_t) &s64, &count, FALSE);
 
 			if (kr != KERN_SUCCESS)
 				return kr;
@@ -419,6 +424,26 @@ thread_get_state(
 #else
 	return KERN_FAILURE;
 #endif
+}
+
+kern_return_t
+thread_get_state(
+	thread_t                thread,
+	int                     flavor,
+	thread_state_t          state, /* pointer to OUT array */
+	mach_msg_type_number_t  *state_count) /*IN/OUT*/
+{
+	return thread_get_state_internal(thread, flavor, state, state_count, FALSE);
+}
+
+kern_return_t
+thread_get_state_to_user(
+	thread_t                thread,
+	int                     flavor,
+	thread_state_t          state, /* pointer to OUT array */
+	mach_msg_type_number_t  *state_count) /*IN/OUT*/
+{
+	return thread_get_state_internal(thread, flavor, state, state_count, TRUE);
 }
 
 /*
@@ -868,3 +893,74 @@ thread_resume(thread_t thread)
 
 	return (result);
 }
+
+// <copied from="xnu://6153.61.1/osfmk/kern/thread_act.c">
+
+/*
+ * Internal routine to mark a thread as waiting
+ * right after it has been created.  The caller
+ * is responsible to call wakeup()/thread_wakeup()
+ * or thread_terminate() to get it going.
+ *
+ * Always called with the thread mutex locked.
+ *
+ * Task and task_threads mutexes also held
+ * (so nobody can set the thread running before
+ * this point)
+ *
+ * Converts TH_UNINT wait to THREAD_INTERRUPTIBLE
+ * to allow termination from this point forward.
+ */
+void
+thread_start_in_assert_wait(
+	thread_t                        thread,
+	event_t             event,
+	wait_interrupt_t    interruptible)
+{
+	struct waitq *waitq = assert_wait_queue(event);
+	wait_result_t wait_result;
+	spl_t spl;
+
+	spl = splsched();
+	waitq_lock(waitq);
+
+	/* clear out startup condition (safe because thread not started yet) */
+	thread_lock(thread);
+	assert(!thread->started);
+	assert((thread->state & (TH_WAIT | TH_UNINT)) == (TH_WAIT | TH_UNINT));
+	thread->state &= ~(TH_WAIT | TH_UNINT);
+	thread_unlock(thread);
+
+	/* assert wait interruptibly forever */
+	wait_result = waitq_assert_wait64_locked(waitq, CAST_EVENT64_T(event),
+	    interruptible,
+	    TIMEOUT_URGENCY_SYS_NORMAL,
+	    TIMEOUT_WAIT_FOREVER,
+	    TIMEOUT_NO_LEEWAY,
+	    thread);
+	assert(wait_result == THREAD_WAITING);
+
+	/* mark thread started while we still hold the waitq lock */
+	thread_lock(thread);
+	thread->started = TRUE;
+	thread_unlock(thread);
+
+	waitq_unlock(waitq);
+	splx(spl);
+}
+
+kern_return_t
+act_get_state_to_user(
+	thread_t                                thread,
+	int                                             flavor,
+	thread_state_t                  state,
+	mach_msg_type_number_t  *count)
+{
+	if (thread == current_thread()) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	return thread_get_state_to_user(thread, flavor, state, count);
+}
+
+// </copied>

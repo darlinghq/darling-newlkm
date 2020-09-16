@@ -53,9 +53,6 @@ typedef struct ksyn_waitq_element * ksyn_waitq_element_t;
 #define KWE_THREAD_BROADCAST    4
 
 void
-pth_proc_hashinit(task_t p);
-
-void
 pth_global_hashinit(void);
 
 void

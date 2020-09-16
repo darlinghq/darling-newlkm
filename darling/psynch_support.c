@@ -38,6 +38,8 @@
 #include <kern/thread_call.h>
 #include <kern/kern_types.h>
 #include <kern/ipc_tt.h>
+#include <sys/proc_internal.h>
+#include <sys/user.h>
 #include <duct/duct_kern_printf.h>
 #include <duct/duct_post_xnu.h>
 
@@ -53,14 +55,13 @@
 #include "pthread_internal.h"
 #include "task_registry.h"
 #include "api.h"
+#include "pthread_kext.h"
 
 #undef wait_queue_t
 #define wait_queue_t struct __wait_queue
 #undef kfree
 #undef zfree
 //#undef panic
-#undef current_uthread
-#undef current_proc
 #define zfree(where, what) kfree(what)
 #define FREE(ptr, usage) kfree(ptr)
 #define __pthread_testcancel(x) if (darling_thread_canceled()) return LINUX_EINTR;
@@ -68,11 +69,6 @@
 #define task_threadmax 1024
 #define lck_mtx_destroy(lock, prop)
 
-typedef thread_t uthread_t;
-#define current_uthread() darling_thread_get_current()
-typedef task_t proc_t;
-#define current_proc() darling_task_get_current()
-#define get_bsdthread_info(th) (th)
 #define unix_syscall_return thread_syscall_return
 //typedef kern_return_t wait_result_t;
 #define M_PROC 0
@@ -716,13 +712,8 @@ out:
  */
 
 int
-psynch_mutexwait(__unused proc_t p, struct psynch_mutexwait_args * uap, uint32_t * retval)
+darling_psynch_mutexwait(__unused proc_t p, user_addr_t mutex, uint32_t mgen, uint32_t ugen, uint64_t tid, uint32_t flags, uint32_t* retval)
 {
-	user_addr_t mutex  = uap->mutex;
-	uint32_t mgen = uap->mgen;
-	uint32_t ugen = uap->ugen;
-	uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	ksyn_wait_queue_t kwq;
 	int error=0;
 	int ins_flags, retry;
@@ -739,13 +730,13 @@ psynch_mutexwait(__unused proc_t p, struct psynch_mutexwait_args * uap, uint32_t
 
 	uth = current_uthread();
 
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 	sema_init(&kwe->linux_sem, 0);
-	kwe->kwe_lockseq = uap->mgen;
+	kwe->kwe_lockseq = mgen;
 	kwe->kwe_uth = uth;
 	kwe->kwe_psynchretval = 0;
 	kwe->kwe_kwqqueue = NULL;
-	lockseq = (uap->mgen & PTHRW_COUNT_MASK);
+	lockseq = (mgen & PTHRW_COUNT_MASK);
 
 	if (firstfit  == 0) {
 		ins_flags = SEQFIT;
@@ -857,7 +848,7 @@ psynch_mtxcontinue(void * parameter, wait_result_t result)
 	ksyn_wait_queue_t kwq = (ksyn_wait_queue_t)parameter;
 	ksyn_waitq_element_t kwe;
 
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 
 	switch (result) {
 		case THREAD_TIMED_OUT:
@@ -900,13 +891,8 @@ psynch_mtxcontinue(void * parameter, wait_result_t result)
  *  psynch_mutexdrop: This system call is used for unlock postings on contended psynch mutexes.
   */
 int
-psynch_mutexdrop(__unused proc_t p, struct psynch_mutexdrop_args * uap, uint32_t * retval)
+darling_psynch_mutexdrop(__unused proc_t p, user_addr_t mutex, uint32_t mgen, uint32_t ugen, uint64_t tid, uint32_t flags, uint32_t* retval)
 {
-	user_addr_t mutex  = uap->mutex;
-	uint32_t mgen = uap->mgen;
-	uint32_t ugen = uap->ugen;
-	uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	ksyn_wait_queue_t kwq;
 	uint32_t updateval;	
 	int error=0;
@@ -928,14 +914,10 @@ psynch_mutexdrop(__unused proc_t p, struct psynch_mutexdrop_args * uap, uint32_t
  *  psynch_cvbroad: This system call is used for broadcast posting on blocked waiters of psynch cvars.
  */
 int
-psynch_cvbroad(__unused proc_t p, struct psynch_cvbroad_args * uap, uint32_t * retval)
+darling_psynch_cvbroad(__unused proc_t p, user_addr_t cond, uint64_t cvlsgen, uint64_t cvudgen, uint32_t flags, user_addr_t mutex, uint64_t mugen, uint64_t tid, uint32_t* retval)
 {
-	user_addr_t cond  = uap->cv;
-	uint64_t cvlsgen = uap->cvlsgen;
-	uint64_t cvudgen = uap->cvudgen;
 	uint32_t cgen, cugen, csgen, diffgen;
 	uint32_t uptoseq, fromseq;
-	int flags = uap->flags;
 	ksyn_wait_queue_t ckwq;
 	int error=0;
 	uint32_t updatebits = 0;
@@ -1004,7 +986,7 @@ ksyn_waitq_element_t
 ksyn_queue_find_threadseq(ksyn_wait_queue_t ckwq, __unused ksyn_queue_t kq, thread_t th, uint32_t upto)
 {
 	uthread_t uth = get_bsdthread_info(th);
-	ksyn_waitq_element_t kwe = &uth->uu_kwe;
+	ksyn_waitq_element_t kwe = &uth->uu_save.uus_kwe;
 		
 	if (kwe->kwe_kwqqueue != ckwq ||
 	    is_seqhigher((kwe->kwe_lockseq & PTHRW_COUNT_MASK), upto)) {
@@ -1018,14 +1000,9 @@ ksyn_queue_find_threadseq(ksyn_wait_queue_t ckwq, __unused ksyn_queue_t kq, thre
  *  psynch_cvsignal: This system call is used for signalling the  blocked waiters of  psynch cvars.
  */
 int
-psynch_cvsignal(__unused proc_t p, struct psynch_cvsignal_args * uap, uint32_t * retval)
+darling_psynch_cvsignal(__unused proc_t p, user_addr_t cond, uint64_t cvlsgen, uint32_t cugen, int threadport, user_addr_t mutex, uint64_t mugen, uint64_t tid, uint32_t flags, uint32_t* retval)
 {
-	user_addr_t cond  = uap->cv;
-	uint64_t cvlsgen = uap->cvlsgen;
 	uint32_t cgen, csgen, signalseq, uptoseq;
-	uint32_t cugen = uap->cvugen;
-	int threadport = uap->thread_port;
-	int flags = uap->flags;
 	ksyn_wait_queue_t ckwq = NULL;
 	ksyn_waitq_element_t kwe, nkwe = NULL;
 	ksyn_queue_t kq;
@@ -1193,16 +1170,10 @@ out:
  *  psynch_cvwait: This system call is used for psynch cvar waiters to block in kernel.
  */
 int
-psynch_cvwait(__unused proc_t p, struct psynch_cvwait_args * uap, uint32_t * retval)
+darling_psynch_cvwait(__unused proc_t p, user_addr_t cond, uint64_t cvlsgen, uint32_t cugen, user_addr_t mutex, uint64_t mugen, uint32_t flags, int64_t sec, uint32_t nsec, uint32_t* retval)
 {
-	user_addr_t cond  = uap->cv;
-	uint64_t cvlsgen = uap->cvlsgen;
 	uint32_t cgen, csgen;
-	uint32_t cugen = uap->cvugen;
-	user_addr_t mutex = uap->mutex;
-	uint64_t mugen = uap->mugen;
 	uint32_t mgen, ugen;
-	int flags = uap->flags;
 	ksyn_wait_queue_t kwq, ckwq;
 	int error=0, local_error = 0;
 	uint64_t abstime = 0;
@@ -1262,9 +1233,9 @@ psynch_cvwait(__unused proc_t p, struct psynch_cvwait_args * uap, uint32_t * ret
 		kwq = NULL;
 	}
 
-	if (uap->sec != 0 || (uap->nsec & 0x3fffffff)  != 0) {
-		ts.tv_sec = uap->sec;
-		ts.tv_nsec = (uap->nsec & 0x3fffffff);
+	if (sec != 0 || (nsec & 0x3fffffff)  != 0) {
+		ts.tv_sec = sec;
+		ts.tv_nsec = (nsec & 0x3fffffff);
 		nanoseconds_to_absolutetime((uint64_t)ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec,  &abstime );
 		clock_absolutetime_interval_to_deadline( abstime, &abstime );
 	}
@@ -1348,7 +1319,7 @@ psynch_cvwait(__unused proc_t p, struct psynch_cvwait_args * uap, uint32_t * ret
 	}
 		
 	uth = current_uthread();
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 	sema_init(&kwe->linux_sem, 0);
 	kwe->kwe_kwqqueue = ckwq;
 	kwe->kwe_flags = KWE_THREAD_INWAIT;
@@ -1410,7 +1381,7 @@ psynch_cvcontinue(void * parameter, kern_return_t result)
 #endif /* _PSYNCH_TRACE_ */
 
 	local_error = error;
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 
 	if (error != 0) {
 		ksyn_wqlock(ckwq);
@@ -1478,14 +1449,8 @@ out:
  *  psynch_cvclrprepost: This system call clears pending prepost if present.
  */
 int
-psynch_cvclrprepost(__unused proc_t p, struct psynch_cvclrprepost_args * uap, __unused uint32_t * retval)
+darling_psynch_cvclrprepost(__unused proc_t p, user_addr_t cond, uint32_t cgen, uint32_t cugen, uint32_t csgen, uint32_t pseq, uint32_t preposeq, uint32_t flags, int* retval)
 {
-	user_addr_t cond  = uap->cv;
-	uint32_t cgen = uap->cvgen;
-	uint32_t cugen = uap->cvugen;
-	uint32_t csgen = uap->cvsgen;
-	uint32_t pseq = uap->preposeq;
-	uint32_t flags = uap->flags;
 	int error;
 	ksyn_wait_queue_t ckwq = NULL;
 	struct ksyn_queue  kfreeq;
@@ -1543,14 +1508,8 @@ psynch_cvclrprepost(__unused proc_t p, struct psynch_cvclrprepost_args * uap, __
  *  psynch_rw_rdlock: This system call is used for psync rwlock readers to block.
  */
 int
-psynch_rw_rdlock(__unused proc_t p, struct psynch_rw_rdlock_args * uap, uint32_t * retval)
+darling_psynch_rw_rdlock(__unused proc_t p, user_addr_t rwlock, uint32_t lgen, uint32_t ugen, uint32_t rw_wc, int flags, uint32_t* retval)
 {
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	int error = 0, block;
 	uint32_t lockseq = 0, updatebits = 0, preseq = 0, prerw_wc = 0;
 	ksyn_wait_queue_t kwq;
@@ -1566,7 +1525,7 @@ psynch_rw_rdlock(__unused proc_t p, struct psynch_rw_rdlock_args * uap, uint32_t
 	uth = current_uthread();
 
 	/* preserve the seq number */
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 	sema_init(&kwe->linux_sem, 0);
 	kwe->kwe_lockseq = lgen;
 	kwe->kwe_uth = uth;
@@ -1711,18 +1670,12 @@ out:
  */
 int
 #ifdef NOTYET
-psynch_rw_longrdlock(__unused proc_t p, struct psynch_rw_longrdlock_args * uap,  __unused uint32_t * retval)
+darling_psynch_rw_longrdlock(__unused proc_t p, user_addr_t rwlock, uint32_t lgen, uint32_t ugen, uint32_t rw_wc, int flags, uint32_t* retval)
 #else /* NOTYET */
-psynch_rw_longrdlock(__unused proc_t p, __unused struct psynch_rw_longrdlock_args * uap,  __unused uint32_t * retval)
+darling_psynch_rw_longrdlock(__unused proc_t p, __unused user_addr_t rwlock, __unused uint32_t lgenval, __unused uint32_t ugenval, __unused uint32_t rw_wc, __unused int flags, __unused uint32_t* retval)
 #endif /* NOTYET */
 {
 #ifdef NOTYET
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	int isinit = lgen & PTHRW_RWL_INIT;
 	uint32_t returnbits=0;
 	ksyn_waitq_element_t kwe;
@@ -1737,7 +1690,7 @@ psynch_rw_longrdlock(__unused proc_t p, __unused struct psynch_rw_longrdlock_arg
 	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWLRDLOCK | DBG_FUNC_START, (uint32_t)rwlock, lgen, ugen, rw_wc, 0);
 #endif /* _PSYNCH_TRACE_ */
 	uth = current_uthread();
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 	kwe->kwe_lockseq = lgen;
 	kwe->kwe_uth = uth;
 	kwe->kwe_psynchretval = 0;
@@ -1861,14 +1814,8 @@ out:
  *  psynch_rw_wrlock: This system call is used for psync rwlock writers to block.
  */
 int
-psynch_rw_wrlock(__unused proc_t p, struct psynch_rw_wrlock_args * uap, uint32_t * retval)
+darling_psynch_rw_wrlock(__unused proc_t p, user_addr_t rwlock, uint32_t lgen, uint32_t ugen, uint32_t rw_wc, int flags, uint32_t* retval)
 {
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	int block;
 	ksyn_wait_queue_t kwq;
 	int error=0;
@@ -1884,7 +1831,7 @@ psynch_rw_wrlock(__unused proc_t p, struct psynch_rw_wrlock_args * uap, uint32_t
 #endif /* _PSYNCH_TRACE_ */
 	uth = current_uthread();
 
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 	sema_init(&kwe->linux_sem, 0);
 	kwe->kwe_lockseq = lgen;
 	kwe->kwe_uth = uth;
@@ -2012,18 +1959,12 @@ out1:
  */
 int
 #ifdef NOTYET
-psynch_rw_yieldwrlock(__unused proc_t p, __unused struct  psynch_rw_yieldwrlock_args * uap, __unused uint32_t * retval)
+darling_psynch_rw_yieldwrlock(__unused proc_t p, user_addr_t rwlock, uint32_t lgen, uint32_t ugen, uint32_t rw_wc, int flags, uint32_t* retval)
 #else /* NOTYET */
-psynch_rw_yieldwrlock(__unused proc_t p, __unused struct  __unused psynch_rw_yieldwrlock_args * uap, __unused uint32_t * retval)
+darling_psynch_rw_yieldwrlock(__unused proc_t p, __unused user_addr_t rwlock, __unused uint32_t lgen, __unused uint32_t ugen, __unused uint32_t rw_wc, __unused int flags, __unused uint32_t* retval)
 #endif /* NOTYET */
 {
 #ifdef NOTYET
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	int block;
 	ksyn_wait_queue_t kwq;
 	int error=0;
@@ -2039,7 +1980,7 @@ psynch_rw_yieldwrlock(__unused proc_t p, __unused struct  __unused psynch_rw_yie
 	uint32_t lockseq = 0, updatebits = 0, preseq = 0, prerw_wc = 0;
 
 	uth = current_uthread();
-	kwe = &uth->uu_kwe;
+	kwe = &uth->uu_save.uus_kwe;
 	kwe->kwe_lockseq = lgen;
 	kwe->kwe_uth = uth;
 	kwe->kwe_psynchretval = 0;
@@ -2158,290 +2099,15 @@ out:
 #endif /* NOTYET */
 }
 
-#if NOTYET
-/*
- *  psynch_rw_downgrade: This system call is used for wakeup blocked readers who are eligible to run due to downgrade.
- */
-int
-psynch_rw_downgrade(__unused proc_t p, struct psynch_rw_downgrade_args * uap, __unused int * retval)
-{
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
-	uint32_t count = 0;
-	int isinit = lgen & PTHRW_RWL_INIT;
-	ksyn_wait_queue_t kwq;
-	int error=0;
-	uthread_t uth;
-	uint32_t curgen = 0;
-
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWDOWNGRADE | DBG_FUNC_START, (uint32_t)rwlock, lgen, ugen, rw_wc, 0);
-#endif /* _PSYNCH_TRACE_ */
-	uth = current_uthread();
-
-	curgen = (lgen & PTHRW_COUNT_MASK);
-
-	error = ksyn_wqfind(rwlock, lgen, ugen, rw_wc, TID_ZERO, flags, (KSYN_WQTYPE_INDROP | KSYN_WQTYPE_RWLOCK), &kwq);
-	if (error != 0)  {
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWDOWNGRADE | DBG_FUNC_END, (uint32_t)rwlock, 1, 0, error, 0);
-#endif /* _PSYNCH_TRACE_ */
-		return(error);
-	}
-	
-	ksyn_wqlock(kwq);
-	
-	if ((lgen & PTHRW_RWL_INIT) != 0) {
-		lgen &= ~PTHRW_RWL_INIT;
-		if ((kwq->kw_kflags & KSYN_KWF_INITCLEARED) == 0){
-			CLEAR_REINIT_BITS(kwq);
-			kwq->kw_kflags |= KSYN_KWF_INITCLEARED;
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_CVSEQ | DBG_FUNC_NONE, lgen, ugen, rw_wc, 1, 0);
-#endif /* _PSYNCH_TRACE_ */
-		}
-		isinit = 1;
-	} 
-
-	/* if lastunlock seq is set, ensure the current one is not lower than that, as it would be spurious */
-	if ((kwq->kw_lastunlockseq != PTHRW_RWL_INIT) && (is_seqlower(ugen, kwq->kw_lastunlockseq)!= 0)) {
-		/* spurious  updatebits?? */
-		error = 0;
-		goto out;
-	}
-
-
-
-	/* If L-U != num of waiters, then it needs to be preposted or spr */
-	diff = find_diff(lgen, ugen);
-	/* take count of  the downgrade thread itself */
-	diff--;
-
-
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWUNLOCK | DBG_FUNC_NONE, (uint32_t)rwlock, 1, kwq->kw_inqueue, curgen, 0);
-#endif /* _PSYNCH_TRACE_ */
-	if (find_seq_till(kwq, curgen, diff, &count) == 0) {
-		if (count < (uint32_t)diff)
-			goto prepost;
-	}
-
-	/* no prepost and all threads are in place, reset the bit */
-	if ((isinit != 0) && ((kwq->kw_kflags & KSYN_KWF_INITCLEARED) != 0)){
-		kwq->kw_kflags &= ~KSYN_KWF_INITCLEARED;
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_CVSEQ | DBG_FUNC_NONE, lgen, ugen, rw_wc, 0, 0);
-#endif /* _PSYNCH_TRACE_ */
-	}
-
-	/* can handle unlock now */
-		
-	CLEAR_PREPOST_BITS(kwq);
-
-dounlock:		
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWDOWNGRADE | DBG_FUNC_NONE, (uint32_t)rwlock, 3, 0, 0, 0);
-#endif /* _PSYNCH_TRACE_ */
-	error = kwq_handle_downgrade(kwq, lgen, 0, 0, NULL);
-
-#if __TESTPANICS__
-	if (error != 0)
-		panic("psynch_rw_downgrade: failed to wakeup\n");
-#endif /* __TESTPANICS__ */
-
-out:
-	ksyn_wqunlock(kwq);
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWDOWNGRADE | DBG_FUNC_END, (uint32_t)rwlock, 0, 0, error, 0);
-#endif /* _PSYNCH_TRACE_ */
-	ksyn_wqrelease(kwq, NULL, 0, (KSYN_WQTYPE_INDROP | KSYN_WQTYPE_RWLOCK)); 
-
-	return(error);
-		
-prepost:
-	kwq->kw_pre_rwwc = (rw_wc - count);
-	kwq->kw_pre_lockseq = lgen;
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWDOWNGRADE | DBG_FUNC_NONE, (uint32_t)rwlock, 1, kwq->kw_pre_rwwc, kwq->kw_pre_lockseq, 0);
-#endif /* _PSYNCH_TRACE_ */
-	error = 0;
-	goto out;
-}
-
-
-/*
- *  psynch_rw_upgrade: This system call is used by an reader to block waiting for upgrade to be granted.
- */
-int
-psynch_rw_upgrade(__unused proc_t p, struct psynch_rw_upgrade_args * uap, uint32_t * retval)
-{
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
-	int block;
-	ksyn_wait_queue_t kwq;
-	int error=0;
-	uthread_t uth;
-	uint32_t lockseq = 0, updatebits = 0, preseq = 0;
-	int isinit = lgen & PTHRW_RWL_INIT;
-	ksyn_waitq_element_t kwe;
-	kern_return_t kret;
-
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWUPGRADE | DBG_FUNC_START, (uint32_t)rwlock, lgen, ugen, rw_wc, 0);
-#endif /* _PSYNCH_TRACE_ */
-	uth = current_uthread();
-	kwe = &uth->uu_kwe;
-	kwe->kwe_lockseq = lgen;
-	kwe->kwe_uth = uth;
-	kwe->kwe_psynchretval = 0;
-	kwe->kwe_kwqqueue = NULL;
-	lockseq = (lgen & PTHRW_COUNT_MASK);
-	
-	error = ksyn_wqfind(rwlock, lgen, ugen, rw_wc, TID_ZERO, flags, (KSYN_WQTYPE_INWAIT | KSYN_WQTYPE_RWLOCK), &kwq);
-	if (error != 0)  {
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWUPGRADE | DBG_FUNC_END, (uint32_t)rwlock, 1, 0, error, 0);
-#endif /* _PSYNCH_TRACE_ */
-		return(error);
-	}
-	
-	ksyn_wqlock(kwq);
-
-	if (isinit != 0) {
-		lgen &= ~PTHRW_RWL_INIT;
-		if ((kwq->kw_kflags & KSYN_KWF_INITCLEARED) == 0) {
-			/* first to notice the reset of the lock, clear preposts */
-                	CLEAR_REINIT_BITS(kwq);
-			kwq->kw_kflags |= KSYN_KWF_INITCLEARED;
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_CVSEQ | DBG_FUNC_NONE, lgen, ugen, rw_wc, 1, 0);
-#endif /* _PSYNCH_TRACE_ */
-		}
-	}
-
-	/* handle first the missed wakeups */
-	if ((kwq->kw_pre_intrcount != 0) && 
-		((kwq->kw_pre_intrtype == PTH_RW_TYPE_READ) || (kwq->kw_pre_intrtype == PTH_RW_TYPE_LREAD)) && 
-		(is_seqlower_eq(lockseq, (kwq->kw_pre_intrseq & PTHRW_COUNT_MASK)) != 0)) {
-
-		kwq->kw_pre_intrcount--;
-		kwe->kwe_psynchretval = kwq->kw_pre_intrretbits;
-		if (kwq->kw_pre_intrcount==0) 
-			CLEAR_INTR_PREPOST_BITS(kwq);	
-		ksyn_wqunlock(kwq);
-		goto out;
-	}
-
-	if ((kwq->kw_pre_rwwc != 0) && (is_seqlower_eq(lockseq, (kwq->kw_pre_lockseq & PTHRW_COUNT_MASK)) != 0)) {
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWRDLOCK | DBG_FUNC_NONE, (uint32_t)rwlock, 2, kwq->kw_pre_rwwc, kwq->kw_pre_lockseq, 0);
-#endif /* _PSYNCH_TRACE_ */
-		kwq->kw_pre_rwwc--;
-		if (kwq->kw_pre_rwwc == 0) {
-			preseq = kwq->kw_pre_lockseq;
-			prerw_wc = kwq->kw_pre_sseq;
-			CLEAR_PREPOST_BITS(kwq);
-			if ((kwq->kw_kflags & KSYN_KWF_INITCLEARED) != 0){
-				kwq->kw_kflags &= ~KSYN_KWF_INITCLEARED;
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_CVSEQ | DBG_FUNC_NONE, lgen, ugen, rw_wc, 0, 0);
-#endif /* _PSYNCH_TRACE_ */
-			}
-			error = kwq_handle_unlock(kwq, preseq, prerw_wc, &updatebits, (KW_UNLOCK_PREPOST_UPGRADE|KW_UNLOCK_PREPOST), &block, lgen);
-#if __TESTPANICS__
-			if (error != 0)
-				panic("rw_rdlock: kwq_handle_unlock failed %d\n",error);
-#endif /* __TESTPANICS__ */
-			if (block == 0) {
-				ksyn_wqunlock(kwq);
-				goto out;
-			}
-			/* insert to q and proceed as ususal */
-		}
-	}
-	
-
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWUPGRADE | DBG_FUNC_NONE, (uint32_t)rwlock, 3, 0, 0, 0);
-#endif /* _PSYNCH_TRACE_ */
-	error = ksyn_queue_insert(kwq, &kwq->kw_ksynqueues[KSYN_QUEUE_UPGRADE], lgen, uth, kwe, SEQFIT);
-#if __TESTPANICS__
-	if (error != 0)
-		panic("psynch_rw_upgrade: failed to enqueue\n");
-#endif /* __TESTPANICS__ */
-
-
-	kret = ksyn_block_thread_locked(kwq, (uint64_t)0, kwe, 0, THREAD_CONTINUE_NULL, NULL);
-	/* drops the lock */
-	switch (kret) {
-		case THREAD_TIMED_OUT:
-			error  = ETIMEDOUT;
-			break;
-		case THREAD_INTERRUPTED:
-			error  = EINTR;
-			break;
-		default:
-			error = 0;
-			break;
-	}
-	
-out:
-	if (error != 0) {
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWUPGRADE | DBG_FUNC_NONE, (uint32_t)rwlock, 4, error, 0, 0);
-#endif /* _PSYNCH_TRACE_ */
-		ksyn_wqlock(kwq);
-		if (kwe->kwe_kwqqueue != NULL)
-			ksyn_queue_removeitem(kwq, &kwq->kw_ksynqueues[KSYN_QUEUE_UPGRADE], kwe);
-		ksyn_wqunlock(kwq);
-	} else {
-		/* update bits */
-		*retval = kwe->kwe_psynchretval;
-	}
-
-	ksyn_wqrelease(kwq, NULL, 0, (KSYN_WQTYPE_INWAIT | KSYN_WQTYPE_RWLOCK)); 
-#if _PSYNCH_TRACE_
-	__PTHREAD_TRACE_DEBUG(_PSYNCH_TRACE_RWUPGRADE | DBG_FUNC_END, (uint32_t)rwlock, 1, 0, error, 0);
-#endif /* _PSYNCH_TRACE_ */
-
-	return(error);
-}
-
-#else /* NOTYET */
-int
-psynch_rw_upgrade(__unused proc_t p, __unused struct psynch_rw_upgrade_args * uap, __unused uint32_t * retval)
-{
-	return(0);
-}
-int
-psynch_rw_downgrade(__unused proc_t p, __unused struct psynch_rw_downgrade_args * uap, __unused int * retval)
-{
-	return(0);
-}
-#endif /* NOTYET */
 /*
  *  psynch_rw_unlock: This system call is used for unlock state postings. This will grant appropriate
  *			reader/writer variety lock.
  */
 
 int
-psynch_rw_unlock(__unused proc_t p, struct psynch_rw_unlock_args  * uap, uint32_t * retval)
+darling_psynch_rw_unlock(__unused proc_t p, user_addr_t rwlock, uint32_t lgen, uint32_t ugen, uint32_t rw_wc, int flags, uint32_t* retval)
 {
-	user_addr_t rwlock  = uap->rwlock;
-	uint32_t lgen = uap->lgenval;
-	uint32_t ugen = uap->ugenval;
-	uint32_t rw_wc = uap->rw_wc;
 	uint32_t curgen;
-	//uint64_t tid = uap->tid;
-	int flags = uap->flags;
 	uthread_t uth;
 	ksyn_wait_queue_t kwq;
 	uint32_t updatebits = 0;
@@ -2552,17 +2218,6 @@ prepost:
 	goto out;
 }
 
-
-/*
- *  psynch_rw_unlock2: This system call is used to wakeup pending readers when  unlock grant frm kernel
- *			  to new reader arrival races
- */
-int
-psynch_rw_unlock2(__unused proc_t p, __unused struct psynch_rw_unlock2_args  * uap, __unused uint32_t * retval)
-{
-	return(LINUX_ENOTSUPP);
-}
-
 // From kern_subr.c
 /*
  * General routine to allocate a hash table.
@@ -2646,7 +2301,7 @@ pth_global_hashexit()
 }
 
 void
-pth_proc_hashinit(task_t p)
+darling_pth_proc_hashinit(proc_t p)
 {
 	p->p_pthhash  = hashinit(PTH_HASHSIZE, M_PROC, &pthhash);
 	if (p->p_pthhash == NULL)
@@ -2707,7 +2362,7 @@ ksyn_wq_hash_lookup(user_addr_t mutex, proc_t p, int flags, uint64_t object, uin
 }
 
 void
-pth_proc_hashdelete(proc_t p)
+darling_pth_proc_hashdelete(proc_t p)
 {
 	struct pthhashhead * hashptr;
 	ksyn_wait_queue_t kwq;
@@ -3628,7 +3283,7 @@ kwq_handle_unlock(ksyn_wait_queue_t kwq, uint32_t mgen,  uint32_t rw_wc, uint32_
 			if (curthreturns != 0) {
 				block = 0;
 				uth = current_uthread();
-				kwe = &uth->uu_kwe;
+				kwe = &uth->uu_save.uus_kwe;
 				kwe->kwe_psynchretval = updatebits;
 			}
 			
@@ -3669,7 +3324,7 @@ kwq_handle_unlock(ksyn_wait_queue_t kwq, uint32_t mgen,  uint32_t rw_wc, uint32_
 					updatebits |= PTH_RWL_YBIT;
 				th = preth;
 				uth = get_bsdthread_info(th);
-				kwe = &uth->uu_kwe;
+				kwe = &uth->uu_save.uus_kwe;
 				kwe->kwe_psynchretval = updatebits;
 			}  else {
 				/*  we are not granting writelock to the preposting thread */
@@ -3725,7 +3380,7 @@ kwq_handle_unlock(ksyn_wait_queue_t kwq, uint32_t mgen,  uint32_t rw_wc, uint32_
 					updatebits += (numneeded << PTHRW_COUNT_SHIFT);
 					if (((flags & KW_UNLOCK_PREPOST_READLOCK) != 0) && (is_seqlower(premgen, low_writer) != 0)) {
 						uth = current_uthread();
-						kwe = &uth->uu_kwe;
+						kwe = &uth->uu_save.uus_kwe;
 						/* add one more */
 						updatebits += PTHRW_INC;
 						kwe->kwe_psynchretval = updatebits;
@@ -3752,7 +3407,7 @@ kwq_handle_unlock(ksyn_wait_queue_t kwq, uint32_t mgen,  uint32_t rw_wc, uint32_
 					updatebits += (numneeded << PTHRW_COUNT_SHIFT);
 					if ((prepost != 0) &&  ((flags & KW_UNLOCK_PREPOST_READLOCK) != 0)) {
 						uth = current_uthread();
-						kwe = &uth->uu_kwe;
+						kwe = &uth->uu_save.uus_kwe;
 						updatebits += PTHRW_INC;
 						kwe->kwe_psynchretval = updatebits;
 						block = 0;
@@ -3788,7 +3443,7 @@ yielditis:
 
 					th = preth;
 					uth = get_bsdthread_info(th);
-					kwe = &uth->uu_kwe;
+					kwe = &uth->uu_save.uus_kwe;
 					kwe->kwe_psynchretval = updatebits;
 				}  else {
 					/*  we are granting yield writelock to some other thread */

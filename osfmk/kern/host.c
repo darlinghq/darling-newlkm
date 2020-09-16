@@ -1478,11 +1478,13 @@ host_get_special_port(host_priv_t host_priv, __unused int node, int id, ipc_port
 
 	task_t task = current_task();
 	if (task && task_is_driver(task) && id > HOST_MAX_SPECIAL_KERNEL_PORT) {
+#ifndef __DARLING__
 		/* allow HID drivers to get the sysdiagnose port for keychord handling */
 		if (IOTaskHasEntitlement(task, kIODriverKitHIDFamilyEventServiceEntitlementKey) &&
 		    id == HOST_SYSDIAGNOSE_PORT) {
 			goto get_special_port;
 		}
+#endif
 		return KERN_NO_ACCESS;
 	}
 

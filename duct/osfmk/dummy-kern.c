@@ -124,15 +124,6 @@ machine_callstack(natural_t *buf,
         kprintf("not implemented: machine_callstack()\n");
 }
 
-// osfmk/kern/task_policy.c
-
-int
-proc_pid(void * proc)
-{
-        kprintf("not implemented: proc_pid()\n");
-        return 0;
-}
-
 // osfmk/kern/sync_sema.c
 
 // void

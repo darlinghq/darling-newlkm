@@ -45,8 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* WC - todo shouldn't be here */
 #define fsid_t              linux_fsid_t
 
-#undef asm_inline // shut up a compiler warning
-#define asm_inline asm
+#include <duct/compiler/clang/asm-inline.h>
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -105,6 +104,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/eventfd.h>
 #include <linux/bitmap.h>
 #include <linux/uuid.h>
+#include <linux/bit_spinlock.h>
 
 #include <linux/cpumask.h>
 #include <linux/version.h>
@@ -472,8 +472,29 @@ static inline void linux_spin_unlock(spinlock_t* l)
 #undef LOCK_NB
 #undef LOCK_UN
 
-// for xnu/sys/queue.h
+// for xnu/bsd/sys/queue.h
 #undef LIST_HEAD
 
+// for xnu/osfmk/kern/simple_lock.h
+
+// `...` because there's a parameter that might or might not be enabled depending on `LOCK_STATS`,
+// and we don't use it anyways, so instead of `#ifdef`ing it, this is easier
+
+#define hw_lock_bit(ptr, bit, ...)            	bit_spin_lock(bit, ptr)
+#define hw_lock_bit_nopreempt(ptr, bit, ...)  	hw_lock_bit(ptr, bit)
+#define hw_lock_bit_try(ptr, bit, ...)        	bit_spin_trylock(bit, ptr)
+// TODO: actually make it timeout (although this function isn't really used in any code that we use)
+#define hw_lock_bit_to(ptr, bit, to, ...)     	(bit_spin_lock(bit, ptr), 1)
+#define hw_unlock_bit(ptr, bit)               	bit_spin_unlock(bit, ptr)
+#define hw_unlock_bit_nopreempt(ptr, bit)     	hw_unlock_bit(ptr, bit)
+
+// for xnu/bsd/net/if_var.h
+#undef _NET_IF_VAR_H_
+
+// for xnu/bsd/net/if.h
+#undef ifr_name
+
+// prevent xnu/bsd/sys/_ucontext.h from being included
+#define _STRUCT_UCONTEXT         struct ucontext
 
 #endif // DUCT_H

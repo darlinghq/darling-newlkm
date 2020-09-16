@@ -222,6 +222,16 @@ processor_exit(
         return KERN_FAILURE;
 }
 
+kern_return_t processor_start_from_user(processor_t processor) {
+	kprintf("not implemented: processor_start_from_user()\n");
+	return KERN_FAILURE;
+};
+
+kern_return_t processor_exit_from_user(processor_t processor) {
+	kprintf("not implemented: processor_exit_from_user()\n");
+	return KERN_FAILURE;
+};
+
 kern_return_t
 processor_control(
     processor_t     processor,

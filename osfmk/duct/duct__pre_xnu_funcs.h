@@ -37,10 +37,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define cpumask_t compat_cpumask_t
 
-// for compat_proc
-#define current_uthread         compat_current_uthread
-#define current_proc            compat_current_proc
-
 #define hashinit                compat_hashinit
 
 #define thread_block            compat_thread_block
@@ -66,8 +62,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // for xnu/osfmk/kern/kalloc.h
 #undef kfree
 
-#define kalloc                  duct_kalloc
-#define kalloc_noblock          duct_kalloc_noblock
+#define kalloc_canblock         duct_kalloc_canblock
 #define kfree                   duct_kfree
 
 

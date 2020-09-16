@@ -197,10 +197,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // for xnu/osfmk/kern/processor.h
 #define processor           xnu_processor
 
-
-// for xnu/osfmk/vm/vm_user.h
-#define mach_vm_allocate        duct_mach_vm_allocate
-
 // for xnu/osfmk/vm/vm_kern.h
 #define copyinmap               duct_copyinmap
 #define copyoutmap              duct_copyoutmap

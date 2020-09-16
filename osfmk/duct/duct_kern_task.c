@@ -60,6 +60,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/sched/cputime.h>
 #endif
 
+#include <darling/procs.h>
+
 task_t            kernel_task;
 zone_t            task_zone;
 lck_attr_t      task_lck_attr;
@@ -119,9 +121,6 @@ void duct_task_init (void)
 
 }
 
-extern void pth_proc_hashinit(task_t t);
-extern void pth_proc_hashdelete(task_t t);
-
 void duct_task_destroy(task_t task)
 {
         if (task == TASK_NULL) {
@@ -131,10 +130,12 @@ void duct_task_destroy(task_t task)
         if (task->vchroot_path)
             free_page((unsigned long) task->vchroot_path);
 
+        if (task->bsd_info) {
+          darling_proc_destroy(task->bsd_info);
+        }
+
         semaphore_destroy_all(task);
         ipc_space_terminate (task->itk_space);
-        if (task->map != NULL)
-            pth_proc_hashdelete(task);
         task_deallocate(task);
 
 }
@@ -535,9 +536,41 @@ task_info(
 	return error;
 }
 
+// <copied from="xnu://6153.61.1/osfmk/kern/task.c">
+
+kern_return_t
+task_info_from_user(
+	mach_port_t             task_port,
+	task_flavor_t           flavor,
+	task_info_t             task_info_out,
+	mach_msg_type_number_t  *task_info_count)
+{
+	task_t task;
+	kern_return_t ret;
+
+	if (flavor == TASK_DYLD_INFO) {
+		task = convert_port_to_task(task_port);
+	} else {
+		task = convert_port_to_task_name(task_port);
+	}
+
+	ret = task_info(task, flavor, task_info_out, task_info_count);
+
+	task_deallocate(task);
+
+	return ret;
+}
+
+// </copied>
+
 void task_suspension_token_deallocate(task_suspension_token_t token)
 {
     task_deallocate((task_t) token);
+}
+
+bool task_is_driver(task_t task) {
+	kprintf("not implemented: task_is_driver\n");
+	return FALSE;
 }
 
 boolean_t task_is_app(task_t t)
@@ -1121,4 +1154,150 @@ task_register_dyld_get_process_state(__unused task_t task,
 	return KERN_NOT_SUPPORTED;
 }
 
+// <copied from="xnu://6153.61.1/osfmk/kern/task.c" modified="true">
 
+/*
+ *	task_watchports_deallocate:
+ *		Deallocate task watchport struct.
+ *
+ *	Conditions:
+ *		Nothing locked.
+ */
+static void
+task_watchports_deallocate(
+	struct task_watchports *watchports)
+{
+	uint32_t portwatch_count = watchports->tw_elem_array_count;
+
+	task_deallocate(watchports->tw_task);
+	thread_deallocate(watchports->tw_thread);
+	kfree(watchports, sizeof(struct task_watchports) + portwatch_count * sizeof(struct task_watchport_elem));
+}
+
+/*
+ *	task_watchport_elem_deallocate:
+ *		Deallocate task watchport element and release its ref on task_watchport.
+ *
+ *	Conditions:
+ *		Nothing locked.
+ */
+void
+task_watchport_elem_deallocate(
+	struct task_watchport_elem *watchport_elem)
+{
+	os_ref_count_t refs = TASK_MAX_WATCHPORT_COUNT;
+	task_t task = watchport_elem->twe_task;
+	struct task_watchports *watchports = NULL;
+	ipc_port_t port = NULL;
+
+	assert(task != NULL);
+
+	/* Take the space lock to modify the elememt */
+	is_write_lock(task->itk_space);
+
+	watchports = task->watchports;
+	assert(watchports != NULL);
+
+	port = watchport_elem->twe_port;
+	assert(port != NULL);
+
+	task_watchport_elem_clear(watchport_elem);
+	refs = task_watchports_release(watchports);
+
+	if (refs == 0) {
+		task->watchports = NULL;
+	}
+
+	is_write_unlock(task->itk_space);
+
+	ip_release(port);
+	if (refs == 0) {
+		task_watchports_deallocate(watchports);
+	}
+}
+
+boolean_t
+task_is_exec_copy(task_t task)
+{
+	return task_is_exec_copy_internal(task);
+}
+
+void
+task_inspect_deallocate(
+	task_inspect_t          task_inspect)
+{
+	return task_deallocate((task_t)task_inspect);
+}
+
+kern_return_t
+task_get_exc_guard_behavior(
+	task_t task,
+	task_exc_guard_behavior_t *behaviorp)
+{
+	if (task == TASK_NULL) {
+		return KERN_INVALID_TASK;
+	}
+	*behaviorp = task->task_exc_guard;
+	return KERN_SUCCESS;
+}
+
+int
+pid_from_task(task_t task)
+{
+	int pid = -1;
+
+	if (task->bsd_info) {
+		pid = proc_pid(task->bsd_info);
+	} else {
+		pid = task_pid(task);
+	}
+
+	return pid;
+}
+
+/*
+ * Set or clear per-task TF_CA_CLIENT_WI flag according to specified argument.
+ * Returns "false" if flag is already set, and "true" in other cases.
+ */
+bool
+task_set_ca_client_wi(
+	task_t task,
+	boolean_t set_or_clear)
+{
+	bool ret = true;
+	task_lock(task);
+	if (set_or_clear) {
+		/* Tasks can have only one CA_CLIENT work interval */
+		if (task->t_flags & TF_CA_CLIENT_WI) {
+			ret = false;
+		} else {
+			task->t_flags |= TF_CA_CLIENT_WI;
+		}
+	} else {
+		task->t_flags &= ~TF_CA_CLIENT_WI;
+	}
+	task_unlock(task);
+	return ret;
+}
+
+#ifndef TASK_EXC_GUARD_ALL
+/* Temporary define until two branches are merged */
+#define TASK_EXC_GUARD_ALL (TASK_EXC_GUARD_VM_ALL | 0xf0)
+#endif
+
+kern_return_t
+task_set_exc_guard_behavior(
+	task_t task,
+	task_exc_guard_behavior_t behavior)
+{
+	if (task == TASK_NULL) {
+		return KERN_INVALID_TASK;
+	}
+	if (behavior & ~TASK_EXC_GUARD_ALL) {
+		return KERN_INVALID_VALUE;
+	}
+	task->task_exc_guard = behavior;
+	return KERN_SUCCESS;
+}
+
+// </copied>

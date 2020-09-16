@@ -87,10 +87,12 @@ ux_exception(int                        exception,
 {
 	int machine_signal = 0;
 
+#ifndef __DARLING__
 	/* Try machine-dependent translation first. */
 	if ((machine_signal = machine_exception(exception, code, subcode)) != 0) {
 		return machine_signal;
 	}
+#endif
 
 	switch (exception) {
 	case EXC_BAD_ACCESS:

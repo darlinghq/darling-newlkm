@@ -863,7 +863,7 @@ extern void                             lck_mtx_assert(
 	lck_mtx_t               *lck,
 	unsigned int    type);
 
-#if MACH_ASSERT
+#if MACH_ASSERT && !defined(__DARLING__)
 #define LCK_MTX_ASSERT(lck, type) lck_mtx_assert((lck),(type))
 #define LCK_SPIN_ASSERT(lck, type) lck_spin_assert((lck),(type))
 #define LCK_RW_ASSERT(lck, type) lck_rw_assert((lck),(type))
@@ -873,7 +873,7 @@ extern void                             lck_mtx_assert(
 #define LCK_RW_ASSERT(lck, type)
 #endif /* MACH_ASSERT */
 
-#if DEBUG
+#if DEBUG  && !defined(__DARLING__)
 #define LCK_MTX_ASSERT_DEBUG(lck, type) lck_mtx_assert((lck),(type))
 #define LCK_SPIN_ASSERT_DEBUG(lck, type) lck_spin_assert((lck),(type))
 #define LCK_RW_ASSERT_DEBUG(lck, type) lck_rw_assert((lck),(type))

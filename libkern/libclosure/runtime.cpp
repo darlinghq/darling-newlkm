@@ -7,6 +7,10 @@
  * @APPLE_LLVM_LICENSE_HEADER@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
 
 #ifndef KERNEL
 
@@ -29,6 +33,11 @@
 #include <machine/atomic.h>
 #include <string.h>
 #include <stdint.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
+
 #ifndef os_assumes
 #define os_assumes(_x) (_x)
 #endif

@@ -1,7 +1,13 @@
 #ifndef _PSYNCH_SUPPORT_H
 #define _PSYNCH_SUPPORT_H
 
-#define proc_t task_t
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#include <kern/task.h>
+#include <sys/proc.h>
+#include <duct/duct_post_xnu.h>
+
+// these are actually defined in `pthread_shims.c` now, but there are no prototypes defined for them anywhere else
 int
 psynch_mutexwait(proc_t p, struct psynch_mutexwait_args * uap, uint32_t * retval);
 int
@@ -20,12 +26,6 @@ int
 psynch_rw_wrlock(proc_t p, struct psynch_rw_wrlock_args * uap, uint32_t * retval);
 int
 psynch_rw_unlock(proc_t p, struct psynch_rw_unlock_args  * uap, uint32_t * retval);
-
-void
-pth_proc_hashinit(task_t p);
-
-void
-pth_proc_hashdelete(task_t p);
 
 void
 psynch_init(void);

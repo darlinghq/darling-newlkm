@@ -38,6 +38,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_vm_user.h"
 #include "duct_kern_printf.h"
 #include <ipc/ipc_port.h>
+#include <mach/mach_vm_server.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,10,0)
 #include "access_process_vm.h"
@@ -57,7 +58,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #undef vfree
 #undef kfree
 
-kern_return_t duct_mach_vm_allocate (vm_map_t map, mach_vm_offset_t * addr, mach_vm_size_t size, int flags)
+kern_return_t
+mach_vm_allocate_external(
+	vm_map_t                map,
+	mach_vm_offset_t        *addr,
+	mach_vm_size_t          size,
+	int                     flags)
+{
+	vm_tag_t tag;
+	VM_GET_FLAGS_ALIAS(flags, tag);
+	return mach_vm_allocate_kernel(map, addr, size, flags, tag);
+};
+
+kern_return_t mach_vm_allocate_kernel(vm_map_t map, mach_vm_offset_t * addr, mach_vm_size_t size, int flags, vm_tag_t tag)
 {
         // assert (current_map () == map);
         vm_map_offset_t map_addr;
@@ -475,12 +488,13 @@ struct remap_data
 void mm_trace_rss_stat(struct mm_struct *mm, int member, long count) {}
 
 kern_return_t
-mach_vm_remap(
+mach_vm_remap_kernel(
 	vm_map_t		target_map,
 	mach_vm_offset_t	*address,
 	mach_vm_size_t	size,
 	mach_vm_offset_t	mask,
 	int			flags,
+	vm_tag_t tag,
 	vm_map_t		src_map,
 	mach_vm_offset_t	memory_address,
 	boolean_t		copy,
@@ -644,3 +658,61 @@ static int remap_mmap(struct file *filp, struct vm_area_struct *vma)
 	return 0;
 }
 
+kern_return_t
+mach_vm_remap_external(
+	vm_map_t         target_map,
+	mach_vm_offset_t *address,
+	mach_vm_size_t   size,
+	mach_vm_offset_t mask,
+	int              flags,
+	vm_map_t         src_map,
+	mach_vm_offset_t memory_address,
+	boolean_t        copy,
+	vm_prot_t        *cur_protection,
+	vm_prot_t        *max_protection,
+	vm_inherit_t     inheritance)
+{
+	vm_tag_t tag;
+	VM_GET_FLAGS_ALIAS(flags, tag);
+	return mach_vm_remap_kernel(target_map, address, size, mask, flags, tag, src_map, memory_address, copy, cur_protection, max_protection, inheritance);
+}
+
+// <copied from="xnu://6153.61.1/osfmk/vm/vm_user.c">
+
+kern_return_t
+mach_vm_map(
+	vm_map_t                target_map,
+	mach_vm_offset_t        *address,
+	mach_vm_size_t  initial_size,
+	mach_vm_offset_t        mask,
+	int                     flags,
+	ipc_port_t              port,
+	vm_object_offset_t      offset,
+	boolean_t               copy,
+	vm_prot_t               cur_protection,
+	vm_prot_t               max_protection,
+	vm_inherit_t            inheritance)
+{
+	return mach_vm_map_external(target_map, address, initial_size, mask, flags, port,
+	           offset, copy, cur_protection, max_protection, inheritance);
+}
+
+kern_return_t
+mach_vm_remap(
+	vm_map_t                target_map,
+	mach_vm_offset_t        *address,
+	mach_vm_size_t  size,
+	mach_vm_offset_t        mask,
+	int                     flags,
+	vm_map_t                src_map,
+	mach_vm_offset_t        memory_address,
+	boolean_t               copy,
+	vm_prot_t               *cur_protection,
+	vm_prot_t               *max_protection,
+	vm_inherit_t            inheritance)
+{
+	return mach_vm_remap_external(target_map, address, size, mask, flags, src_map, memory_address,
+	           copy, cur_protection, max_protection, inheritance);
+}
+
+// </copied>

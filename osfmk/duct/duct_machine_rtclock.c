@@ -100,7 +100,7 @@ void nanoseconds_to_absolutetime (uint64_t nanoseconds, uint64_t * result)
 uint64_t mach_absolute_time (void)
 {
         // WC - todo: implementation has issue
-        return ktime_to_ns (ktime_get_boottime ());
+        return ktime_to_ns (ktime_get ());
 }
 
 #if 0

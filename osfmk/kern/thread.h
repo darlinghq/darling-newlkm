@@ -621,13 +621,11 @@ struct thread {
 	boolean_t            in_sigprocess;
 	int                  pending_signal;
 	//linux_wait_queue_t lwait;
-	uint32_t             uu_rval[1];
 	unsigned long        dispatch_qaddr;
 	unsigned long        pthread_handle;
 #ifdef __x86_64__
 	unsigned long        cont_jmpbuf[8];
 #endif
-	struct ksyn_waitq_element uu_kwe;
 	uint64_t                  triggered_watchpoint_address;
 	unsigned int              triggered_watchpoint_operation;
 #ifdef __x86_64__

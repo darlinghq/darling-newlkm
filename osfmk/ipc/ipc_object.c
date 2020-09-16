@@ -933,10 +933,12 @@ ipc_object_copyout(
 	assert(IO_VALID(object));
 	assert(io_otype(object) == IOT_PORT);
 
+#ifndef __DARLING__
 	if (ITH_KNOTE_VALID(kn, msgt_name)) {
 		filt_machport_turnstile_prepare_lazily(kn,
 		    msgt_name, ip_object_to_port(object));
 	}
+#endif
 
 	is_write_lock(space);
 

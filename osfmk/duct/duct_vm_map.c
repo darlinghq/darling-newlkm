@@ -444,3 +444,5 @@ int darling_is_task_64bit(void)
 #endif
 }
 
+// why is this in `osfmk/vm/vm_map.c`? it's declared in `osfmk/kern/debug.h`; you'd think it'd be in `osfmk/kern/debug.c`
+unsigned int not_in_kdp = 1;

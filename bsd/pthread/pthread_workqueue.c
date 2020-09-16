@@ -27,6 +27,11 @@
  */
 /* Copyright (c) 1995-2018 Apple, Inc. All Rights Reserved */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <sys/cdefs.h>
 
 #include <kern/assert.h>
@@ -78,6 +83,10 @@
 #include <pthread/workqueue_trace.h>
 
 #include <os/log.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 static void workq_unpark_continue(void *uth, wait_result_t wr) __dead2;
 static void workq_schedule_creator(proc_t p, struct workqueue *wq,

@@ -275,6 +275,8 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
 	os_ref_init_count(&new_thread->ref_count, &thread_refgrp, 2);
 
+	new_thread->uthread = uthread_alloc(parent_task, new_thread, (options & TH_OPTION_NOCRED) != 0);
+
 	new_thread->task = parent_task;
 
 	// Darling addition
@@ -299,7 +301,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
 	// do we still need this in Darling?
 	/* Allocate I/O Statistics structure */
-	new_thread->thread_io_stats = (io_stat_info_t)duct_kalloc(sizeof(struct io_stat_info));
+	new_thread->thread_io_stats = (io_stat_info_t)kalloc(sizeof(struct io_stat_info));
 	assert(new_thread->thread_io_stats != NULL);
 	bzero(new_thread->thread_io_stats, sizeof(struct io_stat_info));
 
@@ -367,8 +369,7 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 	os_atomic_inc(&parent_task->active_thread_count, relaxed);
 
 	new_thread->active = TRUE;
-	// we might need to do this later if things break
-	//new_thread->turnstile = turnstile_alloc();
+	new_thread->turnstile = turnstile_alloc();
 
 	// Darling additions
 	get_task_struct(linux_current);
@@ -450,6 +451,13 @@ static bool thread_ref_release(thread_t thread)
 	return os_ref_release(&thread->ref_count) == 0;
 }
 
+void
+thread_deallocate_safe(thread_t thread)
+{
+	// for now; we can't really use the MPSC daemon until we implement `kernel_thread_create`, and thus, kernel threads in general
+	return duct_thread_deallocate(thread);
+}
+
 void duct_thread_deallocate(thread_t thread)
 {
 	if (thread_ref_release(thread)) {
@@ -465,12 +473,9 @@ static void thread_deallocate_complete(thread_t thread)
 
 	task = thread->task;
 
-	// NOTE(@facekapow): we might need to uncomment this later if it turns out we really need turnstiles
-	/*
 	if (thread->turnstile) {
 		turnstile_deallocate(thread->turnstile);
 	}
-	*/
 
 	if (IPC_VOUCHER_NULL != thread->ith_voucher) {
 		ipc_voucher_release(thread->ith_voucher);
@@ -783,6 +788,11 @@ void thread_exception_return(void)
     printf("thread_exception_return called!\n");
 }
 
+void thread_bootstrap_return(void) {
+	kprintf("thread_bootstrap_return called!\n");
+	// we should probably panic when these (i.e. this and `thread_exception_return`) are called?
+};
+
 #undef current
 
 kern_return_t 
@@ -850,3 +860,14 @@ kern_return_t xnusys_thread_set_cthread_self (uint32_t cthread)
 }
 #endif
 #endif
+
+// <copied from="xnu://6153.61.1/osfmk/kern/thread.c">
+
+void
+thread_inspect_deallocate(
+	thread_inspect_t                thread_inspect)
+{
+	return thread_deallocate((thread_t)thread_inspect);
+}
+
+// </copied>

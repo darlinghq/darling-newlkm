@@ -792,14 +792,27 @@ vm_map_unwire(
 }
 
 kern_return_t
-vm_map_wire(
-        register vm_map_t       map,
-        register vm_map_offset_t        start,
-        register vm_map_offset_t        end,
-        register vm_prot_t      access_type,
-        boolean_t               user_wire)
+vm_map_wire_external(
+	vm_map_t                map,
+	vm_map_offset_t         start,
+	vm_map_offset_t         end,
+	vm_prot_t               caller_prot,
+	boolean_t               user_wire)
 {
-        // kprintf("not implemented: vm_map_wire()\n");
+	// `VM_KERN_MEMORY_NONE` is an acceptable value, but not the correct one
+	return vm_map_wire_kernel(map, start, end, caller_prot, VM_KERN_MEMORY_NONE, user_wire);
+}
+
+kern_return_t
+vm_map_wire_kernel(
+	vm_map_t                map,
+	vm_map_offset_t         start,
+	vm_map_offset_t         end,
+	vm_prot_t               caller_prot,
+	vm_tag_t                tag,
+	boolean_t               user_wire)
+{
+        // kprintf("not implemented: vm_map_wire_kernel()\n");
         return 0;
 }
 

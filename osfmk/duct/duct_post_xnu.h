@@ -104,6 +104,10 @@ extern void duct_panic(const char* reason, ...);
 #define lck_spin_lock(lck)          spin_lock ((spinlock_t *) lck)
 #define lck_spin_unlock(lck)        spin_unlock ((spinlock_t *) lck)
 #define lck_spin_try_lock(lck)      spin_trylock ((spinlock_t *) lck)
+#define lck_spin_lock_grp(lck, grp)      lck_spin_lock(lck)
+#define lck_spin_try_lock_grp(lck, grp)  lck_spin_try_lock(lck)
+
+#define kdp_lck_spin_is_acquired(lck)  0
 
 /* hw locks */
 #undef hw_lock_init

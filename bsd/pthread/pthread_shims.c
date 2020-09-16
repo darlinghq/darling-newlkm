@@ -28,6 +28,11 @@
 
 #define PTHREAD_INTERNAL 1
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <stdatomic.h>
 #include <kern/debug.h>
 #include <kern/mach_param.h>
@@ -48,11 +53,21 @@
 #include <sys/cdefs.h>
 #include <sys/proc_info.h>
 #include <sys/proc_internal.h>
+#ifdef __DARLING__
+#include <darling/api.h> // for psynch argument structure definitions
+#else
 #include <sys/sysproto.h>
+#endif
 #include <sys/systm.h>
 #include <vm/vm_map.h>
 #include <vm/vm_protos.h>
 #include <kern/kcdata.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+
+#include <darling/syscall_args.h>
+#endif
 
 /* version number of the in-kernel shims given to pthread.kext */
 #define PTHREAD_SHIMS_VERSION 1
@@ -363,11 +378,17 @@ bsdthread_register(struct proc *p, struct bsdthread_register_args *uap, __unused
 int
 bsdthread_terminate(struct proc *p, struct bsdthread_terminate_args *uap, int32_t *retval)
 {
+#ifndef __DARLING__
 	thread_t th = current_thread();
 	if (thread_get_tag(th) & THREAD_TAG_WORKQUEUE) {
 		workq_thread_terminate(p, get_bsdthread_info(th));
 	}
+#endif
+#ifdef __DARLING__
+	return pthread_functions->bsdthread_terminate(p, uap->stackaddr, uap->freesize, uap->thread_right_name, uap->signal, retval);
+#else
 	return pthread_functions->bsdthread_terminate(p, uap->stackaddr, uap->freesize, uap->port, uap->sem, retval);
+#endif
 }
 
 int
@@ -493,6 +514,9 @@ thread_will_park_or_terminate(__unused thread_t thread)
  */
 static const struct pthread_callbacks_s pthread_callbacks = {
 	.version = PTHREAD_SHIMS_VERSION,
+
+	// our pthread shim isn't a kext; it's built as a part of the LKM, so it has full access to everything and doesn't need these
+#ifndef __DARLING__
 	.config_thread_max = CONFIG_THREAD_MAX,
 	.get_task_threadmax = get_task_threadmax,
 
@@ -574,6 +598,7 @@ static const struct pthread_callbacks_s pthread_callbacks = {
 	.psynch_wait_cleanup = psynch_wait_cleanup,
 	.psynch_wait_wakeup = psynch_wait_wakeup,
 	.psynch_wait_update_owner = psynch_wait_update_owner,
+#endif
 };
 
 pthread_callbacks_t pthread_kern = &pthread_callbacks;

@@ -40,6 +40,7 @@
 #include <machine/limits.h>
 #include <kern/ledger.h>
 #include <kern/thread_call.h>
+#include <kern/policy_internal.h>
 #if CONFIG_EMBEDDED
 #include <kern/kalloc.h>
 #include <sys/errno.h>
@@ -457,7 +458,7 @@ proc_apply_task_gpuacc(task_t task, int policy)
 
 /* Resource usage , CPU realted routines */
 int 
-proc_get_task_ruse_cpu(task_t task, uint32_t * policyp, uint32_t * percentagep, uint64_t * intervalp, uint64_t * deadlinep)
+proc_get_task_ruse_cpu(task_t task, uint32_t * policyp, uint8_t * percentagep, uint64_t * intervalp, uint64_t * deadlinep)
 {
         kprintf("not implemented: proc_get_task_ruse_cpu()\n");
         return 0;
@@ -490,14 +491,14 @@ proc_get_task_ruse_cpu(task_t task, uint32_t * policyp, uint32_t * percentagep, 
  * CPU limit. All other types of notifications force task-wide scope for the limit.
  */
 int 
-proc_set_task_ruse_cpu(task_t task, uint32_t policy, uint32_t percentage, uint64_t interval, uint64_t deadline)
+proc_set_task_ruse_cpu(task_t task, uint32_t policy, uint8_t percentage, uint64_t interval, uint64_t deadline, int cpumon_entitled)
 {
         kprintf("not implemented: proc_set_task_ruse_cpu()\n");
         return 0;
 }
 
 int 
-proc_clear_task_ruse_cpu(task_t task)
+proc_clear_task_ruse_cpu(task_t task, int cpumon_entitled)
 {
         kprintf("not implemented: proc_clear_task_ruse_cpu()\n");
         return 0;
@@ -518,7 +519,7 @@ task_set_cpuusage(task_t task, uint64_t percentage, uint64_t interval, uint64_t 
 }
 
 int
-task_clear_cpuusage(task_t task)
+task_clear_cpuusage(task_t task, int cpumon_entitled)
 {
         kprintf("not implemented: task_clear_cpuusage()\n");
         return 0;
@@ -620,3 +621,11 @@ proc_setthread_saved_importance(thread_t thread, int importance)
         return 0;
 }
 #endif /* CONFIG_EMBEDDED */
+
+void task_policy_update_complete_unlocked(task_t task, task_pend_token_t pend_token) {
+	kprintf("not implemented: task_policy_update_complete_unlocked()\n");
+};
+
+void task_update_boost_locked(task_t task, boolean_t boost_active, task_pend_token_t pend_token) {
+	kprintf("not implemented: task_update_boost_locked()\n");
+};
