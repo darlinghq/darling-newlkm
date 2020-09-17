@@ -107,8 +107,17 @@ add_custom_target(lkm_generate
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/UserNotification/UNDReplyServer.c
 )
 
+# because KBuild doesn't include the module's Makefile when doing the final complation for a module (i.e. for `<module-name>.mod.c`), apparently
+# we then use it with `EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}`, but we really only need it to apply to `*.mod.c`
+# unforuntately, KBuild doesn't look at any specific variables for those files, only generic global CFLAGS variables like EXTRA_CFLAGS
+set(LKM_CLANG_COMPAT_FLAGS
+	-Wno-error=unknown-warning-option
+	"-include ${CMAKE_CURRENT_SOURCE_DIR}/include/duct/compiler/clang/asm-inline.h"
+)
+list(JOIN LKM_CLANG_COMPAT_FLAGS " " LKM_CLANG_COMPAT_FLAGS)
+
 add_custom_target(lkm
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL}
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} CC="${CMAKE_C_COMPILER}" "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}"
 	COMMENT "Building the Linux kernel module"
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 	DEPENDS
@@ -117,11 +126,11 @@ add_custom_target(lkm
 )
 
 add_custom_target(lkm_install
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} install && depmod
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} CC="${CMAKE_C_COMPILER}" "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}" install && depmod
 	COMMENT "Installing the Linux kernel module"
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_custom_target(lkm_clean
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} clean
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} CC="${CMAKE_C_COMPILER}" "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}" clean
 	COMMENT "Cleaning the Linux kernel module build folder"
 	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
