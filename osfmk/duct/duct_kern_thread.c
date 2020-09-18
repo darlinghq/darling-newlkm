@@ -391,6 +391,9 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 
 	*out_thread = new_thread;
 
+#ifdef __DARLING__
+	task_unlock(parent_task);
+#endif
 	return KERN_SUCCESS;
 }
 

@@ -321,7 +321,7 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	new_task->audit_token.val[5] = task_pid_vnr(linux_current);
 	file->private_data = new_task;
 
-	debug_msg("mach_dev_open().0 refc %d\n", new_task->ref_count);
+	debug_msg("mach_dev_open().0 refc %d\n", os_ref_get_count(&new_task->ref_count));
 
 	// Create a new thread_t
 	ret = duct_thread_create(new_task, &new_thread);
@@ -338,11 +338,11 @@ int mach_dev_open(struct inode* ino, struct file* file)
 	// (note that we use TGID, not PID, because Linux's PIDs are technically TIDs)
 	new_proc->p_pid = new_thread->linux_task->tgid;
 
-	debug_msg("thread %p refc %d at #1\n", new_thread, new_thread->ref_count);
+	debug_msg("thread %p refc %d at #1\n", new_thread, os_ref_get_count(&new_thread->ref_count));
 	darling_task_register(new_task);
 	darling_thread_register(new_thread);
 
-	debug_msg("thread refc %d at #2\n", new_thread->ref_count);
+	debug_msg("thread refc %d at #2\n", os_ref_get_count(&new_thread->ref_count));
 	task_deallocate(new_task);
 	thread_deallocate(new_thread);
 
@@ -551,7 +551,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	
 	cur_thread = darling_thread_get_current();
 	
-	debug_msg("Destroying XNU task for pid %d, refc %d, exec_case %d\n", linux_current->tgid, my_task->ref_count, exec_case);
+	debug_msg("Destroying XNU task for pid %d, refc %d, exec_case %d\n", linux_current->tgid, os_ref_get_count(&my_task->ref_count), exec_case);
 	
 	task_lock(my_task);
 	//queue_iterate(&my_task->threads, thread, thread_t, task_threads)
@@ -559,7 +559,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	{
 		thread = (thread_t) queue_first(&my_task->threads);
 		
-		// debug_msg("mach_dev_release() - thread refc %d\n", thread->ref_count);
+		// debug_msg("mach_dev_release() - thread refc %d\n", os_ref_get_count(&thread->ref_count));
 		
 		// Because IPC space termination needs a current thread
 		if (thread != cur_thread)
@@ -586,7 +586,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	task_unlock(my_task);
 	duct_task_destroy(my_task);
 
-	//debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, my_task->ref_count);
+	//debug_msg("Destroying XNU task for pid %d, refc %d\n", linux_current->pid, os_ref_get_count(&my_task->ref_count));
 	//duct_task_destroy(my_task);
 	
 	//duct_thread_destroy(cur_thread);

@@ -170,6 +170,12 @@ kern_return_t duct_task_create_internal (task_t parent_task, boolean_t inherit_m
 
 	queue_init(&new_task->semaphore_list);
 
+#ifdef __DARLING__
+	if (ltask != NULL && ltask->mm != NULL) {
+		new_task->map = duct_vm_map_create(ltask);
+	}
+#endif
+
 	ipc_task_init(new_task, parent_task);
 
 	if (parent_task != TASK_NULL) {
