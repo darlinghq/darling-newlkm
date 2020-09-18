@@ -137,6 +137,9 @@ void duct_kernel_bootstrap (void)
         kernel_bootstrap_kprintf ("calling thread_init\n");
         duct_thread_init();
 
+        kernel_bootstrap_kprintf ("calling turnstiles_init\n");
+        turnstiles_init();
+
         thread          = current_thread ();
         if (thread != NULL)
             thread->task    = kernel_task;

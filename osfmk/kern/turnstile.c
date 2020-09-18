@@ -927,14 +927,18 @@ turnstile_deallocate(struct turnstile *turnstile)
 void
 turnstile_deallocate_safe(struct turnstile *turnstile)
 {
+#ifdef __DARLING__
+	// until we get kernel threads
+	return turnstile_deallocate(turnstile);
+#else
 	if (turnstile == TURNSTILE_NULL) {
 		return;
 	}
-
 	if (__improbable(os_ref_release(&turnstile->ts_refcount) == 0)) {
 		mpsc_daemon_enqueue(&turnstile_deallocate_queue,
 		    &turnstile->ts_deallocate_link, MPSC_QUEUE_DISABLE_PREEMPTION);
 	}
+#endif
 }
 
 /*

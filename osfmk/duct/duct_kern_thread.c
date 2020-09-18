@@ -260,16 +260,29 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 	/*
 	 *	Allocate a thread and initialize static fields
 	 */
+#ifdef __DARLING__
+	// we always allocate a thread because we don't create a kernel startup thread (maybe we should?)
+	new_thread = (thread_t)duct_zalloc(thread_zone);
+	if (first_thread == THREAD_NULL) {
+		first_thread = new_thread;
+	}
+#else
 	if (first_thread == THREAD_NULL) {
 		new_thread = first_thread = current_thread();
 	} else {
-		new_thread = (thread_t)duct_zalloc(thread_zone);
+		new_thread = (thread_t)zalloc(thread_zone);
 	}
+#endif
 	if (new_thread == THREAD_NULL) {
 		return KERN_RESOURCE_SHORTAGE;
 	}
 
+#ifdef __DARLING__
+	// like i said before, because we don't create a kernel thread on startup, this thread is always a normal thread, so we need to initialize it
+	{
+#else
 	if (new_thread != first_thread) {
+#endif
 		*new_thread = thread_template;
 	}
 

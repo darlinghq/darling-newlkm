@@ -534,7 +534,13 @@ extern void             task_init(void);
 /* coalition_init() calls this to initialize ledgers before task_init() */
 extern void             init_task_ledgers(void);
 
+#ifdef __DARLING__
+// because certain functions called on module init call `current_task()`, but we don't have a kernel startup thread,
+// so `current_thread()` returns `NULL` (and trying to access `task` on it would segfault)
+#define current_task_fast()     ({ thread_t thread = current_thread(); thread ? thread->task : NULL; })
+#else
 #define current_task_fast()     (current_thread()->task)
+#endif
 #define current_task()          current_task_fast()
 
 extern bool task_is_driver(task_t task);
