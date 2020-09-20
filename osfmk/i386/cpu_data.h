@@ -433,7 +433,10 @@ extern cpu_data_t       *cpu_data_ptr[];
  * the real thing,
  */
 
-
+#ifdef __DARLING__
+extern thread_t current_thread(void);
+#define current_thread_fast()           current_thread()
+#else
 /*
  * The "volatile" flavor of current_thread() is intended for use by
  * scheduler code which may need to update the thread pointer in the
@@ -464,6 +467,7 @@ get_active_thread(void)
 #define current_thread_fast()           get_active_thread()
 #define current_thread_volatile()       get_active_thread_volatile()
 #define current_thread()                current_thread_fast()
+#endif
 
 #define cpu_mode_is64bit()              TRUE
 
