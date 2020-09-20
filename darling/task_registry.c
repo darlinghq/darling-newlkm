@@ -16,20 +16,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
-
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#include <kern/task.h>
-#include <kern/thread.h>
-#include <sys/proc_internal.h>
-#include <sys/user.h>
-#include <duct/duct_post_xnu.h>
-
-#undef kfree
-#undef kalloc
-
 #include <duct/compiler/clang/asm-inline.h>
-
 #include <linux/types.h>
 #include "task_registry.h"
 #include "evprocfd.h"
@@ -51,8 +38,6 @@
 #include <linux/eventfd.h>
 #include <linux/mutex.h>
 #include "debug_print.h"
-
-typedef struct proc* proc_t;
 
 DEFINE_SPINLOCK(my_task_lock);
 DEFINE_SPINLOCK(my_thread_lock);
@@ -78,7 +63,7 @@ struct registry_entry
 			void* keys[TASK_KEY_COUNT];
 			task_key_dtor dtors[TASK_KEY_COUNT];
 			
-			struct linux_semaphore sem_fork;
+			struct semaphore sem_fork;
 			struct list_head proc_notification;
 			struct mutex mut_proc_notification;
 			struct completion proc_dyld_info;
@@ -137,7 +122,7 @@ void darling_task_post_notification(unsigned int pid, unsigned int event, unsign
 static struct registry_entry* darling_task_get_current_entry(void)
 {
 	rcu_read_lock();
-	struct registry_entry* e = darling_task_get_entry_unlocked(linux_current->tgid);
+	struct registry_entry* e = darling_task_get_entry_unlocked(current->tgid);
 	rcu_read_unlock();
 	return e;
 }
@@ -179,16 +164,6 @@ task_t darling_task_get(int pid)
 	return task;
 }
 
-uthread_t current_uthread(void) {
-	thread_t thread = darling_thread_get_current();
-	return thread ? (uthread_t)thread->uthread : NULL;
-};
-
-proc_t current_proc(void) {
-	task_t task = darling_task_get_current();
-	return task ? (proc_t)task->bsd_info : NULL;
-};
-
 // Requires read_lock(&my_thread_lock)
 struct registry_entry* darling_thread_get_entry(unsigned int pid)
 {
@@ -208,7 +183,7 @@ struct registry_entry* darling_thread_get_current_entry(void)
 	struct registry_entry* e;
 
 	rcu_read_lock();
-	e = darling_thread_get_entry(linux_current->pid);
+	e = darling_thread_get_entry(current->pid);
 	rcu_read_unlock();
 
 	return e;
@@ -229,7 +204,7 @@ thread_t darling_thread_get(unsigned int pid)
 {
 	struct registry_entry* e;
 
-	e = darling_thread_get_entry(linux_current->pid);
+	e = darling_thread_get_entry(current->pid);
 
 	if (e != NULL)
 		return e->thread;
@@ -241,9 +216,9 @@ void darling_task_register(task_t task)
 	struct registry_entry *entry, *this;
 
 	rcu_read_lock();
-	hash_for_each_possible_rcu(all_tasks, this, node, linux_current->tgid)
+	hash_for_each_possible_rcu(all_tasks, this, node, current->tgid)
 	{
-		if (this->tid == linux_current->tgid)
+		if (this->tid == current->tgid)
 		{
 			debug_msg("Replacing task %p -> %p\n", this->task, task);
 			
@@ -261,7 +236,7 @@ void darling_task_register(task_t task)
 
 	entry = (struct registry_entry*) kzalloc(sizeof(struct registry_entry), GFP_KERNEL);
 	entry->task = task;
-	entry->tid = linux_current->tgid;
+	entry->tid = current->tgid;
 
 	sema_init(&entry->sem_fork, 0);
 	INIT_LIST_HEAD(&entry->proc_notification);
@@ -281,9 +256,9 @@ void darling_thread_register(thread_t thread)
 
 	rcu_read_lock();
 
-	hash_for_each_possible_rcu(all_threads, this, node, linux_current->pid)
+	hash_for_each_possible_rcu(all_threads, this, node, current->pid)
 	{
-		if (this->tid == linux_current->pid)
+		if (this->tid == current->pid)
 		{
 			if (this->thread != thread)
 			{
@@ -301,7 +276,7 @@ void darling_thread_register(thread_t thread)
 
 	entry = (struct registry_entry*) kzalloc(sizeof(struct registry_entry), GFP_KERNEL);
 	entry->thread = thread;
-	entry->tid = linux_current->pid;
+	entry->tid = current->pid;
 	entry->flags = 0;
 
 	spin_lock(&my_thread_lock);
@@ -338,9 +313,9 @@ void darling_task_deregister(task_t t)
 
 	spin_lock(&my_task_lock);
 
-	hash_for_each_possible(all_tasks, entry, node, linux_current->tgid)
+	hash_for_each_possible(all_tasks, entry, node, current->tgid)
 	{
-		if (entry->tid == linux_current->tgid)
+		if (entry->tid == current->tgid)
 		{
 			if (entry->task != t)
 				break;
@@ -358,21 +333,6 @@ void darling_task_deregister(task_t t)
 	spin_unlock(&my_task_lock);
 }
 
-void darling_uthread_destroy(uthread_t uth) {
-	if (!uth) {
-		return;
-	}
-
-	// will also take care of removing the thread from the process' thread list for us
-	uthread_cleanup(uth->uu_thread->task, uth, uth->uu_proc);
-
-	// deregister the uthread from the Mach thread
-	uth->uu_thread->uthread = NULL;
-
-	// finally, free the uthread
-	uthread_zone_free(uth);
-};
-
 void darling_thread_deregister(thread_t t)
 {
 	struct registry_entry *entry;
@@ -389,10 +349,6 @@ void darling_thread_deregister(thread_t t)
 			hash_del_rcu(&entry->node);
 			spin_unlock(&my_thread_lock);
 			synchronize_rcu();
-
-			if (t->uthread) {
-				darling_uthread_destroy(t->uthread);
-			}
 
 			kfree(entry);
 			return;
@@ -435,7 +391,7 @@ void darling_task_fork_wait_for_child(void)
 void darling_task_fork_child_done(void)
 {
 	rcu_read_lock();
-	struct registry_entry* entry = darling_task_get_entry_unlocked(linux_current->real_parent->tgid);
+	struct registry_entry* entry = darling_task_get_entry_unlocked(current->real_parent->tgid);
 
 	debug_msg("task_fork_child_done - notify entry %p\n", entry);
 	if (entry != NULL)

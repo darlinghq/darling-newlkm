@@ -268,6 +268,7 @@ OBJS_bsd/pthread = \
 OBJS_bsd/uxkern = \
 	bsd/uxkern/ux_exception.o
 OBJS_bsd/duct = \
+	bsd/duct/duct_kern_bsd_stubs.o \
 	bsd/duct/duct_kern_kern_fork.o \
 	bsd/duct/duct_kern_kern_proc.o \
 	bsd/duct/duct_kern_kern_sig.o \
@@ -396,7 +397,8 @@ OBJS_darling = \
 	darling/pthread_kext.o \
 	darling/pthread_kill.o \
 	darling/task_registry.o \
-	darling/traps.o
+	darling/traps.o \
+	darling/uthreads.o
 
 #
 # full list of all objects in the darling-mach kernel module
