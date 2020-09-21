@@ -950,7 +950,14 @@ ipc_port_destroy(ipc_port_t port)
 #if IMPORTANCE_INHERITANCE
 	ipc_importance_task_t release_imp_task = IIT_NULL;
 	thread_t self = current_thread();
+#ifdef __DARLING__
+	boolean_t top = true;
+	if (self) {
+		top = (self->ith_assertions == 0);
+	}
+#else
 	boolean_t top = (self->ith_assertions == 0);
+#endif
 	natural_t assertcnt = 0;
 #endif /* IMPORTANCE_INHERITANCE */
 
@@ -983,7 +990,13 @@ ipc_port_destroy(ipc_port_t port)
 	}
 
 	if (top) {
+#ifdef __DARLING__
+		if (self) {
+#endif
 		self->ith_assertions = assertcnt;
+#ifdef __DARLING__
+		}
+#endif
 	}
 #endif /* IMPORTANCE_INHERITANCE */
 
@@ -1108,16 +1121,34 @@ drop_assertions:
 	if (release_imp_task != IIT_NULL) {
 		if (assertcnt > 0) {
 			assert(top);
+#ifdef __DARLING__
+			if (self) {
+#endif
 			self->ith_assertions = 0;
+#ifdef __DARLING__
+			}
+#endif
 			assert(ipc_importance_task_is_any_receiver_type(release_imp_task));
 			ipc_importance_task_drop_internal_assertion(release_imp_task, assertcnt);
 		}
 		ipc_importance_task_release(release_imp_task);
 	} else if (assertcnt > 0) {
 		if (top) {
+#ifdef __DARLING__
+			if (self) {
+#endif
 			self->ith_assertions = 0;
+#ifdef __DARLING__
+			}
+			task_t curr_task = current_task();
+			if (curr_task) {
+				release_imp_task = curr_task->task_imp_base;
+			}
+			if (release_imp_task != IIT_NULL && ipc_importance_task_is_any_receiver_type(release_imp_task)) {
+#else
 			release_imp_task = current_task()->task_imp_base;
 			if (ipc_importance_task_is_any_receiver_type(release_imp_task)) {
+#endif
 				ipc_importance_task_drop_internal_assertion(release_imp_task, assertcnt);
 			}
 		}
