@@ -387,7 +387,12 @@ int knote_attach_evpset(struct klist* list, struct evpsetfd_ctx* kn)
 int knote_detach_evpset(struct klist* list, struct evpsetfd_ctx* kn)
 {
 	debug_msg("Detaching from klist 0x%x\n", list);
-	SLIST_REMOVE(list, kn, evpsetfd_ctx, kn_selnext);
+
+	// the klist may have been destroyed/deinited under us, so check for that so we don't access NULL
+	int currently_empty = SLIST_EMPTY(list);
+	if (!currently_empty)
+		SLIST_REMOVE(list, kn, evpsetfd_ctx, kn_selnext);
+
 	return SLIST_EMPTY(list);
 }
 
