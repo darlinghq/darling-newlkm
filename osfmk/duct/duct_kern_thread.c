@@ -506,6 +506,8 @@ static void thread_deallocate_complete(thread_t thread)
 	queue_remove(&task->threads, thread, thread_t, task_threads);
 	task->thread_count--;
 
+	task_unlock(task);
+
 	task_deallocate(task);
 
 	if (thread->linux_task != NULL)
