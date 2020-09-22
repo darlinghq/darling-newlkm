@@ -1,3 +1,5 @@
+#include "procs.h"
+
 #include <duct/duct.h>
 
 #include <duct/duct_pre_xnu.h>
@@ -108,7 +110,7 @@ void darling_proc_destroy(proc_t proc) {
 	// make sure there are no threads still active
 	proc_lock(proc);
 	if (!TAILQ_EMPTY(&proc->p_uthlist)) {
-		panic("proc_destroy: BSD uthreads still attached to the process");
+		duct_panic("proc_destroy: BSD uthreads still attached to the process");
 	}
 	proc_unlock(proc);
 

@@ -323,6 +323,9 @@ int mach_dev_open(struct inode* ino, struct file* file)
 
 	debug_msg("mach_dev_open().0 refc %d\n", os_ref_get_count(&new_task->ref_count));
 
+	// will automatically attach the BSD process to the Mach task
+	proc_t new_proc = darling_proc_create(new_task);
+
 	// Create a new thread_t
 	ret = duct_thread_create(new_task, &new_thread);
 	if (ret != KERN_SUCCESS)
@@ -330,13 +333,6 @@ int mach_dev_open(struct inode* ino, struct file* file)
 		duct_task_destroy(new_task);
 		goto out;
 	}
-
-	// will automatically attach the BSD process to the Mach task
-	proc_t new_proc = darling_proc_create(new_task);
-
-	// grab the TGID from the Linux task
-	// (note that we use TGID, not PID, because Linux's PIDs are technically TIDs)
-	new_proc->p_pid = new_thread->linux_task->tgid;
 
 	debug_msg("thread %p refc %d at #1\n", new_thread, os_ref_get_count(&new_thread->ref_count));
 	darling_task_register(new_task);
@@ -497,6 +493,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 	thread_t thread, cur_thread;
 	task_t my_task = (task_t) file->private_data;
 	bool exec_case;
+	proc_t my_proc = (proc_t)my_task->bsd_info;
 	
 	// close(/dev/mach) may happen on any thread, even on a thread that
 	// has never seen any ioctl() calls into LKM.
@@ -582,6 +579,13 @@ int mach_dev_release(struct inode* ino, struct file* file)
 
 	if (my_task->vchroot != NULL)
 		mntput(my_task->vchroot);
+
+	if (!exec_case && my_proc && cur_thread->uthread) {
+		// prevent `darling_proc_destroy` from panicking when it sees a uthread still attached to the process
+		proc_lock(my_proc);
+		TAILQ_REMOVE(&my_proc->p_uthlist, (uthread_t)cur_thread->uthread, uu_list);
+		proc_unlock(my_proc);
+	}
 
 	task_unlock(my_task);
 	duct_task_destroy(my_task);

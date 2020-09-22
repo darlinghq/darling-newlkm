@@ -397,6 +397,7 @@ OBJS_darling = \
 	darling/pthread_kext.o \
 	darling/pthread_kill.o \
 	darling/task_registry.o \
+	darling/threads.o \
 	darling/traps.o \
 	darling/uthreads.o
 
