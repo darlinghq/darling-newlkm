@@ -162,6 +162,10 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR__kernelrpc_mach_port_insert_right_trap, _kernelrpc_mach_port_insert_right_entry),
 	TRAP(NR__kernelrpc_mach_vm_allocate_trap, _kernelrpc_mach_vm_allocate_entry),
 	TRAP(NR__kernelrpc_mach_vm_deallocate_trap, _kernelrpc_mach_vm_deallocate_entry),
+	TRAP(NR_thread_get_special_reply_port, thread_get_special_reply_port_entry),
+	TRAP(NR__kernelrpc_mach_port_request_notification_trap, _kernelrpc_mach_port_request_notification_entry),
+	TRAP(NR__kernelrpc_mach_port_get_attributes_trap, _kernelrpc_mach_port_get_attributes_entry),
+	TRAP(NR__kernelrpc_mach_port_type_trap, _kernelrpc_mach_port_type_entry),
 
 	// MKTIMER
 	TRAP(NR_mk_timer_create_trap, mk_timer_create_entry),
@@ -725,6 +729,10 @@ int mach_reply_port_entry(task_t task)
 	return mach_reply_port(NULL);
 }
 
+int thread_get_special_reply_port_entry(task_t task) {
+	return thread_get_special_reply_port(NULL);
+};
+
 #define copyargs(args, in_args) typeof(*in_args) args; \
 	if (copy_from_user(&args, in_args, sizeof(args))) \
 		return -LINUX_EFAULT;
@@ -864,6 +872,45 @@ int _kernelrpc_mach_port_insert_member_entry(task_t task, struct mach_port_inser
 
 	return _kernelrpc_mach_port_insert_member_trap(&out);
 }
+
+int _kernelrpc_mach_port_request_notification_entry(task_t task, struct mach_port_request_notification_args* in_args) {
+	struct _kernelrpc_mach_port_request_notification_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_right_name;
+	out.msgid = args.message_id;
+	out.sync = args.make_send_count;
+	out.notify = args.notification_destination_port_name;
+	out.notifyPoly = args.message_type;
+	out.previous = args.previous_destination_port_name_out;
+
+	return _kernelrpc_mach_port_request_notification_trap(&out);
+};
+
+int _kernelrpc_mach_port_get_attributes_entry(task_t task, struct mach_port_get_attributes_args* in_args) {
+	struct _kernelrpc_mach_port_get_attributes_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_right_name;
+	out.flavor = args.flavor;
+	out.info = args.info_out;
+	out.count = args.count_out;
+
+	return _kernelrpc_mach_port_get_attributes_trap(&out);
+};
+
+int _kernelrpc_mach_port_type_entry(task_t task, struct mach_port_type_args* in_args) {
+	struct _kernelrpc_mach_port_type_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_right_name;
+	out.ptype = args.port_type_out;
+
+	return _kernelrpc_mach_port_type_trap(&out);
+};
 
 // This structure is also reused for mach_vm_deallocate
 struct vm_allocate_params

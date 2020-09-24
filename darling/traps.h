@@ -54,6 +54,10 @@ int _kernelrpc_mach_port_insert_member_entry(task_t task, struct mach_port_inser
 int _kernelrpc_mach_port_insert_right_entry(task_t task, struct mach_port_insert_right_args* args);
 int _kernelrpc_mach_vm_allocate_entry(task_t task, struct mach_vm_allocate_args* args);
 int _kernelrpc_mach_vm_deallocate_entry(task_t task, struct mach_vm_deallocate_args* args);
+int thread_get_special_reply_port_entry(task_t task);
+int _kernelrpc_mach_port_request_notification_entry(task_t task, struct mach_port_request_notification_args* in_args);
+int _kernelrpc_mach_port_get_attributes_entry(task_t task, struct mach_port_get_attributes_args* in_args);
+int _kernelrpc_mach_port_type_entry(task_t task, struct mach_port_type_args* in_args);
 
 int mk_timer_create_entry(task_t task);
 int mk_timer_arm_entry(task_t task, struct mk_timer_arm_args* args);

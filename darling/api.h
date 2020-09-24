@@ -109,6 +109,10 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR_ptrace_sigexc,
 	NR_thread_suspended,
 	NR_set_thread_handles,
+	NR_thread_get_special_reply_port,
+	NR__kernelrpc_mach_port_request_notification_trap,
+	NR__kernelrpc_mach_port_type_trap,
+	NR__kernelrpc_mach_port_get_attributes_trap,
 };
 
 struct set_tracer_args
@@ -264,6 +268,30 @@ struct mach_port_extract_member_args
 	unsigned int task_right_name;
 	unsigned int port_right_name;
 	unsigned int pset_right_name;
+};
+
+struct mach_port_request_notification_args {
+	unsigned int task_right_name;
+	unsigned int port_right_name;
+	int message_id;
+	unsigned int make_send_count;
+	unsigned int notification_destination_port_name;
+	unsigned int message_type;
+	unsigned int* previous_destination_port_name_out;
+};
+
+struct mach_port_get_attributes_args {
+	unsigned int task_right_name;
+	unsigned int port_right_name;
+	int flavor;
+	void* info_out;
+	void* count_out;
+};
+
+struct mach_port_type_args {
+	unsigned int task_right_name;
+	unsigned int port_right_name;
+	unsigned int* port_type_out;
 };
 
 struct semaphore_signal_args
