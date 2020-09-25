@@ -28,3 +28,5 @@ add_darling_library(libkxld
 make_fat(libkxld)
 target_link_libraries(libkxld system cxxabi)
 set_target_properties(libkxld PROPERTIES OUTPUT_NAME "kxld")
+
+install(TARGETS libkxld DESTINATION libexec/darling/usr/lib/system)
