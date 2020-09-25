@@ -1973,6 +1973,11 @@ retry:
 		}
 	}
 
+	// semi-hack; we only have importance inheritance enabled because we have to (there's some new XNU code
+	// that uses it without a conditional); we don't really care about importance, and in fact,
+	// leaving this in causes segfaults due to us not actually initializing `task_imp_base` correctly
+	// (and trying to do so would introduce more unnecessary complexity)
+#ifndef __DARLING__
 #if IMPORTANCE_INHERITANCE
 	/*
 	 * Need to see if this message needs importance donation and/or
@@ -1986,6 +1991,7 @@ retry:
 		}
 	}
 #endif /* IMPORTANCE_INHERITANCE */
+#endif
 
 	if (error != MACH_MSG_SUCCESS) {
 		ip_unlock(port);
