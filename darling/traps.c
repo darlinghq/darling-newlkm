@@ -166,6 +166,10 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR__kernelrpc_mach_port_request_notification_trap, _kernelrpc_mach_port_request_notification_entry),
 	TRAP(NR__kernelrpc_mach_port_get_attributes_trap, _kernelrpc_mach_port_get_attributes_entry),
 	TRAP(NR__kernelrpc_mach_port_type_trap, _kernelrpc_mach_port_type_entry),
+	TRAP(NR__kernelrpc_mach_port_construct_trap, _kernelrpc_mach_port_construct_entry),
+	TRAP(NR__kernelrpc_mach_port_destruct_trap, _kernelrpc_mach_port_destruct_entry),
+	TRAP(NR__kernelrpc_mach_port_guard_trap, _kernelrpc_mach_port_guard_entry),
+	TRAP(NR__kernelrpc_mach_port_unguard_trap, _kernelrpc_mach_port_unguard_entry),
 
 	// MKTIMER
 	TRAP(NR_mk_timer_create_trap, mk_timer_create_entry),
@@ -910,6 +914,53 @@ int _kernelrpc_mach_port_type_entry(task_t task, struct mach_port_type_args* in_
 	out.ptype = args.port_type_out;
 
 	return _kernelrpc_mach_port_type_trap(&out);
+};
+
+int _kernelrpc_mach_port_construct_entry(task_t task, struct mach_port_construct_args* in_args) {
+	struct _kernelrpc_mach_port_construct_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.options = args.options;
+	out.context = args.context;
+	out.name = args.port_right_name_out;
+
+	return _kernelrpc_mach_port_construct_trap(&out);
+};
+
+int _kernelrpc_mach_port_destruct_entry(task_t task, struct mach_port_destruct_args* in_args) {
+	struct _kernelrpc_mach_port_destruct_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_right_name;
+	out.srdelta = args.srdelta;
+	out.guard = args.guard;
+
+	return _kernelrpc_mach_port_destruct_trap(&out);
+};
+
+int _kernelrpc_mach_port_guard_entry(task_t task, struct mach_port_guard_args* in_args) {
+	struct _kernelrpc_mach_port_guard_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_right_name;
+	out.guard = args.guard;
+	out.strict = args.strict;
+
+	return _kernelrpc_mach_port_guard_trap(&out);
+};
+
+int _kernelrpc_mach_port_unguard_entry(task_t task, struct mach_port_unguard_args* in_args) {
+	struct _kernelrpc_mach_port_unguard_args out;
+	copyargs(args, in_args);
+
+	out.target = args.task_right_name;
+	out.name = args.port_right_name;
+	out.guard = args.guard;
+
+	return _kernelrpc_mach_port_unguard_trap(&out);
 };
 
 // This structure is also reused for mach_vm_deallocate

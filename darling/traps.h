@@ -58,6 +58,10 @@ int thread_get_special_reply_port_entry(task_t task);
 int _kernelrpc_mach_port_request_notification_entry(task_t task, struct mach_port_request_notification_args* in_args);
 int _kernelrpc_mach_port_get_attributes_entry(task_t task, struct mach_port_get_attributes_args* in_args);
 int _kernelrpc_mach_port_type_entry(task_t task, struct mach_port_type_args* in_args);
+int _kernelrpc_mach_port_construct_entry(task_t task, struct mach_port_construct_args* in_args);
+int _kernelrpc_mach_port_destruct_entry(task_t task, struct mach_port_destruct_args* in_args);
+int _kernelrpc_mach_port_guard_entry(task_t task, struct mach_port_guard_args* in_args);
+int _kernelrpc_mach_port_unguard_entry(task_t task, struct mach_port_unguard_args* in_args);
 
 int mk_timer_create_entry(task_t task);
 int mk_timer_arm_entry(task_t task, struct mk_timer_arm_args* args);
