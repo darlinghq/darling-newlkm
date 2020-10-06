@@ -34,6 +34,8 @@
 #include <osfmk/ipc/ipc_object.h>
 #include <osfmk/ipc/ipc_space.h>
 #include <osfmk/ipc/ipc_pset.h>
+#include <osfmk/ipc/ipc_port.h>
+#include <osfmk/ipc/ipc_right.h>
 #include <duct/duct_post_xnu.h>
 #include "debug_print.h"
 
@@ -45,7 +47,8 @@ struct evpsetfd_ctx
 	unsigned int port_name;
 	struct evpset_options opts;
 
-	ipc_pset_t pset;
+	ipc_object_t object;
+	ipc_mqueue_t mqueue;
 	SLIST_ENTRY(evpsetfd_ctx) kn_selnext;
 
 	wait_queue_head_t wait_queue;
@@ -70,26 +73,50 @@ static const struct file_operations evpsetfd_ops =
 
 int evpsetfd_create(unsigned int port_name, const struct evpset_options* opts)
 {
-	ipc_pset_t pset;
+	ipc_entry_t entry = IE_NULL;
+	ipc_object_t object = IO_NULL;
+	ipc_space_t space = current_space();
+	ipc_mqueue_t mqueue = IMQ_NULL;
 	kern_return_t kr;
 	struct evpsetfd_ctx* ctx;
 	char name[32];
 	int fd;
 
-	// TODO: Use ipc_right_lookup_read() instead and support plain Mach ports (instead of port sets only)
-	kr = ipc_object_translate(current_space(), port_name, MACH_PORT_RIGHT_PORT_SET, (ipc_object_t*) &pset);
-	if (kr != KERN_SUCCESS)
+	kr = ipc_right_lookup_read(space, port_name, &entry);
+	if (kr != KERN_SUCCESS) {
+		is_read_unlock(space);
 		return -LINUX_ENOENT;
+	}
+
+	object = entry->ie_object;
+
+	io_lock(object);
+	is_read_unlock(space);
+
+	if (!io_active(object)) {
+		io_unlock(object);
+		return -LINUX_EBADF;
+	}
+
+	if (io_otype(object) == IOT_PORT_SET) {
+		mqueue = &ips_object_to_pset(object)->ips_messages;
+	} else if (io_otype(object) == IOT_PORT) {
+		mqueue = &ip_object_to_port(object)->ip_messages;
+	} else {
+		io_unlock(object);
+		return -LINUX_EBADF;
+	}
 
 	ctx = (struct evpsetfd_ctx*) kmalloc(sizeof(*ctx), GFP_KERNEL);
 	if (ctx == NULL)
 	{
-		ips_unlock(pset);
+		io_unlock(object);
 		return -LINUX_ENOMEM;
 	}
 
 	ctx->port_name = port_name;
-	ctx->pset = pset;
+	ctx->object = object;
+	ctx->mqueue = mqueue;
 
 	memset(&ctx->event, 0, sizeof(ctx->event));
 
@@ -101,19 +128,18 @@ int evpsetfd_create(unsigned int port_name, const struct evpset_options* opts)
 	if (fd < 0)
 	{
 		kfree(ctx);
-		ips_unlock(pset);
+		io_unlock(object);
 
 		return fd;
 	}
 
-	ipc_mqueue_t mqueue = &pset->ips_messages;
 	knote_attach_evpset(&mqueue->imq_klist, ctx);
 	ctx->has_event = ipc_mqueue_set_peek(mqueue);
 
 	debug_msg("    are there events already? %d!\n", ctx->has_event);
 
-	ips_reference(pset);
-	ips_unlock(pset);
+	io_reference(object);
+	io_unlock(object);
 
 	return fd;
 }
@@ -122,10 +148,9 @@ int evpsetfd_release(struct inode* inode, struct file* file)
 {
 	struct evpsetfd_ctx* ctx = (struct evpsetfd_ctx*) file->private_data;
 
-	ipc_mqueue_t mqueue = &ctx->pset->ips_messages;
-	knote_detach_evpset(&mqueue->imq_klist, ctx);
+	knote_detach_evpset(&ctx->mqueue->imq_klist, ctx);
 
-	ips_release(ctx->pset);
+	io_release(ctx->object);
 
 	kfree(ctx);
 	return 0;
@@ -134,13 +159,12 @@ int evpsetfd_release(struct inode* inode, struct file* file)
 unsigned int evpsetfd_poll(struct file* file, poll_table* wait)
 {
 	struct evpsetfd_ctx* ctx = (struct evpsetfd_ctx*) file->private_data;
-	ipc_mqueue_t set_mq = &ctx->pset->ips_messages;
 
 	poll_wait(file, &ctx->wait_queue, wait); // For polling on Mach ports (not really supported, the code in this file assumes port sets)
-	poll_wait(file, &set_mq->imq_wait_queue.linux_wq, wait); // For polling on Mach port sets
+	poll_wait(file, &ctx->mqueue->imq_wait_queue.linux_wq, wait); // For polling on Mach port sets
 
 	if (!ctx->has_event)
-		ctx->has_event = ipc_mqueue_set_peek(set_mq);
+		ctx->has_event = ipc_mqueue_set_peek(ctx->mqueue);
 	
 	return ctx->has_event ? (POLLIN | POLLRDNORM) : 0;
 }
@@ -158,8 +182,8 @@ ssize_t evpsetfd_read(struct file* file, char __user* buf, size_t count, loff_t*
 	if (count != sizeof(struct evpset_event))
 		return -LINUX_EINVAL;
 
-	ipc_mqueue_t mqueue = &ctx->pset->ips_messages;
-	ipc_object_t object = &ctx->pset->ips_object;
+	ipc_mqueue_t mqueue = ctx->mqueue;
+	ipc_object_t object = ctx->object;
 	thread_t self = current_thread();
 	boolean_t used_filtprocess_data = FALSE;
 
