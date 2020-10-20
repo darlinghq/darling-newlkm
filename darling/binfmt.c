@@ -582,7 +582,11 @@ struct page *macho_get_dump_page(unsigned long addr)
 	struct vm_area_struct *vma;
 	struct page *page;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	if (get_user_pages(1, FOLL_FORCE | FOLL_DUMP | FOLL_GET, &page, &vma) < 1)
+#else
 	if (get_user_pages(addr, 1, FOLL_FORCE | FOLL_DUMP | FOLL_GET, &page, &vma) < 1)
+#endif
 		return NULL;
 	flush_cache_page(vma, addr, page_to_pfn(page));
 	return page;
