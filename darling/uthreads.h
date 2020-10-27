@@ -12,6 +12,9 @@
 
 /**
  * @brief Destroys the given BSD thread
+ *
+ * This will deregister the BSD thread from its Mach thread and from its BSD process, and it will also free the given BSD thread.
+ *
  * @param uth The BSD thread to destroy
  */
 void darling_uthread_destroy(uthread_t uth);

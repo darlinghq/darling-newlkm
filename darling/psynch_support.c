@@ -40,6 +40,7 @@
 #include <kern/ipc_tt.h>
 #include <sys/proc_internal.h>
 #include <sys/user.h>
+#include <sys/malloc.h>
 #include <duct/duct_kern_printf.h>
 #include <duct/duct_post_xnu.h>
 
@@ -63,7 +64,6 @@
 #undef zfree
 //#undef panic
 #define zfree(where, what) kfree(what)
-#define FREE(ptr, usage) kfree(ptr)
 #define __pthread_testcancel(x) if (darling_thread_canceled()) return LINUX_EINTR;
 //#define panic(str, arg...) WARN(1, str)
 #define task_threadmax 1024
@@ -2218,33 +2218,7 @@ prepost:
 	goto out;
 }
 
-// From kern_subr.c
-/*
- * General routine to allocate a hash table.
- */
-void *
-hashinit(int elements, int type, u_long *hashmask)
-{
-        long hashsize;
-        struct list_head *hashtbl;
-        int i;
-
-        if (elements <= 0)
-                panic("hashinit: bad cnt");
-        for (hashsize = 1; hashsize <= elements; hashsize <<= 1)
-                continue;
-        hashsize >>= 1;
-        //MALLOC(hashtbl, struct generic *, 
-        //        hashsize * sizeof(*hashtbl), type, M_WAITOK|M_ZERO);
-		hashtbl = kzalloc(hashsize * sizeof(*hashtbl), GFP_KERNEL);
-        if (hashtbl != NULL) {
-                for (i = 0; i < hashsize; i++)
-                        LIST_INIT(&hashtbl[i]);
-                *hashmask = hashsize - 1;
-        }
-        return (hashtbl);
-}
-
+extern void* hashinit(int elements, int type, u_long* hashmask);
 
 void
 psynch_init(void)
@@ -2296,7 +2270,7 @@ pth_global_hashinit()
 void
 pth_global_hashexit()
 {
-	kfree(pth_glob_hashtbl);
+	FREE(pth_glob_hashtbl, M_PROC);
 	pth_glob_hashtbl = NULL;
 }
 

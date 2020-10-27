@@ -419,6 +419,10 @@ struct  proc {
 #if !CONFIG_EMBEDDED
 	uint64_t        p_user_data;                    /* general-purpose storage for userland-provided data */
 #endif /* !CONFIG_EMBEDDED */
+
+#ifdef __DARLING__
+	int64_t           kqueue_fork_listener_id;      /* registration ID of kqueue fork listener (PL) */
+#endif
 };
 
 #define PGRPID_DEAD 0xdeaddead

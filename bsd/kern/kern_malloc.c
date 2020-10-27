@@ -67,9 +67,18 @@
  * Version 2.0.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+
+// resolves an include order issue
+#include <kern/thread.h>
+#endif
+
 #include <sys/param.h>
 #include <sys/malloc.h>
 
+#ifndef __DARLING__
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 
@@ -81,17 +90,24 @@
 #include <netinet/ip.h>
 #include <netinet/in_pcb.h>
 #include <netinet/flow_divert.h>
+#endif
 
 #include <sys/event.h>
 #include <sys/eventvar.h>
 
 #include <sys/proc_internal.h>
+
+#ifndef __DARLING__
 #include <sys/mount_internal.h>
 #include <sys/vnode_internal.h>
 #include <sys/ubc_internal.h>
 #include <sys/namei.h>
 #include <sys/file_internal.h>
+#endif
+
 #include <sys/filedesc.h>
+
+#ifndef __DARLING__
 #include <sys/tty.h>
 #include <sys/quota.h>
 #include <sys/uio_internal.h>
@@ -105,11 +121,16 @@
 #include <nfs/nfsproto.h>
 #include <nfs/nfsnode.h>
 #include <nfs/nfsmount.h>
+#endif
 
 #include <mach/mach_types.h>
 
 #include <kern/zalloc.h>
 #include <kern/kalloc.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 void kmeminit(void);
 
@@ -314,6 +335,11 @@ const char *memname[] = {
 #define KMZ_MALLOC                      ((void *)0)
 #define KMZ_SHAREZONE           ((void *)1)
 
+#ifdef __DARLING__
+	// we don't want to create all these zones that we don't need
+	#define DISABLED_KMZ { -1, 0, FALSE }
+#endif
+
 struct kmzones {
 	size_t          kz_elemsize;
 	void            *kz_zalloczone;
@@ -322,6 +348,9 @@ struct kmzones {
 #define SOS(sname)      sizeof (struct sname)
 #define SOX(sname)      -1
 	{ -1, 0, FALSE },                               /* 0 M_FREE */
+#ifdef __DARLING__
+	[1 ... 38] = DISABLED_KMZ,
+#else
 	{ MSIZE, KMZ_CREATEZONE, FALSE },               /* 1 M_MBUF */
 	{ 0, KMZ_MALLOC, FALSE },                       /* 2 M_DEVBUF */
 	{ SOS(socket), KMZ_CREATEZONE, TRUE },          /* 3 M_SOCKET */
@@ -370,9 +399,17 @@ struct kmzones {
 	{ 0, KMZ_MALLOC, FALSE },                       /* 36 M_VMPAGER */
 	{ 0, KMZ_MALLOC, FALSE },                       /* 37 M_VMPGDATA */
 	{ SOS(fileproc), KMZ_CREATEZONE_ACCT, TRUE },    /* 38 M_FILEPROC */
+#endif
 	{ SOS(filedesc), KMZ_CREATEZONE_ACCT, TRUE },    /* 39 M_FILEDESC */
+#ifdef __DARLING__
+	DISABLED_KMZ,
+#else
 	{ SOX(lockf), KMZ_CREATEZONE_ACCT, TRUE },      /* 40 M_LOCKF */
+#endif
 	{ SOS(proc), KMZ_CREATEZONE, FALSE },           /* 41 M_PROC */
+#ifdef __DARLING__
+	[42 ... 93] = DISABLED_KMZ,
+#else
 	{ SOS(pstats), KMZ_CREATEZONE, TRUE },          /* 42 M_PSTATS */
 	{ 0, KMZ_MALLOC, FALSE },                       /* 43 M_SEGMENT */
 	{ M_FFSNODE, KMZ_SHAREZONE, FALSE },            /* 44 M_LFSNODE */
@@ -443,7 +480,11 @@ struct kmzones {
 	{ 0, KMZ_MALLOC, FALSE },                       /* 91 unused */
 	{ 0, KMZ_MALLOC, FALSE },                       /* 92 unused */
 	{ SOS(specinfo), KMZ_CREATEZONE, TRUE },         /* 93 M_SPECINFO */
+#endif
 	{ SOS(kqueue), KMZ_CREATEZONE, FALSE },         /* 94 M_KQUEUE */
+#ifdef __DARLING__
+	[95 ... 128] = DISABLED_KMZ,
+#else
 	{ 0, KMZ_MALLOC, FALSE },                       /* 95 unused */
 	{ SOS(cl_readahead), KMZ_CREATEZONE, TRUE },    /* 96 M_CLRDAHEAD */
 	{ SOS(cl_writebehind), KMZ_CREATEZONE, TRUE },   /* 97 M_CLWRBEHIND */
@@ -493,6 +534,7 @@ struct kmzones {
 	{ 0, KMZ_MALLOC, FALSE },                       /* 126 M_LLTABLE */
 	{ 0, KMZ_MALLOC, FALSE },                       /* 127 M_NWKWQ */
 	{ 0, KMZ_MALLOC, FALSE },                       /* 128 M_CFIL */
+#endif
 #undef  SOS
 #undef  SOX
 };
@@ -531,7 +573,10 @@ kmeminit(void)
 				zone_change(kmz->kz_zalloczone, Z_NOENCRYPT, TRUE);
 			}
 		} else if (kmz->kz_zalloczone == KMZ_LOOKUPZONE) {
+			// we don't need this right now for Darling (and we don't have kalloc_zone)
+#ifndef __DARLING__
 			kmz->kz_zalloczone = kalloc_zone(kmz->kz_elemsize);
+#endif
 		}
 
 		kmz++;
@@ -640,6 +685,8 @@ _FREE(
 	kfree_addr(addr);
 }
 
+// would complicate our current memory allocation system
+#ifndef __DARLING__
 void *
 __REALLOC(
 	void            *addr,
@@ -684,6 +731,7 @@ __REALLOC(
 
 	return newaddr;
 }
+#endif
 
 void *
 _MALLOC_ZONE_external(
@@ -775,6 +823,8 @@ _FREE_ZONE(
 		kfree(elem, size);
 	}
 }
+
+#ifndef __DARLING__
 
 #if DEBUG || DEVELOPMENT
 
@@ -975,3 +1025,5 @@ sysctl_zones_collectable_bytes SYSCTL_HANDLER_ARGS
 SYSCTL_PROC(_kern, OID_AUTO, zones_collectable_bytes,
     CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED,
     0, 0, &sysctl_zones_collectable_bytes, "Q", "Collectable memory in zones");
+
+#endif

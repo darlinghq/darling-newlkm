@@ -474,7 +474,11 @@ get_active_thread(void)
 static inline int
 get_preemption_level(void)
 {
+#ifdef __DARLING__
+	return 0;
+#else
 	CPU_DATA_GET(cpu_preemption_level, int)
+#endif
 }
 static inline int
 get_interrupt_level(void)
@@ -708,6 +712,9 @@ pltrace(boolean_t plenable)
 static inline void
 disable_preemption_internal(void)
 {
+#ifdef __DARLING__
+	printf("STUB: disable_preemption_internal\n");
+#else
 	assert(get_preemption_level() >= 0);
 
 	os_compiler_barrier(release);
@@ -721,6 +728,7 @@ disable_preemption_internal(void)
 #endif
 	os_compiler_barrier(acquire);
 	pltrace(FALSE);
+#endif
 }
 
 static inline void

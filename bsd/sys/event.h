@@ -718,7 +718,7 @@ struct knote {
 	    kn_is_fd:1,                             /* knote is an fd */
 	    kn_vnode_kqok:1,
 	    kn_vnode_use_ofst:1;
-#if __LP64__
+#if __LP64__ && !defined(__DARLING__) // clang refuses to do sign extension for this (at least when building the LKM)
 	intptr_t                    kn_kq_packed : KNOTE_KQ_BITSIZE;
 #else
 	intptr_t                    kn_kq_packed;
@@ -737,7 +737,11 @@ struct knote {
 
 	/* per filter pointer to the resource being watched */
 	union {
+#ifdef __DARLING__
+		struct file        *kn_fp;          /* Linux file pointer */
+#else
 		struct fileproc    *kn_fp;          /* file data pointer */
+#endif
 		struct proc        *kn_proc;        /* proc pointer */
 		struct ipc_mqueue  *kn_mqueue;      /* pset pointer */
 		struct thread_call *kn_thcall;
@@ -819,7 +823,11 @@ struct kevent_ctx_s {
 	user_size_t      kec_data_size;     /* total extra data size */
 	user_size_t      kec_data_resid;    /* residual extra data size */
 	uint64_t         kec_deadline;      /* wait deadline unless KEVENT_FLAG_IMMEDIATE */
+#ifdef __DARLING__
+	struct file     *kec_fp;            /* Linux file pointer (works like XNU's kec_fp: `fput` it when your done) */
+#else
 	struct fileproc *kec_fp;            /* fileproc to pass to fp_drop or NULL */
+#endif
 	int              kec_fd;            /* fd to pass to fp_drop or -1 */
 
 	/* the fields below are only set during process / scan */
@@ -1095,12 +1103,7 @@ struct filterops {
 #define filter_call(_ops, call)  \
 	        ((_ops)->f_extended_codes ? (_ops)->call : !!((_ops)->call))
 
-#ifdef __DARLING__
-struct evpsetfd_ctx;
-SLIST_HEAD(klist, evpsetfd_ctx);
-#else
 SLIST_HEAD(klist, knote);
-#endif
 extern void     knote_init(void);
 extern void     klist_init(struct klist *list);
 

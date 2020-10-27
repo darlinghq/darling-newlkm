@@ -119,3 +119,15 @@ uint64_t ml_get_timebase(void)
 uint64_t mach_continuous_time(void) {
 	return ktime_to_ns(ktime_get_boottime());
 };
+
+// <copied from="xnu://6153.61.1/osfmk/kern/clock.c">
+
+void
+clock_continuoustime_interval_to_deadline(
+	uint64_t                        conttime,
+	uint64_t                        *result)
+{
+	*result = mach_continuous_time() + conttime;
+}
+
+// </copied>

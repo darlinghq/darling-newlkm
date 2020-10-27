@@ -90,8 +90,26 @@
 struct klist;
 struct kqwllist;
 
+#ifdef __DARLING__
+#include <sys/queue.h>
+
+struct kqueue;
+struct dkqueue_list_entry;
+
+typedef LIST_HEAD(dkqueue_list, dkqueue_list_entry) dkqueue_list_t;
+typedef struct dkqueue_list_entry {
+	struct kqueue* kq;
+	int fd;
+	LIST_ENTRY(dkqueue_list_entry) link;
+} dkqueue_list_entry_t;
+#endif
+
 struct filedesc {
+#ifdef __DARLING__
+	dkqueue_list_t kqueue_list;     /* used to keep track of open kqueues */
+#else
 	struct  fileproc **fd_ofiles;   /* file structures for open files */
+#endif
 	lck_mtx_t fd_kqhashlock;        /* lock for dynamic kqueue hash */
 	u_long  fd_kqhashmask;          /* size of dynamic kqueue hash */
 	struct  kqwllist *fd_kqhash;    /* hash table for dynamic kqueues */

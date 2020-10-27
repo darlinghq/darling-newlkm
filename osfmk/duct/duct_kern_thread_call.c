@@ -220,6 +220,12 @@ thread_call_cancel(
 }
 
 boolean_t
+thread_call_cancel_wait(thread_call_t call) {
+	// our `thread_call_cancel` waits anyways
+	return thread_call_cancel(call);
+};
+
+boolean_t
 thread_call_enter_delayed_with_leeway(
         thread_call_t       call,
         thread_call_param_t param1,

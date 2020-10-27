@@ -493,9 +493,7 @@ ipc_mqueue_changed(
 		 *       in filt_machportdetach is skipped correctly.
 		 */
 		assert(space);
-#ifndef __DARLING__
 		knote_vanish(&mqueue->imq_klist, is_active(space));
-#endif
 	}
 
 	if (io_otype(imq_to_object(mqueue)) == IOT_PORT) {

@@ -34,4 +34,14 @@ proc_pid(proc_t p)
 	return -1;
 }
 
+int
+IS_64BIT_PROCESS(proc_t p)
+{
+	if (p && (p->p_flag & P_LP64)) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
 //</copied>

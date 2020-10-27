@@ -389,8 +389,6 @@ ipc_pset_destroy(
 	ips_release(pset);       /* consume the ref our caller gave us */
 }
 
-#ifndef __DARLING__
-
 /*
  * Kqueue EVFILT_MACHPORT support
  *
@@ -1255,4 +1253,3 @@ SECURITY_READ_ONLY_EARLY(struct filterops) machport_filtops = {
 	.f_process = filt_machportprocess,
 	.f_peek = filt_machportpeek,
 };
-#endif

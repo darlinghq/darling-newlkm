@@ -209,6 +209,9 @@ void task_reference_wrapper(task_t t)
 	task_reference(t);
 }
 
+unsigned int task_get_linux_pid(task_t t) {
+	return t->map->linux_task->tgid;
+};
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 typedef u64 cputime_t;

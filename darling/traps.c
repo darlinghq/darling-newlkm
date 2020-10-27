@@ -61,8 +61,6 @@
 #include "task_registry.h"
 #include "pthread_kill.h"
 #include "debug_print.h"
-#include "evprocfd.h"
-#include "evpsetfd.h"
 #include "psynch_support.h"
 #include "binfmt.h"
 #include "commpage.h"
@@ -70,6 +68,7 @@
 #include "continuation.h"
 #include "pthread_kext.h"
 #include "procs.h"
+#include "kqueue.h"
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #define current linux_current
@@ -99,7 +98,7 @@ struct file_operations mach_chardev_ops = {
 
 #define TRAP(num, impl) [num - DARLING_MACH_API_BASE] = { (trap_handler) impl, #impl }
 
-static const struct trap_entry mach_traps[80] = {
+static const struct trap_entry mach_traps[DARLING_MACH_API_COUNT] = {
 	// GENERIC
 	TRAP(NR_get_api_version, mach_get_api_version),
 
@@ -121,8 +120,11 @@ static const struct trap_entry mach_traps[80] = {
 	TRAP(NR_thread_suspended, thread_suspended_entry),
 
 	// KQUEUE
-	TRAP(NR_evproc_create, evproc_create_entry),
-	TRAP(NR_evfilt_machport_open, evfilt_machport_open_entry),
+	TRAP(NR_kqueue_create, kqueue_create_entry),
+	TRAP(NR_kevent, kevent_trap),
+	TRAP(NR_kevent64, kevent64_trap),
+	TRAP(NR_kevent_qos, kevent_qos_trap),
+	TRAP(NR_closing_descriptor, closing_descriptor_entry),
 
 	// PTHREAD
 	TRAP(NR_pthread_kill_trap, pthread_kill_trap),
@@ -362,7 +364,8 @@ out:
 		if (ret == KERN_SUCCESS)
 		{
 			darling_task_fork_child_done();
-			darling_task_post_notification(ppid, NOTE_FORK, task_pid_vnr(linux_current));
+			darling_proc_post_notification(ppid, DTE_FORKED, linux_current->tgid);
+			darling_proc_post_notification(linux_current->tgid, DTE_CHILD_ENTERING, ppid);
 		}
 	}
 
@@ -544,7 +547,7 @@ int mach_dev_release(struct inode* ino, struct file* file)
 
 			rcu_read_unlock();
 		}
-		darling_task_post_notification(current->tgid, NOTE_EXIT, current->exit_code);
+		darling_proc_post_notification(my_task->map->linux_task->tgid, DTE_EXITED, current->exit_code);
 	}
 
 	// This works around an occasional race caused by the above trick when the debugger is terminating.
@@ -656,7 +659,6 @@ extern kern_return_t task_resume(task_t);
 extern void thread_save_regs(thread_t);
 long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioctl_paramv)
 {
-	const unsigned int num_traps = sizeof(mach_traps) / sizeof(mach_traps[0]);
 	const struct trap_entry* entry;
 	long rv = 0;
 	pid_t owner;
@@ -688,7 +690,7 @@ long mach_dev_ioctl(struct file* file, unsigned int ioctl_num, unsigned long ioc
 
 	ioctl_num -= DARLING_MACH_API_BASE;
 
-	if (ioctl_num >= num_traps)
+	if (ioctl_num >= DARLING_MACH_API_COUNT)
 	{
 		rv = -LINUX_ENOSYS;
 		goto out;
@@ -1185,28 +1187,6 @@ int fork_wait_for_child_entry(task_t task)
 	return 0;
 }
 
-int evproc_create_entry(task_t task, struct evproc_create* in_args)
-{
-	struct pid* pidobj;
-	unsigned int pid = 0;
-
-	copyargs(args, in_args);
-
-	// Convert virtual PID to global PID
-	rcu_read_lock();
-
-	pidobj = find_vpid(args.pid);
-	if (pidobj != NULL)
-		pid = pid_nr(pidobj);
-
-	rcu_read_unlock();
-
-	if (pid == 0)
-		return -LINUX_ESRCH;
-
-	return evprocfd_create(pid, args.flags, NULL);
-}
-
 unsigned int vpid_to_pid(unsigned int vpid)
 {
 	struct pid* pidobj;
@@ -1342,7 +1322,7 @@ int tid_for_thread_entry(task_t task, void* tport_in)
 
 int task_pid(task_t task)
 {
-	return task_pid_vnr(task->map->linux_task);
+	return (task && task->map && task->map->linux_task) ? task_pid_vnr(task->map->linux_task) : -1;
 }
 
 // This call exists only because we do Mach-O loading in user space.
@@ -1370,13 +1350,6 @@ int kernel_printk_entry(task_t task, struct kernel_printk_args* in_args)
 	printk(KERN_DEBUG "Darling TID %d (PID %d) says: %s\n", current->pid, current->tgid, args.buf);
 
 	return 0;
-}
-
-int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* in_args)
-{
-	copyargs(args, in_args);
-
-	return evpsetfd_create(args.port_name, &args.opts);
 }
 
 // Evaluate given path relative to provided fd (or AT_FDCWD).
@@ -1415,7 +1388,7 @@ failure:
 
 // These ported BSD syscalls have a different way of reporting errors.
 // This is because BSD (unlike Linux) doesn't report errors by returning a negative number.
-#define PSYNCH_ENTRY(name) \
+#define BSD_ENTRY(name) \
 	int name##_trap(task_t task, struct name##_args* in_args) \
 	{ \
 		copyargs(args, in_args); \
@@ -1426,15 +1399,15 @@ failure:
 		return *retval; \
 	}
 
-PSYNCH_ENTRY(psynch_mutexwait);
-PSYNCH_ENTRY(psynch_mutexdrop);
-PSYNCH_ENTRY(psynch_cvwait);
-PSYNCH_ENTRY(psynch_cvsignal);
-PSYNCH_ENTRY(psynch_cvbroad);
-PSYNCH_ENTRY(psynch_rw_rdlock);
-PSYNCH_ENTRY(psynch_rw_wrlock);
-PSYNCH_ENTRY(psynch_rw_unlock);
-PSYNCH_ENTRY(psynch_cvclrprepost);
+BSD_ENTRY(psynch_mutexwait);
+BSD_ENTRY(psynch_mutexdrop);
+BSD_ENTRY(psynch_cvwait);
+BSD_ENTRY(psynch_cvsignal);
+BSD_ENTRY(psynch_cvbroad);
+BSD_ENTRY(psynch_rw_rdlock);
+BSD_ENTRY(psynch_rw_wrlock);
+BSD_ENTRY(psynch_rw_unlock);
+BSD_ENTRY(psynch_cvclrprepost);
 
 int getuidgid_entry(task_t task, struct uidgid* in_args)
 {
@@ -2448,6 +2421,23 @@ int set_thread_handles_entry(task_t t, struct set_thread_handles_args* in_args)
 
 	return 0;
 }
+
+int kqueue_create_entry(task_t task) {
+	return darling_kqueue_create(task);
+};
+
+extern int kevent(struct proc* p, struct kevent_args* uap, int32_t* retval);
+extern int kevent64(struct proc* p, struct kevent64_args* uap, int32_t* retval);
+extern int kevent_qos(struct proc* p, struct kevent_qos_args* uap, int32_t* retval);
+
+BSD_ENTRY(kevent);
+BSD_ENTRY(kevent64);
+BSD_ENTRY(kevent_qos);
+
+int closing_descriptor_entry(task_t task, struct closing_descriptor_args* in_args) {
+	copyargs(args, in_args);
+	return darling_closing_descriptor(task, args.fd);
+};
 
 module_init(mach_init);
 module_exit(mach_exit);

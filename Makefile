@@ -110,7 +110,7 @@ DEFINES := \
 	-DIPV6FIREWALL_DEFAULT_TO_ACCEPT \
 	-Dcrypto \
 	-Drandomipid \
-	-DCONFIG_KN_HASHSIZE=20 \
+	-DCONFIG_KN_HASHSIZE=64 \
 	-DCONFIG_VNODES=750 \
 	-DCONFIG_VNODE_FREE_MIN=75 \
 	-DCONFIG_NC_HASH=1024 \
@@ -142,7 +142,8 @@ DEFINES := \
 	-DCONFIG_APP_PROFILE=0 \
 	-DCC_USING_FENTRY=1 \
 	-DIMPORTANCE_INHERITANCE=1 \
-	-DMACH_BSD
+	-DMACH_BSD=1 \
+	-DCONFIG_REQUIRES_U32_MUNGING=1
 
 OTHER_FLAGS := \
 	-std=gnu11
@@ -261,6 +262,7 @@ OBJS_bsd = \
 	$(OBJS_bsd/uxkern) \
 	$(OBJS_bsd/duct)
 OBJS_bsd/kern = \
+	bsd/kern/kern_malloc.o \
 	bsd/kern/qsort.o
 OBJS_bsd/pthread = \
 	bsd/pthread/pthread_priority.o \
@@ -268,10 +270,15 @@ OBJS_bsd/pthread = \
 OBJS_bsd/uxkern = \
 	bsd/uxkern/ux_exception.o
 OBJS_bsd/duct = \
+	bsd/duct/duct_dev_arch_systemcalls.o \
+	bsd/duct/duct_kern_bsd_init.o \
 	bsd/duct/duct_kern_bsd_stubs.o \
+	bsd/duct/duct_kern_kern_descrip.o \
 	bsd/duct/duct_kern_kern_fork.o \
 	bsd/duct/duct_kern_kern_proc.o \
 	bsd/duct/duct_kern_kern_sig.o \
+	bsd/duct/duct_kern_kern_subr.o \
+	bsd/duct/duct_kern_kern_time.o \
 	bsd/duct/duct_uxkern_ux_exception.o
 
 #
@@ -387,10 +394,9 @@ OBJS_darling = \
 	darling/continuation-asm.o \
 	darling/continuation.o \
 	darling/down_interruptible.o \
-	darling/evprocfd.o \
-	darling/evpsetfd.o \
 	darling/foreign_mm.o \
 	darling/host_info.o \
+	darling/kqueue.o \
 	darling/module.o \
 	darling/procs.o \
 	darling/psynch_support.o \

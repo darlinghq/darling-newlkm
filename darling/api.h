@@ -31,7 +31,7 @@
 #define darling_mach_xstr(a) darling_mach_str(a)
 #define darling_mach_str(a) #a
 
-#define DARLING_MACH_API_VERSION		18
+#define DARLING_MACH_API_VERSION		19
 #define DARLING_MACH_API_VERSION_STR	darling_mach_xstr(DARLING_MACH_API_VERSION)
 
 #define DARLING_MACH_API_BASE		0x1000
@@ -71,9 +71,7 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR__kernelrpc_mach_port_extract_member_trap,
 	NR_thread_death_announce,
 	NR__kernelrpc_mach_port_insert_right_trap, // 0x20
-	NR_evfilt_machport_open,
 	NR_fork_wait_for_child,
-	NR_evproc_create,
 	NR_task_for_pid_trap,
 	NR_pid_for_task_trap,
 	NR_set_dyld_info,
@@ -117,7 +115,16 @@ enum { NR_get_api_version = DARLING_MACH_API_BASE,
 	NR__kernelrpc_mach_port_destruct_trap,
 	NR__kernelrpc_mach_port_guard_trap,
 	NR__kernelrpc_mach_port_unguard_trap,
+	NR_kqueue_create,
+	NR_kevent,
+	NR_kevent64,
+	NR_kevent_qos,
+	NR_closing_descriptor,
+
+	DARLING_MACH_API_ALMOST_COUNT, // don't use this directly (it's offset by the API base number); use `DARLING_MACH_API_COUNT`
 };
+
+#define DARLING_MACH_API_COUNT (DARLING_MACH_API_ALMOST_COUNT - DARLING_MACH_API_BASE)
 
 struct set_tracer_args
 {
@@ -144,52 +151,6 @@ struct path_at_args
 	const char* path;
 	char* path_out;
 	unsigned int max_path_out;
-};
-
-struct evproc_create
-{
-	unsigned int pid;
-	unsigned int flags;
-};
-
-// What is read from the fd
-struct evproc_event
-{
-	unsigned int event;
-	unsigned int extra;
-};
-
-// What can be written into the fd (to update rcv buffer)
-struct evpset_options
-{
-	void* rcvbuf;
-#ifdef __i386__
-	unsigned int pad1;
-#endif
-	unsigned long rcvbuf_size;
-#ifdef __i386__
-	unsigned int pad2;
-#endif
-	unsigned int sfflags;
-};
-
-struct evfilt_machport_open_args
-{
-	unsigned int port_name;
-	struct evpset_options opts;
-};
-
-// What is read from the fd
-struct evpset_event
-{
-	unsigned int flags; // kn_flags, override flags in libkqueue if non-zero
-	unsigned int port; // kn_data
-	unsigned long msg_size; // kn_ext[1]
-#ifdef __i386__
-	unsigned int pad1;
-#endif
-	unsigned int receive_status; // kn_fflags
-	unsigned char process_data[32];
 };
 
 struct mach_port_insert_right_args
@@ -619,6 +580,43 @@ struct set_thread_handles_args
 {
 	unsigned long long pthread_handle;
 	unsigned long long dispatch_qaddr;
+};
+
+// we pass these directly to their BSD functions; the BSD fucntions have their own padding format (see sysproto.h)
+#define DARLING_BSD_ARG(_type, _name) _type _name; char _ ## _name ## _padding[(sizeof(uint64_t) <= sizeof(_type) ? 0 : sizeof(uint64_t) - sizeof(_type))]
+
+struct kevent_args {
+	DARLING_BSD_ARG(int, fd);
+	DARLING_BSD_ARG(uint64_t, changelist);
+	DARLING_BSD_ARG(int, nchanges);
+	DARLING_BSD_ARG(uint64_t, eventlist);
+	DARLING_BSD_ARG(int, nevents);
+	DARLING_BSD_ARG(uint64_t, timeout);
+};
+
+struct kevent64_args {
+	DARLING_BSD_ARG(int, fd);
+	DARLING_BSD_ARG(uint64_t, changelist);
+	DARLING_BSD_ARG(int, nchanges);
+	DARLING_BSD_ARG(uint64_t, eventlist);
+	DARLING_BSD_ARG(int, nevents);
+	DARLING_BSD_ARG(unsigned int, flags);
+	DARLING_BSD_ARG(uint64_t, timeout);
+};
+
+struct kevent_qos_args {
+	DARLING_BSD_ARG(int, fd);
+	DARLING_BSD_ARG(uint64_t, changelist);
+	DARLING_BSD_ARG(int, nchanges);
+	DARLING_BSD_ARG(uint64_t, eventlist);
+	DARLING_BSD_ARG(int, nevents);
+	DARLING_BSD_ARG(uint64_t, data_out);
+	DARLING_BSD_ARG(uint64_t, data_available);
+	DARLING_BSD_ARG(unsigned int, flags);
+};
+
+struct closing_descriptor_args {
+	int fd;
 };
 
 #pragma pack (pop)

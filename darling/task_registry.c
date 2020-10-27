@@ -19,7 +19,6 @@
 #include <duct/compiler/clang/asm-inline.h>
 #include <linux/types.h>
 #include "task_registry.h"
-#include "evprocfd.h"
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/version.h>
@@ -45,6 +44,8 @@ DEFINE_SPINLOCK(my_thread_lock);
 DEFINE_HASHTABLE(all_tasks, 6);
 DEFINE_HASHTABLE(all_threads, 6);
 static unsigned int task_count = 0;
+
+extern unsigned int task_get_linux_pid(task_t t);
 
 static struct registry_entry* darling_task_get_entry_unlocked(int pid);
 
@@ -84,14 +85,20 @@ struct registry_entry
 struct proc_notification
 {
 	struct list_head list;
-	struct evprocfd_ctx* efd;
+	int registration_id;
+	darling_proc_notification_listener listener;
+	void* context;
+	darling_proc_event_t event_mask;
 };
+
+static struct kmem_cache* proc_notification_cache = NULL;
 
 void darling_task_init(void)
 {
+	proc_notification_cache = kmem_cache_create("proc_notification", sizeof(struct proc_notification), 0, 0, NULL);
 }
 
-static void darling_task_post_notification_internal(struct registry_entry* entry, unsigned int event, unsigned int extra)
+static void darling_proc_post_notification_internal(struct registry_entry* entry, darling_proc_event_t event, unsigned long int extra)
 {
 	struct list_head *pos, *tmp;
 
@@ -102,22 +109,28 @@ static void darling_task_post_notification_internal(struct registry_entry* entry
 	list_for_each_safe(pos, tmp, &entry->proc_notification)
 	{
 		struct proc_notification* dn = list_entry(pos, struct proc_notification, list);
-		evprocfd_notify(dn->efd, event, extra);
+		if ((event & dn->event_mask) != 0) {
+			dn->listener(entry->tid, dn->context, event, extra);
+		}
 	}
 	
 	mutex_unlock(&entry->mut_proc_notification);
 }
 
-void darling_task_post_notification(unsigned int pid, unsigned int event, unsigned int extra)
+_Bool darling_proc_post_notification(int pid, darling_proc_event_t event, unsigned long int extra)
 {
 	struct registry_entry* e;
-	rcu_read_lock();
 
+	rcu_read_lock();
 	e = darling_task_get_entry_unlocked(pid);
-	
 	rcu_read_unlock();
-	if (e != NULL)
-		darling_task_post_notification_internal(e, event, extra);
+
+	if (e != NULL) {
+		darling_proc_post_notification_internal(e, event, extra);
+		return true;
+	}
+
+	return false;
 }
 
 static struct registry_entry* darling_task_get_current_entry(void)
@@ -226,7 +239,7 @@ void darling_task_register(task_t task)
 			this->task = task;
 				
 			// exec case
-			darling_task_post_notification_internal(this, NOTE_EXEC, 0);
+			darling_proc_post_notification_internal(this, DTE_REPLACED, 0);
 			
 			rcu_read_unlock();
 			return;
@@ -293,7 +306,7 @@ void darling_task_free(struct registry_entry* entry)
 	list_for_each_safe(pos, tmp, &entry->proc_notification)
 	{
 		struct proc_notification* dn = list_entry(pos, struct proc_notification, list);
-		kfree(dn);
+		kmem_cache_free(proc_notification_cache, dn);
 	}
 
 	for (i = 0; i < TASK_KEY_COUNT; i++)
@@ -402,34 +415,43 @@ void darling_task_fork_child_done(void)
 	rcu_read_unlock();
 }
 
-_Bool darling_task_notify_register(unsigned int pid, struct evprocfd_ctx* efd)
+long int darling_proc_notify_register(int pid, darling_proc_notification_listener listener, void* context, darling_proc_event_t event_mask)
 {
 	struct proc_notification* dn;
 	struct registry_entry* e;
-	_Bool rv = false;
+	static long int reg_id_counter = 0;
+	long int rv = 0;
 
 	rcu_read_lock();
 
-   	e = darling_task_get_entry_unlocked(pid);
-   	
-	if (e == NULL)
-		goto out;
+	e = darling_task_get_entry_unlocked(pid);
 
-	dn = (struct proc_notification*) kmalloc(sizeof(*dn), GFP_KERNEL);
-	dn->efd = efd;
+	if (e == NULL) {
+		rv = -ESRCH;
+		goto out;
+	}
+
+	dn = (struct proc_notification*)kmem_cache_alloc(proc_notification_cache, GFP_KERNEL);
+	dn->listener = listener;
+	dn->context = context;
+	dn->event_mask = event_mask;
 
 	mutex_lock(&e->mut_proc_notification);
+	rv = dn->registration_id = reg_id_counter++;
+	// underflow
+	if (reg_id_counter < 0) {
+		// i doubt we'll have both listener `0` and listener `(2**63)` active at the same time
+		reg_id_counter = 0;
+	}
 	list_add(&dn->list, &e->proc_notification);
 	mutex_unlock(&e->mut_proc_notification);
-	
-	rv = true;
 
 out:
 	rcu_read_unlock();
 	return rv;
 }
 
-_Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
+_Bool darling_proc_notify_deregister(int pid, long int registration_id)
 {
 	struct registry_entry* e;
 	_Bool rv = false;
@@ -441,7 +463,7 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 
 	if (e == NULL)
 	{
-		debug_msg("darling_task_notify_deregister failed to get task for PID %d\n", pid);
+		debug_msg("darling_proc_notify_deregister failed to get task for PID %d\n", pid);
 		goto out;
 	}
 
@@ -450,12 +472,12 @@ _Bool darling_task_notify_deregister(unsigned int pid, struct evprocfd_ctx* efd)
 	{
 		struct proc_notification* dn = list_entry(next, struct proc_notification, list);
 
-		if (dn->efd == efd)
+		if (dn->registration_id == registration_id)
 		{
-			debug_msg("darling_task_notify_deregister found proc notification entry for ctx %p, deleting it...\n", efd);
+			debug_msg("darling_proc_notify_deregister found proc notification entry for id %ld, deleting it...\n", registration_id);
 			rv = true;
 			list_del(&dn->list);
-			kfree(dn);
+			kmem_cache_free(proc_notification_cache, dn);
 			break;
 		}
 	}

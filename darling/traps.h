@@ -72,7 +72,6 @@ int thread_death_announce_entry(task_t task);
 
 int fork_wait_for_child_entry(task_t task);
 
-int evproc_create_entry(task_t task, struct evproc_create* args);
 int task_for_pid_entry(task_t task, struct task_for_pid* args);
 int task_name_for_pid_entry(task_t task, struct task_name_for_pid* args);
 int pid_for_task_entry(task_t task, struct pid_for_task* args);
@@ -82,7 +81,6 @@ int set_dyld_info_entry(task_t task, struct set_dyld_info_args* args);
 int stop_after_exec_entry(task_t task);
 int kernel_printk_entry(task_t task, struct kernel_printk_args* args);
 
-int evfilt_machport_open_entry(task_t task, struct evfilt_machport_open_args* args);
 int path_at_entry(task_t task, struct path_at_args* args);
 
 int psynch_mutexwait_trap(task_t task, struct psynch_mutexwait_args* args);
@@ -123,5 +121,12 @@ int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* args);
 int ptrace_sigexc_entry(task_t task, struct ptrace_sigexc_args* args);
 int thread_suspended_entry(task_t t, struct thread_suspended_args* args);
 int set_thread_handles_entry(task_t t, struct set_thread_handles_args* args);
+
+int kqueue_create_entry(task_t task);
+int kevent_trap(task_t task, struct kevent_args* args);
+int kevent64_trap(task_t task, struct kevent64_args* args);
+int kevent_qos_trap(task_t task, struct kevent_qos_args* args);
+
+int closing_descriptor_entry(task_t task, struct closing_descriptor_args* args);
 
 #endif

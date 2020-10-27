@@ -52,6 +52,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <darling/debug_print.h>
 
 extern void compat_init (void);
+extern void bsd_init(void);
 
 static void duct_kernel_bootstrap_thread (void);
 //void duct_waitq_bootstrap (void);
@@ -301,9 +302,9 @@ static void duct_kernel_bootstrap_thread (void)
         // /*
         //  *    Start the user bootstrap.
         //  */
-        // #ifdef    MACH_BSD
-        // bsd_init();
-        // #endif
+#ifdef    MACH_BSD
+        bsd_init();
+#endif
         compat_init ();
 
         // /*

@@ -294,7 +294,6 @@ thread_call_cancel(
         kprintf("not implemented: thread_call_cancel()\n");
         return 0;
 }
-#endif
 
 /*
  * Cancel a thread call.  If it cannot be cancelled (i.e.
@@ -311,6 +310,7 @@ thread_call_cancel_wait(
         kprintf("not implemented: thread_call_cancel_wait()\n");
         return 0;
 }
+#endif
 
 
 #ifndef __LP64__
