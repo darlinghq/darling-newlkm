@@ -175,9 +175,11 @@ static unsigned int dkqueue_poll(struct file* file, poll_table* wait) {
 	poll_wait(file, &kqf->kqf_wqs.wqset_q.linux_wq, wait);
 
 	if (!poll_does_not_wait(wait)) {
+		kqlock(kqf);
 		// remember to set this; otherwise no one will wake us up when a knote gets activated!
 		// we only set it when we begin to wait, though, to mimic XNU's behavior
 		kqf->kqf_state |= KQ_SEL;
+		kqunlock(kqf);
 	}
 
 	// XNU `select` normally provides a value for wq_link_id so that the fileop links its waitq onto the thread's waitq_set

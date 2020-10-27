@@ -2219,6 +2219,15 @@ prepost:
 }
 
 extern void* hashinit(int elements, int type, u_long* hashmask);
+static void* darling_psynch_hashinit(int elements, int type, u_long* hashmask) {
+	struct pthhashhead* hashtbl = hashinit(elements, type, hashmask);
+	if (hashtbl) {
+		long hashsize = *hashmask + 1;
+		for (int i = 0; i < hashsize; i++)
+			LIST_INIT(&hashtbl[i]);
+	}
+	return hashtbl;
+};
 
 void
 psynch_init(void)
@@ -2240,7 +2249,7 @@ pth_global_hashinit()
 {
 	int arg;
 
-	pth_glob_hashtbl = hashinit(PTH_HASHSIZE * 4, M_PROC, &pthhash);
+	pth_glob_hashtbl = darling_psynch_hashinit(PTH_HASHSIZE * 4, M_PROC, &pthhash);
 
 #ifndef __DARLING__
 	/*
@@ -2277,7 +2286,7 @@ pth_global_hashexit()
 void
 darling_pth_proc_hashinit(proc_t p)
 {
-	p->p_pthhash  = hashinit(PTH_HASHSIZE, M_PROC, &pthhash);
+	p->p_pthhash  = darling_psynch_hashinit(PTH_HASHSIZE, M_PROC, &pthhash);
 	if (p->p_pthhash == NULL)
 		panic("pth_proc_hashinit: hash init returned 0\n");
 }
