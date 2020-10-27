@@ -1202,7 +1202,9 @@ int darling_kqueue_create(struct task* task) {
 	// we use `fcheck` because we DON'T want to increment the file's refcount
 	// this pointer will only be used as long as the file is open anyways,
 	// since the kqueue is alive as long as the file is
+	rcu_read_lock();
 	kq->kqf_kqueue.dkq_fp = fcheck(fd);
+	rcu_read_unlock();
 
 	// attach it onto the list of open kqueues
 	proc_fdlock(proc);
@@ -1249,11 +1251,20 @@ int darling_closing_descriptor(struct task* task, int fd) {
 	proc_t proc = get_bsdtask_info(task);
 
 	proc_fdlock(proc);
+
+	rcu_read_lock();
+	if (!fcheck(fd)) {
+		rcu_read_unlock();
+		goto out;
+	}
+	rcu_read_unlock();
+
 	if (fd < proc->p_fd->fd_knlistsize) {
-		dkqueue_log("fd %d closed; closing knote for it...", fd);
+		dkqueue_log("fd %d is closing; closing knote for it...", fd);
 		knote_fdclose(proc, fd);
 	}
-	proc_fdunlock(proc);
 
+out:
+	proc_fdunlock(proc);
 	return 0;
 };
