@@ -221,9 +221,10 @@ static int dkqueue_release(struct inode* inode, struct file* file) {
 			}
 
 			// XNU always calls `drain` then `close`; let's do likewise
-			// also, `kqueue_close` takes `proc_fdlock`, so make sure it's unlocked
-			proc_fdunlock(proc);
 			kqueue_drain(kqf);
+
+			// `kqueue_close` takes `proc_fdlock`, so make sure it's unlocked
+			proc_fdunlock(proc);
 			kqueue_close(kqf);
 			proc_fdlock(proc);
 
@@ -1146,8 +1147,9 @@ void dkqueue_clear(struct proc* proc) {
 		// nullify the file's private data so dkqueue_release doesn't do anything
 		curr->kq->dkq_fp->private_data = NULL;
 
-		proc_fdunlock(proc);
 		kqueue_drain(curr->kq);
+
+		proc_fdunlock(proc);
 		kqueue_close(curr->kq);
 		proc_fdlock(proc);
 
