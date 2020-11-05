@@ -154,7 +154,6 @@ thread_call_allocate_with_options(
 {
 	thread_call_t call = thread_call_allocate(func, param0);
 
-#ifndef __DARLING__
 	switch (pri) {
 	case THREAD_CALL_PRIORITY_HIGH:
 		call->tc_index = THREAD_CALL_INDEX_HIGH;
@@ -182,7 +181,6 @@ thread_call_allocate_with_options(
 	if (options & THREAD_CALL_OPTIONS_SIGNAL) {
 		call->tc_flags |= THREAD_CALL_SIGNAL | THREAD_CALL_ONCE;
 	}
-#endif
 
 	return call;
 }
@@ -235,8 +233,20 @@ thread_call_enter_delayed_with_leeway(
 {
     // We don't do leeways
     ((call_entry_t)call)->param1 = param1;
+		if ((flags & THREAD_CALL_CONTINUOUS) != 0) {
+			call->tc_flags |= THREAD_CALL_CONTINUOUS;
+		} else {
+			call->tc_flags &= ~THREAD_CALL_CONTINUOUS;
+		}
     return thread_call_enter_delayed(call, deadline);
 }
+
+static uint64_t deadline_to_delay(uint64_t deadline, bool continuous) {
+	int64_t delay = deadline - (continuous ? mach_continuous_time() : mach_absolute_time());
+	if (delay < 0)
+		delay = 0;
+	return (uint64_t)delay;
+};
 
 /*
  *  thread_call_enter_delayed:
@@ -252,23 +262,26 @@ thread_call_enter_delayed(
         thread_call_t       call,
         uint64_t            deadline)
 {
-	int64_t diffns;
+	uint64_t delay;
 
 	debug_msg("thread_call_enter_delayed(call=%p, deadline=%lld)\n", call, deadline);
 	assert(_thread_call_wq != NULL);
 
-	diffns = deadline - mach_absolute_time();
+	delay = deadline_to_delay(deadline, (call->tc_flags & THREAD_CALL_CONTINUOUS) != 0);
 
-	if (diffns < 0)
-		diffns = 0;
+	debug_msg("... delayed by %llu ns\n", delay);
 
-	debug_msg("... delayed by %lld ns\n", diffns);
-
-	if (queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns)) == 0)
+	if (queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(delay)) == 0)
 	{
-		// Re-schedule
-		cancel_delayed_work_sync(&call->tc_work);
-		queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(diffns));
+		if ((call->tc_flags & THREAD_CALL_ONCE) != 0) {
+			// tell the worker to reschedule itself when it's done
+			call->tc_flags |= THREAD_CALL_RESCHEDULE;
+			call->tc_deadline = deadline;
+		} else {
+			// Re-schedule
+			cancel_delayed_work_sync(&call->tc_work);
+			queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(delay));
+		}
 		return TRUE;
 	}
 	return FALSE;
@@ -290,9 +303,14 @@ thread_call_enter(
 {
 	if (queue_delayed_work(_thread_call_wq, &call->tc_work, 0) == 0)
 	{
-		// Re-schedule
-		cancel_delayed_work_sync(&call->tc_work);
-		queue_delayed_work(_thread_call_wq, &call->tc_work, 0);
+		if ((call->tc_flags & THREAD_CALL_ONCE) != 0) {
+			call->tc_flags |= THREAD_CALL_RESCHEDULE;
+			call->tc_deadline = 0;
+		} else {
+			// Re-schedule
+			cancel_delayed_work_sync(&call->tc_work);
+			queue_delayed_work(_thread_call_wq, &call->tc_work, 0);
+		}
 		return TRUE;
 	}
 	return FALSE;
@@ -321,5 +339,9 @@ thread_call_worker(struct work_struct* work)
 
 	if (call->free)
 		kfree(call, sizeof(struct thread_call));
+	else if ((call->tc_flags & THREAD_CALL_RESCHEDULE) != 0) {
+		call->tc_flags &= ~THREAD_CALL_RESCHEDULE;
+		queue_delayed_work(_thread_call_wq, &call->tc_work, deadline_to_delay(call->tc_deadline, (call->tc_flags & THREAD_CALL_CONTINUOUS) != 0));
+	}
 }
 

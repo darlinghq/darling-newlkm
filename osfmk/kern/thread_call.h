@@ -362,6 +362,9 @@ struct thread_call {
 	struct call_entry tc_call;
 	struct delayed_work tc_work;
 	int free;
+	thread_call_index_t tc_index;
+	uint32_t tc_flags;
+	uint64_t tc_deadline;
 };
 #else
 struct thread_call {
