@@ -86,7 +86,11 @@ pqueue_pair_meld(priority_queue_entry_t elt, priority_queue_compare_fn_t cmp_fn)
 
 void
 pqueue_destroy(struct priority_queue *q, size_t offset,
+#ifdef __DARLING__
+    void (*callback)(void *e))
+#else
     void (^callback)(void *e))
+#endif
 {
 	assert(callback != NULL);
 	priority_queue_entry_t head = pqueue_unpack_root(q);

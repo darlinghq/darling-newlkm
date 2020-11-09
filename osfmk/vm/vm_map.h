@@ -298,7 +298,11 @@ struct vm_map_entry {
 	/* boolean_t */ vme_resilient_media:1,
 	/* boolean_t */ vme_atomic:1, /* entry cannot be split/coalesced */
 	/* boolean_t */ vme_no_copy_on_read:1,
+#ifdef __DARLING__
+	__unused_not_macro:3; // prevents it from being expanded as the `__unused` macro when using GCC
+#else
 	__unused:3;
+#endif
 
 	unsigned short          wired_count;    /* can be paged if = 0 */
 	unsigned short          user_wired_count; /* for vm_wire */

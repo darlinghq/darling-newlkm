@@ -93,12 +93,12 @@ struct kqwllist;
 #ifdef __DARLING__
 #include <sys/queue.h>
 
-struct kqueue;
+struct kqfile;
 struct dkqueue_list_entry;
 
 typedef LIST_HEAD(dkqueue_list, dkqueue_list_entry) dkqueue_list_t;
 typedef struct dkqueue_list_entry {
-	struct kqueue* kq;
+	struct kqfile* kq;
 	int fd;
 	LIST_ENTRY(dkqueue_list_entry) link;
 } dkqueue_list_entry_t;

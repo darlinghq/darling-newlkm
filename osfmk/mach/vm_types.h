@@ -174,9 +174,15 @@ struct vm_allocation_site {
 };
 typedef struct vm_allocation_site vm_allocation_site_t;
 
+#if defined(__DARLING__) && !defined(__clang__)
+#define VM_ALLOC_SITE_STATIC(iflags, itag)                                          \
+	static vm_allocation_site_t site __attribute__((nocommon)) \
+	 = { .refcount = 2, .tag = (itag), .flags = (iflags) };
+#else
 #define VM_ALLOC_SITE_STATIC(iflags, itag)                                          \
 	static vm_allocation_site_t site __attribute__((section("__DATA, __data"))) \
 	 = { .refcount = 2, .tag = (itag), .flags = (iflags) };
+#endif
 
 extern int vmrtf_extract(uint64_t, boolean_t, int, void *, int *);
 extern unsigned int vmrtfaultinfo_bufsz(void);

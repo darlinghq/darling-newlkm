@@ -23,10 +23,17 @@
 
 #ifdef __DARLING__
 #include_next <stdatomic.h>
-#ifndef memory_order
-#endif
 #ifndef __clang__
-enum memory_order {};
+#ifndef DARLING_GCC_STDATOMIC_H
+#define DARLING_GCC_STDATOMIC_H
+enum memory_order {
+  memory_order_relaxed_dummy = memory_order_relaxed,
+  memory_order_consume_dummy = memory_order_consume,
+  memory_order_acquire_dummy = memory_order_acquire,
+  memory_order_release_dummy = memory_order_release,
+  memory_order_acq_rel_dummy = memory_order_acq_rel,
+  memory_order_seq_cst_dummy = memory_order_seq_cst
+};
 //#define __c11_atomic_init()
 #define __c11_atomic_thread_fence(_order) __atomic_thread_fence(_order)
 #define __c11_atomic_signal_fence(_order) __atomic_signal_fence(_order)
@@ -41,6 +48,7 @@ enum memory_order {};
 #define __c11_atomic_fetch_and(_ptr, _val, _order) __atomic_and_fetch(_ptr, _val, _order)
 #define __c11_atomic_fetch_or(_ptr, _val, _order) __atomic_or_fetch(_ptr, _val, _order)
 #define __c11_atomic_fetch_xor(_ptr, _val, _order) __atomic_xor_fetch(_ptr, _val, _order)
+#endif // DARLING_GCC_STDATOMIC_H
 #endif
 #else
 

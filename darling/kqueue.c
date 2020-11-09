@@ -683,7 +683,7 @@ static void dkqueue_proc_listener(int pid, void* context, darling_proc_event_t e
 
 	// since we don't actually save a process to `kn_proc`,
 	// we use it to save our data (we can't use kn_hook32 because we already assign our context to kn_hook)
-	saved_data = &kn->kn_proc;
+	saved_data = (uint32_t*)&kn->kn_proc;
 	*saved_data = 0;
 
 	dkqueue_log("received event %d from Darling's process notification system for Linux PID %d with extra=%ld", event, pid, extra);
@@ -828,7 +828,7 @@ static int dkqueue_proc_touch(struct knote* kn, struct kevent_qos_s* kev) {
 };
 
 static int dkqueue_proc_process(struct knote* kn, struct kevent_qos_s* kev) {
-	uint32_t* saved_data = &kn->kn_proc;
+	uint32_t* saved_data = (uint32_t*)&kn->kn_proc;
 
 	if (kn->kn_fflags == 0) {
 		// we've got no events ready
@@ -1145,7 +1145,7 @@ void dkqueue_clear(struct proc* proc) {
 		LIST_REMOVE(curr, link);
 
 		// nullify the file's private data so dkqueue_release doesn't do anything
-		curr->kq->dkq_fp->private_data = NULL;
+		curr->kq->kqf_kqueue.dkq_fp->private_data = NULL;
 
 		kqueue_drain(curr->kq);
 
@@ -1239,7 +1239,7 @@ error_out:
 		// otherwise (if it *has* been created), Linux will call `dkqueue_release` on the file
 		// and that will cleanup the kqueue and the list entry for us
 		if (kq) {
-			kqueue_dealloc(kq);
+			kqueue_dealloc(&kq->kqf_kqueue);
 		}
 		if (le) {
 			kmem_cache_free(dkqueue_list_entry_cache, le);

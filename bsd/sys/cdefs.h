@@ -67,10 +67,6 @@
 #ifndef _CDEFS_H_
 #define _CDEFS_H_
 
-#ifdef __DARLING__
-#include <duct/compiler/gcc/has-builtin.h>
-#endif
-
 #if defined(__cplusplus)
 #define __BEGIN_DECLS   extern "C" {
 #define __END_DECLS     }

@@ -268,6 +268,10 @@ static_assert(sizeof(lck_rw_t) == LCK_RW_T_SIZE);
 
 #if LOCK_PRIVATE
 
+#ifdef __DARLING__
+#define GS_RELATIVE
+#endif
+
 #define disable_preemption_for_thread(t) ((cpu_data_t GS_RELATIVE *)0UL)->cpu_preemption_level++
 #define preemption_disabled_for_thread(t) (((cpu_data_t GS_RELATIVE *)0UL)->cpu_preemption_level > 0)
 

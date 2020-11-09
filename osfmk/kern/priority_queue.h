@@ -177,8 +177,13 @@ typedef struct priority_queue_entry {
  * Return:
  * comparision result to indicate relative ordering of elements according to the heap type
  */
+#ifdef __DARLING__
+typedef int (*priority_queue_compare_fn_t)(struct priority_queue_entry *e1,
+    struct priority_queue_entry *e2);
+#else
 typedef int (^priority_queue_compare_fn_t)(struct priority_queue_entry *e1,
     struct priority_queue_entry *e2);
+#endif
 
 /*
  * Standard comparision routines for max and min heap.
@@ -190,6 +195,15 @@ priority_queue_element_builtin_key_compare(priority_queue_entry_t e1, priority_q
 	return (int)e2->key - (int)e1->key;
 }
 
+#ifdef __DARLING__
+#define priority_heap_make_comparator(...) _Static_assert(0, "can't use priority_heap_make_comparator in Darling")
+static inline int PRIORITY_QUEUE_SCHED_PRI_MAX_HEAP_COMPARE(priority_queue_entry_t e1, priority_queue_entry_t e2) {
+	return -priority_queue_element_builtin_key_compare(e1, e2);
+};
+static inline int PRIORITY_QUEUE_SCHED_PRI_MIN_HEAP_COMPARE(priority_queue_entry_t e1, priority_queue_entry_t e2) {
+	return priority_queue_element_builtin_key_compare(e1, e2);
+};
+#else
 #define priority_heap_make_comparator(name1, name2, type, field, ...) \
 	(^int(priority_queue_entry_t __e1, priority_queue_entry_t __e2){                                        \
 	    type *name1 = pqe_element_fast(__e1, type, field);                                                  \
@@ -206,6 +220,7 @@ priority_queue_element_builtin_key_compare(priority_queue_entry_t e1, priority_q
 	(^int(priority_queue_entry_t e1, priority_queue_entry_t e2){                                            \
 	    return priority_queue_element_builtin_key_compare(e1, e2);                                          \
 	})
+#endif
 
 /*
  * Helper routines for packing/unpacking the child pointer in heap nodes.
@@ -508,7 +523,11 @@ pqueue_remove_non_root(struct priority_queue *que, priority_queue_entry_t elt,
  */
 void
     pqueue_destroy(struct priority_queue *q, size_t offset,
+#ifdef __DARLING__
+    void (*callback)(void *e));
+#else
     void (^callback)(void *e));
+#endif
 
 /*
  * Priority Queue functionality routines

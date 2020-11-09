@@ -45,7 +45,7 @@
 #include <stdbool.h>
 #include <os/base.h>
 
-#ifdef __DARLING__
+#if defined(__DARLING__) && defined(__clang__)
 static
 #endif
 bool __header_always_inline OS_WARN_RESULT

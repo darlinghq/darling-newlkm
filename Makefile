@@ -11,14 +11,18 @@ endif
 # ***
 #
 
+ifneq (,$(findstring clang,$(CC)))
+	COMPILER_NAME := CLANG
+else
+	COMPILER_NAME := GCC
+endif
+
 asflags-y := -D__DARLING__ -D__NO_UNDERSCORES__ \
 	-I$(MIGDIR)/osfmk \
 	-I$(BUILD_ROOT)/osfmk \
 	-I$(BUILD_ROOT)/duct/defines
 
 WARNING_FLAGS := \
-	-Wno-unknown-warning-option \
-	-Wno-ignored-optimization-argument \
 	-Wno-unknown-pragmas \
 	-Wno-error=cast-align \
 	-Wno-unused-parameter \
@@ -26,11 +30,16 @@ WARNING_FLAGS := \
 	-Wno-unused-variable \
 	-Wno-declaration-after-statement \
 	-Wno-undef \
-	-Wno-maybe-uninitialized \
+	-Wno-maybe-uninitialized
+
+GCC_WARNING_FLAGS := \
+	-Wno-attributes \
+	-Wno-int-to-pointer-cast
+
+CLANG_WARNING_FLAGS := \
+	-Wno-unknown-warning-option \
+	-Wno-ignored-optimization-argument \
 	-Wno-gnu-variable-sized-type-not-at-end
-
-
-#-freorder-blocks
 
 FEATURE_FLAGS := \
 	-fno-builtin \
@@ -38,8 +47,10 @@ FEATURE_FLAGS := \
 	-fsigned-bitfields \
 	-fno-strict-aliasing \
 	-fno-keep-inline-functions \
-	-fblocks \
 	-mfentry
+
+GCC_FEATURE_FLAGS := \
+	-freorder-blocks
 
 # NOTE: we should further sort these
 # e.g. something like MACH_DEFINES for definitions that enable certain behaviors in the XNU code,
@@ -148,7 +159,11 @@ DEFINES := \
 OTHER_FLAGS := \
 	-std=gnu11
 
-ccflags-y := $(WARNING_FLAGS) $(FEATURE_FLAGS) $(DEFINES) $(OTHER_FLAGS)
+GCC_OTHER_FLAGS := \
+	-include $(BUILD_ROOT)/include/duct/compiler/gcc/has-builtin.h
+
+ccflags-y := $(WARNING_FLAGS) $(FEATURE_FLAGS) $(DEFINES) $(OTHER_FLAGS) \
+             $($(COMPILER_NAME)_WARNING_FLAGS) $($(COMPILER_NAME)_FEATURE_FLAGS) $($(COMPILER_NAME)_DEFINES) $($(COMPILER_NAME)_OTHER_FLAGS)
 
 #
 # ***
@@ -327,19 +342,15 @@ OBJS_duct/bsd = \
 # libkern/
 #
 OBJS_libkern = \
-	$(OBJS_libkern/libclosure) \
 	$(OBJS_libkern/gen) \
 	$(OBJS_libkern/os) \
 	$(OBJS_libkern/duct)
-OBJS_libkern/libclosure = \
-	libkern/libclosure/libclosuredata.o
 OBJS_libkern/gen = \
 	libkern/gen/OSAtomicOperations.o
 OBJS_libkern/os = \
 	libkern/os/refcnt.o
 OBJS_libkern/duct = \
-	libkern/duct/duct_cpp_OSRuntime.o \
-	libkern/duct/duct_libclosure_runtime.o
+	libkern/duct/duct_cpp_OSRuntime.o
 
 #
 # pexpert/
@@ -462,7 +473,7 @@ CFLAGS_osfmk = -I$(BUILD_ROOT)/osfmk/kern
 #
 # stop KBuild from tripping up Clang
 #
-CFLAGS_darling-mach.mod.o = \
+CLANG_CFLAGS_darling-mach.mod.o = \
 	-Wno-unknown-warning-option
 
 #
@@ -536,6 +547,7 @@ ifneq ($(KERNELRELEASE),)
       ) \
       $(if $(shell basename '$(1)' | sed 's/^.*\.o$$//'), \
         $(CFLAGS_$(1)) \
+        $($(COMPILER_NAME)_CFLAGS_$(1)) \
       ) \
     )
 
@@ -556,7 +568,7 @@ ifneq ($(KERNELRELEASE),)
       ) \
     ) \
     $(foreach OBJ,$($(1)_ALL_OBJS), \
-      $(eval CFLAGS_$(OBJ) += $$($(1)_NORMAL_INCLUDES) $$($(1)_CFLAGS)) \
+      $(eval CFLAGS_$(OBJ) += $$($(1)_NORMAL_INCLUDES) $$($(1)_CFLAGS) $$($(1)_$(COMPILER_NAME)_CFLAGS)) \
     )
 
   # do the CFLAGS magic for all darling-mach objects

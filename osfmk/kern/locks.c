@@ -127,6 +127,57 @@ uint64_t dtrace_spin_threshold = LOCK_PANIC_TIMEOUT / 1000000; // 500ns
 #endif
 #endif
 
+#ifdef __DARLING__
+// we need these because we can't use Clang's blocks extension in our LKM
+// (we need to build with GCC, but also, during testing, blocks were found to be prone
+// to making the Linux kernel crash)
+
+static void lck_helper_sleep_lock(void* context) {
+	lck_mtx_t* lock = context;
+	lck_mtx_lock(lock);
+};
+
+static void lck_helper_sleep_unlock(void* context) {
+	lck_mtx_t* lock = context;
+	lck_mtx_unlock(lock);
+};
+
+static void lck_helper_sleep_spin_lock(void* context) {
+	lck_mtx_t* lock = context;
+	lck_mtx_lock_spin(lock);
+};
+
+static void lck_helper_sleep_spin_lock_always(void* context) {
+	lck_mtx_t* lock = context;
+	lck_mtx_lock_spin_always(lock);
+};
+
+struct lck_helper_rw_context {
+	lck_rw_t* lock;
+	lck_rw_type_t type;
+};
+
+static void lck_helper_sleep_rw_lock(void* context) {
+	struct lck_helper_rw_context* ctx = context;
+	lck_rw_lock(ctx->lock, ctx->type);
+};
+
+static void lck_helper_sleep_rw_unlock(void* context) {
+	struct lck_helper_rw_context* ctx = context;
+	ctx->type = lck_rw_done(ctx->lock);
+};
+
+static void lck_helper_sleep_rw_lock_shared(void* context) {
+	struct lck_helper_rw_context* ctx = context;
+	lck_rw_lock_shared(ctx->lock);
+};
+
+static void lck_helper_sleep_rw_lock_exclusive(void* context) {
+	struct lck_helper_rw_context* ctx = context;
+	lck_rw_lock_exclusive(ctx->lock);
+};
+#endif
+
 uintptr_t
 unslide_for_kdebug(void* object)
 {
@@ -1908,8 +1959,14 @@ sleep_with_inheritor_and_turnstile_type(event_t event,
     wait_interrupt_t interruptible,
     uint64_t deadline,
     turnstile_type_t type,
+#ifdef __DARLING__
+    void* primitive_context,
+    void (*primitive_lock)(void*),
+    void (*primitive_unlock)(void*))
+#else
     void (^primitive_lock)(void),
     void (^primitive_unlock)(void))
+#endif
 {
 	wait_result_t ret;
 	uint32_t index;
@@ -1921,7 +1978,12 @@ sleep_with_inheritor_and_turnstile_type(event_t event,
 	 */
 	turnstile_hash_bucket_lock((uintptr_t)event, &index, type);
 
+#ifdef __DARLING__
+	if (primitive_unlock)
+		primitive_unlock(primitive_context);
+#else
 	primitive_unlock();
+#endif
 
 	ts = turnstile_prepare((uintptr_t)event, NULL, TURNSTILE_NULL, type);
 
@@ -1953,7 +2015,12 @@ sleep_with_inheritor_and_turnstile_type(event_t event,
 
 	turnstile_cleanup();
 
+#ifdef __DARLING__
+	if (primitive_lock)
+		primitive_lock(primitive_context);
+#else
 	primitive_lock();
+#endif
 
 	return ret;
 }
@@ -2000,7 +2067,10 @@ change_sleep_inheritor_and_turnstile_type(event_t event,
 	return ret;
 }
 
+// why is this (literally) useless typedef here?
+#ifndef __DARLING__
 typedef void (^void_block_void)(void);
+#endif
 
 /*
  * sleep_with_inheritor functions with lck_mtx_t as locking primitive.
@@ -2017,32 +2087,56 @@ lck_mtx_sleep_with_inheritor_and_turnstile_type(lck_mtx_t *lock, lck_sleep_actio
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           lock,
+		           NULL,
+		           lck_helper_sleep_unlock);
+#else
 		           ^{;},
 		           ^{lck_mtx_unlock(lock);});
+#endif
 	} else if (lck_sleep_action & LCK_SLEEP_SPIN) {
 		return sleep_with_inheritor_and_turnstile_type(event,
 		           inheritor,
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_spin_lock,
+		           lck_helper_sleep_unlock);
+#else
 		           ^{lck_mtx_lock_spin(lock);},
 		           ^{lck_mtx_unlock(lock);});
+#endif
 	} else if (lck_sleep_action & LCK_SLEEP_SPIN_ALWAYS) {
 		return sleep_with_inheritor_and_turnstile_type(event,
 		           inheritor,
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_spin_lock_always,
+		           lck_helper_sleep_unlock);
+#else
 		           ^{lck_mtx_lock_spin_always(lock);},
 		           ^{lck_mtx_unlock(lock);});
+#endif
 	} else {
 		return sleep_with_inheritor_and_turnstile_type(event,
 		           inheritor,
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_lock,
+		           lck_helper_sleep_unlock);
+#else
 		           ^{lck_mtx_lock(lock);},
 		           ^{lck_mtx_unlock(lock);});
+#endif
 	}
 }
 
@@ -2081,11 +2175,19 @@ lck_spin_sleep_with_inheritor(
 	if (lck_sleep_action & LCK_SLEEP_UNLOCK) {
 		return sleep_with_inheritor_and_turnstile_type(event, inheritor,
 		           interruptible, deadline, TURNSTILE_SLEEP_INHERITOR,
+#ifdef __DARLING__
+		           lock, NULL, lck_helper_sleep_unlock);
+#else
 		           ^{}, ^{ lck_spin_unlock(lock); });
+#endif
 	} else {
 		return sleep_with_inheritor_and_turnstile_type(event, inheritor,
 		           interruptible, deadline, TURNSTILE_SLEEP_INHERITOR,
+#ifdef __DARLING__
+		           lock, lck_helper_sleep_lock, lck_helper_sleep_unlock);
+#else
 		           ^{ lck_spin_lock(lock); }, ^{ lck_spin_unlock(lock); });
+#endif
 	}
 }
 
@@ -2125,7 +2227,14 @@ lck_mtx_sleep_with_inheritor(lck_mtx_t *lock, lck_sleep_action_t lck_sleep_actio
 wait_result_t
 lck_rw_sleep_with_inheritor_and_turnstile_type(lck_rw_t *lock, lck_sleep_action_t lck_sleep_action, event_t event, thread_t inheritor, wait_interrupt_t interruptible, uint64_t deadline, turnstile_type_t type)
 {
+#ifdef __DARLING__
+	struct lck_helper_rw_context ctx = {
+		.lock = lock,
+		.type = LCK_RW_TYPE_EXCLUSIVE,
+	};
+#else
 	__block lck_rw_type_t lck_rw_type = LCK_RW_TYPE_EXCLUSIVE;
+#endif
 
 	LCK_RW_ASSERT(lock, LCK_RW_ASSERT_HELD);
 
@@ -2135,32 +2244,56 @@ lck_rw_sleep_with_inheritor_and_turnstile_type(lck_rw_t *lock, lck_sleep_action_
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           &ctx,
+		           NULL,
+		           lck_helper_sleep_rw_unlock);
+#else
 		           ^{;},
 		           ^{lck_rw_type = lck_rw_done(lock);});
+#endif
 	} else if (!(lck_sleep_action & (LCK_SLEEP_SHARED | LCK_SLEEP_EXCLUSIVE))) {
 		return sleep_with_inheritor_and_turnstile_type(event,
 		           inheritor,
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_lock,
+		           lck_helper_sleep_rw_unlock);
+#else
 		           ^{lck_rw_lock(lock, lck_rw_type);},
 		           ^{lck_rw_type = lck_rw_done(lock);});
+#endif
 	} else if (lck_sleep_action & LCK_SLEEP_EXCLUSIVE) {
 		return sleep_with_inheritor_and_turnstile_type(event,
 		           inheritor,
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_lock_exclusive,
+		           lck_helper_sleep_rw_unlock);
+#else
 		           ^{lck_rw_lock_exclusive(lock);},
 		           ^{lck_rw_type = lck_rw_done(lock);});
+#endif
 	} else {
 		return sleep_with_inheritor_and_turnstile_type(event,
 		           inheritor,
 		           interruptible,
 		           deadline,
 		           type,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_lock_shared,
+		           lck_helper_sleep_rw_unlock);
+#else
 		           ^{lck_rw_lock_shared(lock);},
 		           ^{lck_rw_type = lck_rw_done(lock);});
+#endif
 	}
 }
 
@@ -2643,8 +2776,14 @@ static gate_wait_result_t
 gate_wait(gate_t* gate,
     wait_interrupt_t interruptible,
     uint64_t deadline,
+#ifdef __DARLING__
+    void* primitive_context,
+    void (*primitive_unlock)(void*),
+    void (*primitive_lock)(void*))
+#else
     void (^primitive_unlock)(void),
     void (^primitive_lock)(void))
+#endif
 {
 	gate_wait_result_t ret;
 	void_func_void func_after_interlock_unlock;
@@ -2676,7 +2815,12 @@ gate_wait(gate_t* gate,
 	 * but still will wait for me through the
 	 * gate interlock.
 	 */
+#ifdef __DARLING__
+	if (primitive_unlock)
+		primitive_unlock(primitive_context);
+#else
 	primitive_unlock();
+#endif
 
 	func_after_interlock_unlock = gate_wait_turnstile(    gate,
 	    interruptible,
@@ -2734,7 +2878,12 @@ gate_wait(gate_t* gate,
 	 */
 	func_after_interlock_unlock();
 
+#ifdef __DARLING__
+	if (primitive_lock)
+		primitive_lock(primitive_context);
+#else
 	primitive_lock();
+#endif
 
 	return ret;
 }
@@ -2980,7 +3129,14 @@ lck_rw_gate_steal(__assert_only lck_rw_t *lock, gate_t *gate)
 gate_wait_result_t
 lck_rw_gate_wait(lck_rw_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_action, wait_interrupt_t interruptible, uint64_t deadline)
 {
+#ifdef __DARLING__
+	struct lck_helper_rw_context ctx = {
+		.lock = lock,
+		.type = LCK_RW_TYPE_EXCLUSIVE,
+	};
+#else
 	__block lck_rw_type_t lck_rw_type = LCK_RW_TYPE_EXCLUSIVE;
+#endif
 
 	LCK_RW_ASSERT(lock, LCK_RW_ASSERT_HELD);
 
@@ -2988,26 +3144,50 @@ lck_rw_gate_wait(lck_rw_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_acti
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_unlock,
+		           NULL);
+#else
 		           ^{lck_rw_type = lck_rw_done(lock);},
 		           ^{;});
+#endif
 	} else if (!(lck_sleep_action & (LCK_SLEEP_SHARED | LCK_SLEEP_EXCLUSIVE))) {
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_unlock,
+		           lck_helper_sleep_rw_lock);
+#else
 		           ^{lck_rw_type = lck_rw_done(lock);},
 		           ^{lck_rw_lock(lock, lck_rw_type);});
+#endif
 	} else if (lck_sleep_action & LCK_SLEEP_EXCLUSIVE) {
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_unlock,
+		           lck_helper_sleep_rw_lock_exclusive);
+#else
 		           ^{lck_rw_type = lck_rw_done(lock);},
 		           ^{lck_rw_lock_exclusive(lock);});
+#endif
 	} else {
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           &ctx,
+		           lck_helper_sleep_rw_unlock,
+		           lck_helper_sleep_rw_lock_shared);
+#else
 		           ^{lck_rw_type = lck_rw_done(lock);},
 		           ^{lck_rw_lock_shared(lock);});
+#endif
 	}
 }
 
@@ -3240,26 +3420,50 @@ lck_mtx_gate_wait(lck_mtx_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_ac
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_unlock,
+		           NULL);
+#else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{;});
+#endif
 	} else if (lck_sleep_action & LCK_SLEEP_SPIN) {
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_unlock,
+		           lck_helper_sleep_spin_lock);
+#else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{lck_mtx_lock_spin(lock);});
+#endif
 	} else if (lck_sleep_action & LCK_SLEEP_SPIN_ALWAYS) {
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_unlock,
+		           lck_helper_sleep_spin_lock_always);
+#else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{lck_mtx_lock_spin_always(lock);});
+#endif
 	} else {
 		return gate_wait(gate,
 		           interruptible,
 		           deadline,
+#ifdef __DARLING__
+		           lock,
+		           lck_helper_sleep_unlock,
+		           lck_helper_sleep_lock);
+#else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{lck_mtx_lock(lock);});
+#endif
 	}
 }
 
