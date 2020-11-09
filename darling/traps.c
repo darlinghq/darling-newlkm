@@ -2237,9 +2237,13 @@ static void thread_suspended_logic(task_t task)
 		task_resume(task);
 }
 
+// we want Linux's `si_pid` here
+#undef si_pid
+
 int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 {
 	thread_t thread = current_thread();
+	proc_t proc = current_proc();
 	copyargs(args, in_args);
 
 	int err = state_to_kernel(&args.state);
@@ -2250,6 +2254,12 @@ int sigprocess_entry(task_t task, struct sigprocess_args* in_args)
 
 	thread->pending_signal = 0;
 	thread->in_sigprocess = TRUE;
+
+	// if the signal was process-wide (i.e. we didn't send it to ourselves via pthread_kill)...
+	if (proc && args.siginfo.linux_si_pid != task_pid(thread->task)) {
+		// then notify any EVFILT_SIGNAL knotes on the process
+		proc_knote(proc, NOTE_SIGNAL | args.signum);
+	}
 
 	mach_exception_data_type_t codes[EXCEPTION_CODE_MAX] = { 0, 0 };
 	if (args.siginfo.si_code == LINUX_SI_USER)
@@ -2347,6 +2357,8 @@ out:
 	thread->in_sigprocess = FALSE;
 	return 0;
 }
+
+#define si_pid xnu_si_pid
 
 int ptrace_thupdate_entry(task_t task, struct ptrace_thupdate_args* in_args)
 {

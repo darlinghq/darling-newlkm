@@ -50,6 +50,7 @@ typedef struct dkqueue_ptc {
 	poll_table pt;
 	struct knote* kn;
 	dkqueue_pte_head_t pte_head;
+	struct task_struct* polling_task;
 
 	bool triggered;
 
@@ -79,15 +80,6 @@ static struct kmem_cache* entry_cache = NULL;
 static struct kmem_cache* proc_context_cache = NULL;
 static struct kmem_cache* dkqueue_list_entry_cache = NULL;
 static struct kmem_cache* vnode_context_cache = NULL;
-
-// TODO: signal filter
-const struct filterops sig_filtops = {
-	.f_attach  = filt_no_attach,
-	.f_detach  = filt_no_detach,
-	.f_event   = filt_bad_event,
-	.f_touch   = filt_bad_touch,
-	.f_process = filt_bad_process,
-};
 
 // TODO: fs filter
 const struct filterops fs_filtops = {
@@ -429,7 +421,7 @@ static void dkqueue_poll_unsubscribe_all(dkqueue_ptc_t* ptc) {
 static int dkqueue_perform_default_wakeup(wait_queue_entry_t* wqe, unsigned int mode, int sync, void* context) {
 	dkqueue_ptc_t* ptc = wqe->private;
 	struct kqueue* kq = knote_get_kq(ptc->kn);
-	DECLARE_WAITQUEUE(dummy_wait, ((task_t)kq->kq_p->task)->map->linux_task);
+	DECLARE_WAITQUEUE(dummy_wait, ptc->polling_task);
 
 	// see `__pollwake` in Linux's `fs/select.c`
 	smp_wmb();
@@ -540,6 +532,7 @@ static int dkqueue_file_attach(struct knote* kn, struct kevent_qos_s* kev) {
 	kn->kn_hook = ptc;
 
 	// initialize the ptc
+	ptc->polling_task = linux_current;
 	init_poll_funcptr(&ptc->pt, dkqueue_poll_wait_callback);
 	ptc->kn = kn;
 	SLIST_INIT(&ptc->pte_head);

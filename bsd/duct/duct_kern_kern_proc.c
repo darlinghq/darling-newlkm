@@ -44,4 +44,24 @@ IS_64BIT_PROCESS(proc_t p)
 	}
 }
 
+void
+proc_klist_lock(void)
+{
+	lck_mtx_lock(proc_klist_mlock);
+}
+
+void
+proc_klist_unlock(void)
+{
+	lck_mtx_unlock(proc_klist_mlock);
+}
+
+void
+proc_knote(struct proc * p, long hint)
+{
+	proc_klist_lock();
+	KNOTE(&p->p_klist, hint);
+	proc_klist_unlock();
+}
+
 //</copied>
