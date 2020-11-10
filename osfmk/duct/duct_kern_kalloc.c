@@ -47,7 +47,11 @@ extern void * duct_kalloc_canblock(vm_size_t * size, boolean_t canblock, vm_allo
 	if (canblock) {
 		return vmalloc (*size);
 	} else {
-		return __vmalloc (*size, GFP_ATOMIC | __GFP_HIGHMEM, PAGE_KERNEL);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+		return __vmalloc (size, GFP_ATOMIC | __GFP_HIGHMEM);
+#else
+		return __vmalloc (size, GFP_ATOMIC | __GFP_HIGHMEM, PAGE_KERNEL);
+#endif
 	}
 };
 

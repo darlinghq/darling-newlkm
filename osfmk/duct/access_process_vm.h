@@ -12,7 +12,11 @@ static int __access_remote_vm_darling(struct task_struct *tsk, struct mm_struct 
         void *old_buf = buf;
         int write = gup_flags & FOLL_WRITE;
 
+        #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+        down_read(&mm->mmap_lock);
+        #else
         down_read(&mm->mmap_sem);
+        #endif
         /* ignore errors, just check how much was successfully transferred */
         while (len) {
                 int bytes, ret, offset;
@@ -72,7 +76,11 @@ static int __access_remote_vm_darling(struct task_struct *tsk, struct mm_struct 
                 buf += bytes;
                 addr += bytes;
         }
+        #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+        up_read(&mm->mmap_lock);
+        #else
         up_read(&mm->mmap_sem);
+        #endif
 
         return buf - old_buf;
 }
