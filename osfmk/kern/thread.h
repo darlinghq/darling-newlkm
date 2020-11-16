@@ -151,6 +151,10 @@
 #include <machine/monotonic.h>
 #endif /* MONOTONIC */
 
+#if THREAD_LOCK_DEBUG
+#include <linux/stacktrace.h>
+#endif
+
 #if CONFIG_EMBEDDED
 /* Taskwatch related. TODO: find this a better home */
 typedef struct task_watcher task_watch_t;
@@ -651,6 +655,10 @@ struct thread {
 	block_hint_t    pending_block_hint;
 	block_hint_t    block_hint;      /* What type of primitive last caused us to block. */
 	integer_t       decompressions;  /* Per-thread decompressions counter to be added to per-task decompressions counter */
+#if THREAD_LOCK_DEBUG
+	unsigned long stack_entries[32];
+	unsigned int stack_entry_count;
+#endif
 };
 
 #define ith_state           saved.receive.state
@@ -760,8 +768,13 @@ extern lck_grp_t                thread_lck_grp;
 /* Locking for scheduler state, always acquired with interrupts disabled (splsched()) */
 #if __SMP__
 #define thread_lock_init(th)    simple_lock_init(&(th)->sched_lock, 0)
+#if THREAD_LOCK_DEBUG
+void thread_lock(thread_t thread);
+void thread_unlock(thread_t thread);
+#else
 #define thread_lock(th)                 simple_lock(&(th)->sched_lock, &thread_lck_grp)
 #define thread_unlock(th)               simple_unlock(&(th)->sched_lock)
+#endif
 
 #define wake_lock_init(th)              simple_lock_init(&(th)->wake_lock, 0)
 #define wake_lock(th)                   simple_lock(&(th)->wake_lock, &thread_lck_grp)

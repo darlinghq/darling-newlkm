@@ -390,6 +390,10 @@ static kern_return_t duct_thread_create_internal (task_t parent_task, integer_t 
 	new_thread->linux_task = linux_current;
 	new_thread->in_sigprocess = FALSE;
 
+#if THREAD_LOCK_DEBUG
+	new_thread->stack_entry_count = 0;
+#endif
+
 	*out_thread = new_thread;
 
 #ifdef __DARLING__
@@ -896,3 +900,26 @@ thread_inspect_deallocate(
 }
 
 // </copied>
+
+#if THREAD_LOCK_DEBUG
+void thread_lock(thread_t thread) {
+	if (simple_lock_try(&thread->sched_lock, &thread_lck_grp)) {
+		printk(KERN_DEBUG "acquired thread lock first try\n");
+		thread->stack_entry_count = stack_trace_save(thread->stack_entries, sizeof(thread->stack_entries) / sizeof(thread->stack_entries[0]), 0);
+		return;
+	}
+
+	printk(KERN_DEBUG "failed to acquire thread lock; information of last place it was locked:\n");
+	stack_trace_print(thread->stack_entries, thread->stack_entry_count, 4);
+
+	printk(KERN_DEBUG "going to wait for thread lock...\n");
+	simple_lock(&thread->sched_lock, &thread_lck_grp);
+
+	printk(KERN_DEBUG "got thread lock\n");
+};
+
+void thread_unlock(thread_t thread) {
+	printk(KERN_DEBUG "going to release thread lock");
+	simple_unlock(&thread->sched_lock);
+};
+#endif
