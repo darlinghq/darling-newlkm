@@ -37,7 +37,6 @@
 #include <linux/eventfd.h>
 #include <linux/mutex.h>
 #include "debug_print.h"
-#include "threads.h"
 
 DEFINE_SPINLOCK(my_task_lock);
 DEFINE_SPINLOCK(my_thread_lock);
@@ -359,8 +358,6 @@ void darling_thread_deregister(thread_t t)
 		if (entry->thread == t)
 		{
 			debug_msg("deregistering thread %p\n", t);
-
-			darling_thread_destroy(t);
 
 			hash_del_rcu(&entry->node);
 			spin_unlock(&my_thread_lock);

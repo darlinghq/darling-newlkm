@@ -48,6 +48,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "duct_post_xnu.h"
 #include <darling/task_registry.h>
 #include <darling/debug_print.h>
+#include <darling/uthreads.h>
 
 // From pcb.c
 #ifdef __x86_64__
@@ -451,6 +452,10 @@ void duct_thread_destroy(thread_t thread)
 	task_t task;
 	task = thread->task;
 	thread->linux_task = NULL;
+
+	if (thread->uthread) {
+		darling_uthread_destroy((uthread_t)thread->uthread);
+	}
 	
 	thread->active = FALSE;
 	os_atomic_dec(&task->active_thread_count, relaxed);
@@ -484,6 +489,8 @@ void duct_thread_deallocate(thread_t thread)
 static void thread_deallocate_complete(thread_t thread)
 {
 	task_t task;
+
+	timer_call_cancel(&thread->wait_timer);
 
 	ipc_thread_terminate(thread);
 
