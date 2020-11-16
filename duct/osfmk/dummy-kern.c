@@ -276,6 +276,7 @@ timer_call_enter(
 
 // osfmk/kern/clock.c
 
+#if 0
 /*
  *      clock_get_calendar_nanotime:
  *
@@ -293,6 +294,7 @@ clock_get_calendar_nanotime(
 {
         kprintf("not implemented: clock_get_calendar_nanotime()\n");
 }
+#endif
 
 // osfmk/kern/timer_call.c
 

@@ -79,7 +79,9 @@ void clock_get_uptime (uint64_t * result)
 
 void clock_get_calendar_microtime (clock_sec_t *secs, clock_usec_t *microsecs)
 {
-        kprintf ("not implemented: clock_get_calendar_microtime()\n");
+	// passing in `microsecs` is fine; `clock_usec_t` and `clock_nsec_t` are the same type
+	clock_get_calendar_nanotime(secs, microsecs);
+	*microsecs /= NSEC_PER_USEC;
 }
 
 #if defined (XNU_USE_MACHTRAP_WRAPPERS_TIMEKEEPING)
@@ -131,3 +133,9 @@ clock_continuoustime_interval_to_deadline(
 }
 
 // </copied>
+
+void clock_get_calendar_nanotime(clock_sec_t* secs, clock_nsec_t* nanosecs) {
+	uint64_t ns_since_epoch = ktime_get_real_ns();
+	*secs = ns_since_epoch / NSEC_PER_SEC;
+	*nanosecs = ns_since_epoch - ((*secs) * NSEC_PER_SEC);
+};
