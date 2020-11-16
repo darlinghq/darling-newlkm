@@ -484,9 +484,9 @@ task_threads(
 	size = 0; addr = NULL;
 
 	for (;;) {
-		printk(KERN_DEBUG "Before lock\n");
+		debug_msg("Before lock\n");
 		task_lock(task);
-		printk(KERN_DEBUG "After lock\n");
+		debug_msg("After lock\n");
 		if (!task->active) {
 			task_unlock(task);
 
@@ -573,7 +573,7 @@ task_threads(
 			((ipc_port_t *) thread_list)[i] = convert_thread_to_port(thread_list[i]);
 	}
 
-	printk(KERN_DEBUG "Going to return success\n");
+	debug_msg("Going to return success\n");
 	return (KERN_SUCCESS);
 }
 

@@ -532,7 +532,7 @@ void thread_timer_expire(void* p0, void* p1)
         if (thread->wait_timer_is_set)
         {
             thread->wait_timer_is_set = FALSE;
-	    printf("calling clear_wait\n");
+	    debug_msg("calling clear_wait\n");
             clear_wait_internal(thread, THREAD_TIMED_OUT);
         }
     }
@@ -611,7 +611,7 @@ thread_block_parameter(
     while ((thread->state & TH_WAIT) && linux_current->state != TASK_RUNNING)
     {
         thread_unlock(thread);
-	printf("about to schedule - my state: %d\n", thread->linux_task->state);
+	debug_msg("about to schedule - my state: %d\n", thread->linux_task->state);
         schedule();
         thread_lock(thread);
 

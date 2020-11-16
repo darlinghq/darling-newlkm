@@ -156,6 +156,7 @@
 
 #ifdef __DARLING__
 #include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 extern char *proc_name_address(void *p);
@@ -390,7 +391,7 @@ ipc_kobject_server(
 	{
 		if (ptr) {
 #ifdef __DARLING__
-			printf( "- kobject routine: %pF\n", ptr->routine);
+			debug_msg("- kobject routine: %pF\n", ptr->routine);
 #endif
 
 			/*
