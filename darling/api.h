@@ -36,6 +36,9 @@
 
 #define DARLING_MACH_API_BASE		0x1000
 
+// we pass these directly to their BSD functions; the BSD functions have their own padding format (see sysproto.h)
+#define DARLING_BSD_ARG(_type, _name) _type _name; char _ ## _name ## _padding[(sizeof(uint64_t) <= sizeof(_type) ? 0 : sizeof(uint64_t) - sizeof(_type))]
+
 #pragma pack (push, 1)
 
 enum { NR_get_api_version = DARLING_MACH_API_BASE,
@@ -331,28 +334,28 @@ struct bsd_ioctl_args
 
 struct bsdthread_terminate_args
 {
-	uint64_t stackaddr;
-	uint32_t freesize;
-	unsigned int thread_right_name;
-	unsigned int signal;
+	DARLING_BSD_ARG(uint64_t, stackaddr);
+	DARLING_BSD_ARG(uint64_t, freesize);
+	DARLING_BSD_ARG(uint32_t, port);
+	DARLING_BSD_ARG(uint32_t, sem);
 };
 
 struct psynch_mutexwait_args
 {
-	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
-	uint64_t tid;
-	uint32_t flags;
+	DARLING_BSD_ARG(uint64_t, mutex);
+	DARLING_BSD_ARG(uint32_t, mgen);
+	DARLING_BSD_ARG(uint32_t, ugen);
+	DARLING_BSD_ARG(uint64_t, tid);
+	DARLING_BSD_ARG(uint32_t, flags);
 };
 
 struct psynch_mutexdrop_args
 {
-	uint64_t mutex;
-	uint32_t mgen;
-	uint32_t ugen;
-	uint64_t tid;
-	uint32_t flags;
+	DARLING_BSD_ARG(uint64_t, mutex);
+	DARLING_BSD_ARG(uint32_t, mgen);
+	DARLING_BSD_ARG(uint32_t, ugen);
+	DARLING_BSD_ARG(uint64_t, tid);
+	DARLING_BSD_ARG(uint32_t, flags);
 };
 
 struct pthread_kill_args
@@ -363,48 +366,48 @@ struct pthread_kill_args
 
 struct psynch_cvwait_args
 {
-	uint64_t cv;
-	uint64_t cvlsgen;
-	uint32_t cvugen;
-	uint64_t mutex;
-	uint64_t mugen;
-	uint32_t flags;
-	int64_t sec;
-	uint32_t nsec;
+	DARLING_BSD_ARG(uint64_t, cv);
+	DARLING_BSD_ARG(uint64_t, cvlsgen);
+	DARLING_BSD_ARG(uint32_t, cvugen);
+	DARLING_BSD_ARG(uint64_t, mutex);
+	DARLING_BSD_ARG(uint64_t, mugen);
+	DARLING_BSD_ARG(uint32_t, flags);
+	DARLING_BSD_ARG(int64_t, sec);
+	DARLING_BSD_ARG(uint32_t, nsec);
 };
 
 struct psynch_cvsignal_args
 {
-	uint64_t cv;
-	uint64_t cvlsgen;
-	uint32_t cvugen;
-	int thread_port;
-	uint64_t mutex;
-	uint64_t mugen;
-	uint64_t tid;
-	uint32_t flags;
+	DARLING_BSD_ARG(uint64_t, cv);
+	DARLING_BSD_ARG(uint64_t, cvlsgen);
+	DARLING_BSD_ARG(uint32_t, cvugen);
+	DARLING_BSD_ARG(int, thread_port);
+	DARLING_BSD_ARG(uint64_t, mutex);
+	DARLING_BSD_ARG(uint64_t, mugen);
+	DARLING_BSD_ARG(uint64_t, tid);
+	DARLING_BSD_ARG(uint32_t, flags);
 };
 
 struct psynch_cvbroad_args
 {
-	uint64_t cv;
-	uint64_t cvlsgen;
-	uint64_t cvudgen;
-	uint32_t flags;
-	uint64_t mutex;
-	uint64_t mugen;
-	uint64_t tid;
+	DARLING_BSD_ARG(uint64_t, cv);
+	DARLING_BSD_ARG(uint64_t, cvlsgen);
+	DARLING_BSD_ARG(uint64_t, cvudgen);
+	DARLING_BSD_ARG(uint32_t, flags);
+	DARLING_BSD_ARG(uint64_t, mutex);
+	DARLING_BSD_ARG(uint64_t, mugen);
+	DARLING_BSD_ARG(uint64_t, tid);
 };
 
 struct psynch_cvclrprepost_args
 {
-	uint64_t cv;
-	uint32_t cvgen;
-	uint32_t cvugen;
-	uint32_t cvsgen;
-	uint32_t prepocnt;
-	uint32_t preposeq;
-	uint32_t flags;
+	DARLING_BSD_ARG(uint64_t, cv);
+	DARLING_BSD_ARG(uint32_t, cvgen);
+	DARLING_BSD_ARG(uint32_t, cvugen);
+	DARLING_BSD_ARG(uint32_t, cvsgen);
+	DARLING_BSD_ARG(uint32_t, prepocnt);
+	DARLING_BSD_ARG(uint32_t, preposeq);
+	DARLING_BSD_ARG(uint32_t, flags);
 };
 
 struct mk_timer_arm_args
@@ -453,29 +456,29 @@ struct kernel_printk_args
 
 struct psynch_rw_rdlock_args
 {
-	uint64_t rwlock;
-	uint32_t lgenval;
-	uint32_t ugenval;
-	uint32_t rw_wc;
-	int flags;
+	DARLING_BSD_ARG(uint64_t, rwlock);
+	DARLING_BSD_ARG(uint32_t, lgenval);
+	DARLING_BSD_ARG(uint32_t, ugenval);
+	DARLING_BSD_ARG(uint32_t, rw_wc);
+	DARLING_BSD_ARG(int, flags);
 };
 
 struct psynch_rw_wrlock_args
 {
-	uint64_t rwlock;
-	uint32_t lgenval;
-	uint32_t ugenval;
-	uint32_t rw_wc;
-	int flags;
+	DARLING_BSD_ARG(uint64_t, rwlock);
+	DARLING_BSD_ARG(uint32_t, lgenval);
+	DARLING_BSD_ARG(uint32_t, ugenval);
+	DARLING_BSD_ARG(uint32_t, rw_wc);
+	DARLING_BSD_ARG(int, flags);
 };
 
 struct psynch_rw_unlock_args
 {
-	uint64_t rwlock;
-	uint32_t lgenval;
-	uint32_t ugenval;
-	uint32_t rw_wc;
-	int flags;
+	DARLING_BSD_ARG(uint64_t, rwlock);
+	DARLING_BSD_ARG(uint32_t, lgenval);
+	DARLING_BSD_ARG(uint32_t, ugenval);
+	DARLING_BSD_ARG(uint32_t, rw_wc);
+	DARLING_BSD_ARG(int, flags);
 };
 
 struct mach_vm_allocate_args
@@ -581,9 +584,6 @@ struct set_thread_handles_args
 	unsigned long long pthread_handle;
 	unsigned long long dispatch_qaddr;
 };
-
-// we pass these directly to their BSD functions; the BSD fucntions have their own padding format (see sysproto.h)
-#define DARLING_BSD_ARG(_type, _name) _type _name; char _ ## _name ## _padding[(sizeof(uint64_t) <= sizeof(_type) ? 0 : sizeof(uint64_t) - sizeof(_type))]
 
 struct kevent_args {
 	DARLING_BSD_ARG(int, fd);

@@ -9,6 +9,7 @@
 #include <darling/debug_print.h>
 
 extern void kmeminit(void);
+extern void pthread_init(void);
 
 // XNU allocates these with zalloc/kalloc
 // we can just define them as variables
@@ -39,4 +40,7 @@ void bsd_init(void) {
 
 	bsd_init_kprintf("calling dkqueue_init\n");
 	dkqueue_init();
+
+	bsd_init_kprintf("calling pthread_init\n");
+	pthread_init();
 };

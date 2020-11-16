@@ -522,6 +522,7 @@ thread_static_param(
         kprintf("not implemented: thread_static_param()\n");
 }
 
+#if 0
 uint64_t
 thread_tid(
     thread_t    thread)
@@ -542,6 +543,7 @@ thread_get_tag(thread_t th)
         kprintf("not implemented: thread_get_tag()\n");
         return 0;
 }
+#endif
 
 /*
 uint64_t

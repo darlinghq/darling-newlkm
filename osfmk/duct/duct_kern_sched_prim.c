@@ -40,4 +40,39 @@ assert_wait_queue(
 	return global_eventq(event);
 }
 
+wait_result_t
+assert_wait_deadline_with_leeway(
+	event_t                         event,
+	wait_interrupt_t        interruptible,
+	wait_timeout_urgency_t  urgency,
+	uint64_t                        deadline,
+	uint64_t                        leeway)
+{
+	thread_t                        thread = current_thread();
+	wait_result_t           wresult;
+	spl_t                           s;
+
+	if (__improbable(event == NO_EVENT)) {
+		panic("%s() called with NO_EVENT", __func__);
+	}
+
+	struct waitq *waitq;
+	waitq = global_eventq(event);
+
+	s = splsched();
+	waitq_lock(waitq);
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	    MACHDBG_CODE(DBG_MACH_SCHED, MACH_WAIT) | DBG_FUNC_NONE,
+	    VM_KERNEL_UNSLIDE_OR_PERM(event), interruptible, deadline, 0, 0);
+
+	wresult = waitq_assert_wait64_locked(waitq, CAST_EVENT64_T(event),
+	    interruptible,
+	    urgency, deadline, leeway,
+	    thread);
+	waitq_unlock(waitq);
+	splx(s);
+	return wresult;
+}
+
 // </copied>

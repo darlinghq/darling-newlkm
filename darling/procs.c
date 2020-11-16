@@ -20,7 +20,6 @@
 #include <libkern/OSAtomic.h>
 #include <duct/duct_post_xnu.h>
 
-#include "pthread_internal.h"
 #include "kqueue.h"
 
 extern void pth_proc_hashinit(proc_t p);

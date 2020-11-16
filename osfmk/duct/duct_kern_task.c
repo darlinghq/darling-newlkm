@@ -1309,4 +1309,44 @@ task_set_exc_guard_behavior(
 	return KERN_SUCCESS;
 }
 
+/*
+ * This routine finds a thread in a task by its unique id
+ * Returns a referenced thread or THREAD_NULL if the thread was not found
+ *
+ * TODO: This is super inefficient - it's an O(threads in task) list walk!
+ *       We should make a tid hash, or transition all tid clients to thread ports
+ *
+ * Precondition: No locks held (will take task lock)
+ */
+thread_t
+task_findtid(task_t task, uint64_t tid)
+{
+	thread_t self           = current_thread();
+	thread_t found_thread   = THREAD_NULL;
+	thread_t iter_thread    = THREAD_NULL;
+
+	/* Short-circuit the lookup if we're looking up ourselves */
+	if (tid == self->thread_id || tid == TID_NULL) {
+		assert(self->task == task);
+
+		thread_reference(self);
+
+		return self;
+	}
+
+	task_lock(task);
+
+	queue_iterate(&task->threads, iter_thread, thread_t, task_threads) {
+		if (iter_thread->thread_id == tid) {
+			found_thread = iter_thread;
+			thread_reference(found_thread);
+			break;
+		}
+	}
+
+	task_unlock(task);
+
+	return (found_thread);
+}
+
 // </copied>

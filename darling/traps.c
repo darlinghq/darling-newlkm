@@ -66,7 +66,7 @@
 #include "commpage.h"
 #include "foreign_mm.h"
 #include "continuation.h"
-#include "pthread_kext.h"
+#include <dthread/pthread_kext.h>
 #include "procs.h"
 #include "kqueue.h"
 
@@ -217,8 +217,8 @@ static int mach_init(void)
 	int err = 0;
 
 	darling_task_init();
-	darling_xnu_init();
 	darling_pthread_kext_init();
+	darling_xnu_init();
 	darling_procs_init();
 
 	commpage32 = commpage_setup(false);
@@ -246,8 +246,8 @@ fail:
 static void mach_exit(void)
 {
 	darling_procs_exit();
-	darling_pthred_kext_exit();
 	darling_xnu_deinit();
+	darling_pthread_kext_exit();
 	misc_deregister(&mach_dev);
 	printk(KERN_INFO "Darling Mach: kernel emulation unloaded\n");
 

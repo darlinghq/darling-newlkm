@@ -237,9 +237,9 @@ proc_t current_proc_EXTERNAL(void);
 
 #ifndef __DARLING__
 extern int      msleep(void *chan, lck_mtx_t *mtx, int pri, const char *wmesg, struct timespec * ts );
-#endif
 extern void     wakeup(void *chan);
 extern void wakeup_one(caddr_t chan);
+#endif
 
 /* proc kpis */
 /* this routine returns the pid of the current process */

@@ -158,11 +158,13 @@ proc_get_register(struct proc *p)
 	return p->p_lflag & P_LREGISTER;
 }
 
+#ifndef __DARLING__
 static void
 proc_set_register(struct proc *p)
 {
 	proc_setregister(p);
 }
+#endif
 
 static void*
 uthread_get_uukwe(struct uthread *t)
@@ -188,6 +190,7 @@ qos_main_thread_active(void)
 	return TRUE;
 }
 
+#ifndef __DARLING__
 static int
 proc_usynch_get_requested_thread_qos(struct uthread *uth)
 {
@@ -229,6 +232,7 @@ proc_usynch_thread_qos_remove_override_for_resource(task_t task,
 	return proc_thread_qos_remove_override(task, thread, tid, resource,
 	           resource_type) == 0;
 }
+#endif
 
 
 static wait_result_t
@@ -384,11 +388,7 @@ bsdthread_terminate(struct proc *p, struct bsdthread_terminate_args *uap, int32_
 		workq_thread_terminate(p, get_bsdthread_info(th));
 	}
 #endif
-#ifdef __DARLING__
-	return pthread_functions->bsdthread_terminate(p, uap->stackaddr, uap->freesize, uap->thread_right_name, uap->signal, retval);
-#else
 	return pthread_functions->bsdthread_terminate(p, uap->stackaddr, uap->freesize, uap->port, uap->sem, retval);
-#endif
 }
 
 int
@@ -515,8 +515,6 @@ thread_will_park_or_terminate(__unused thread_t thread)
 static const struct pthread_callbacks_s pthread_callbacks = {
 	.version = PTHREAD_SHIMS_VERSION,
 
-	// our pthread shim isn't a kext; it's built as a part of the LKM, so it has full access to everything and doesn't need these
-#ifndef __DARLING__
 	.config_thread_max = CONFIG_THREAD_MAX,
 	.get_task_threadmax = get_task_threadmax,
 
@@ -530,15 +528,21 @@ static const struct pthread_callbacks_s pthread_callbacks = {
 	.proc_get_pthhash = proc_get_pthhash,
 	.proc_set_pthhash = proc_set_pthhash,
 	.proc_get_register = proc_get_register,
+#ifndef __DARLING__
 	.proc_set_register = proc_set_register,
+#endif
 
 	/* kernel IPI interfaces */
 	.ipc_port_copyout_send = ipc_port_copyout_send,
+#ifndef __DARLING__
 	.task_get_ipcspace = get_task_ipcspace,
+#endif
 	.vm_map_page_info = vm_map_page_info,
+#ifndef __DARLING__
 	.thread_set_wq_state32 = thread_set_wq_state32,
 #if !defined(__arm__)
 	.thread_set_wq_state64 = thread_set_wq_state64,
+#endif
 #endif
 
 	.uthread_get_uukwe = uthread_get_uukwe,
@@ -558,7 +562,9 @@ static const struct pthread_callbacks_s pthread_callbacks = {
 	.mach_port_deallocate = mach_port_deallocate,
 	.semaphore_signal_internal_trap = semaphore_signal_internal_trap,
 	.current_map = _current_map,
+#ifndef __DARLING__
 	.thread_create = thread_create,
+#endif
 	.thread_resume = thread_resume,
 
 	.kevent_workq_internal = kevent_workq_internal,
@@ -572,15 +578,23 @@ static const struct pthread_callbacks_s pthread_callbacks = {
 	.proc_get_mach_thread_self_tsd_offset = proc_get_mach_thread_self_tsd_offset,
 	.proc_set_mach_thread_self_tsd_offset = proc_set_mach_thread_self_tsd_offset,
 
+#ifndef __DARLING__
 	.thread_set_tsd_base = thread_set_tsd_base,
+#endif
 
+#ifndef __DARLING__
 	.proc_usynch_get_requested_thread_qos = proc_usynch_get_requested_thread_qos,
+#endif
 
 	.qos_main_thread_active = qos_main_thread_active,
+#ifndef __DARLING__
 	.thread_set_voucher_name = thread_set_voucher_name,
+#endif
 
+#ifndef __DARLING__
 	.proc_usynch_thread_qos_add_override_for_resource = proc_usynch_thread_qos_add_override_for_resource,
 	.proc_usynch_thread_qos_remove_override_for_resource = proc_usynch_thread_qos_remove_override_for_resource,
+#endif
 
 	.thread_set_tag = thread_set_tag,
 	.thread_get_tag = thread_get_tag,
@@ -598,7 +612,6 @@ static const struct pthread_callbacks_s pthread_callbacks = {
 	.psynch_wait_cleanup = psynch_wait_cleanup,
 	.psynch_wait_wakeup = psynch_wait_wakeup,
 	.psynch_wait_update_owner = psynch_wait_update_owner,
-#endif
 };
 
 pthread_callbacks_t pthread_kern = &pthread_callbacks;

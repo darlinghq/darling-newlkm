@@ -1031,6 +1031,7 @@ task_reference(
         kprintf("not implemented: task_reference()\n");
 }
 
+#if 0
 /* 
  * This routine is called always with task lock held.
  * And it returns a thread handle without reference as the caller
@@ -1042,6 +1043,7 @@ task_findtid(task_t task, uint64_t tid)
         kprintf("not implemented: task_findtid()\n");
         return 0;
 }
+#endif
 
 
 #if CONFIG_MACF_MACH

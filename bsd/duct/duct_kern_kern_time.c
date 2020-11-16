@@ -7,6 +7,33 @@
 
 // <copied from="xnu://6153.61.1/bsd/kern/kern_time.c">
 
+void
+microuptime(
+	struct timeval  *tvp)
+{
+	clock_sec_t             tv_sec;
+	clock_usec_t    tv_usec;
+
+	clock_get_system_microtime(&tv_sec, &tv_usec);
+
+	tvp->tv_sec = tv_sec;
+	tvp->tv_usec = tv_usec;
+}
+
+uint64_t
+tvtoabstime(
+	struct timeval  *tvp)
+{
+	uint64_t        result, usresult;
+
+	clock_interval_to_absolutetime_interval(
+		tvp->tv_sec, NSEC_PER_SEC, &result);
+	clock_interval_to_absolutetime_interval(
+		tvp->tv_usec, NSEC_PER_USEC, &usresult);
+
+	return result + usresult;
+}
+
 uint64_t
 tstoabstime(struct timespec *ts)
 {

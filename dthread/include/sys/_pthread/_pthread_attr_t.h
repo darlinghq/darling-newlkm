@@ -1,8 +1,8 @@
 /*
- * Copyright (c) 2000-2003 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2003-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
- *
+ * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
@@ -11,10 +11,10 @@
  * unlawful or unlicensed copies of an Apple operating system, or to
  * circumvent, violate, or enable the circumvention or violation of, any
  * terms of an Apple operating system software license agreement.
- *
+ * 
  * Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this file.
- *
+ * 
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -22,28 +22,11 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- *
+ * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-
-#ifndef _SYS_PTHREAD_INTERNAL_H_
-#define _SYS_PTHREAD_INTERNAL_H_
-
-#include <sys/user.h>
-#include <kern/thread_call.h>
-
-#ifndef BUILDING_DTHREAD
-struct ksyn_waitq_element {
-#if __LP64__
-	char opaque[48];
-#else
-	char opaque[32];
-#endif
-};
-#endif
-
-void workq_mark_exiting(struct proc *);
-void workq_exit(struct proc *);
-void pthread_init(void);
-
-#endif /* _SYS_PTHREAD_INTERNAL_H_ */
+#ifndef _PTHREAD_ATTR_T 
+#define _PTHREAD_ATTR_T 
+#include <sys/_pthread/_pthread_types.h> /* __darwin_pthread_attr_t */
+typedef __darwin_pthread_attr_t pthread_attr_t;
+#endif  /* _PTHREAD_ATTR_T */

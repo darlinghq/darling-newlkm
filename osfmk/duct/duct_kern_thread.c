@@ -899,6 +899,25 @@ thread_inspect_deallocate(
 	return thread_deallocate((thread_t)thread_inspect);
 }
 
+uint16_t
+thread_set_tag(thread_t th, uint16_t tag)
+{
+	return thread_set_tag_internal(th, tag);
+}
+
+uint16_t
+thread_get_tag(thread_t th)
+{
+	return thread_get_tag_internal(th);
+}
+
+uint64_t
+thread_tid(
+	thread_t        thread)
+{
+	return thread != THREAD_NULL? thread->thread_id: 0;
+}
+
 // </copied>
 
 #if THREAD_LOCK_DEBUG

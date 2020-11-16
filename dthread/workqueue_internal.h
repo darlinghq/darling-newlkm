@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2003 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2014 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,24 +26,29 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#ifndef _SYS_PTHREAD_INTERNAL_H_
-#define _SYS_PTHREAD_INTERNAL_H_
+#ifndef DTHREAD_WORKQUEUE_INTERNAL_H // header name changed for Darling
+#define DTHREAD_WORKQUEUE_INTERNAL_H
 
-#include <sys/user.h>
-#include <kern/thread_call.h>
-
-#ifndef BUILDING_DTHREAD
-struct ksyn_waitq_element {
-#if __LP64__
-	char opaque[48];
-#else
-	char opaque[32];
-#endif
-};
+#ifdef __DARLING__
+#include <pthread/workqueue_internal.h>
 #endif
 
-void workq_mark_exiting(struct proc *);
-void workq_exit(struct proc *);
-void pthread_init(void);
+/* These definitions are shared between the kext and userspace inside the pthread project. Consolidating
+ * duplicate definitions that used to exist in both projects, when separate.
+ */
 
-#endif /* _SYS_PTHREAD_INTERNAL_H_ */
+// Sometimes something gets passed a bucket number and we need a way to express
+// that it's actually the event manager.  Use the (0)th bucket for that.
+#define WORKQ_THREAD_QOS_MIN        (THREAD_QOS_MAINTENANCE)
+#define WORKQ_THREAD_QOS_MAX        (THREAD_QOS_LAST - 1)
+#define WORKQ_THREAD_QOS_CLEANUP    (THREAD_QOS_LEGACY)
+#define WORKQ_THREAD_QOS_MANAGER    (THREAD_QOS_LAST) // outside of MIN/MAX
+
+#define WORKQ_NUM_QOS_BUCKETS       (WORKQ_THREAD_QOS_MAX)
+#define WORKQ_NUM_BUCKETS           (WORKQ_THREAD_QOS_MAX + 1)
+#define WORKQ_IDX(qos)              ((qos) - 1) // 0 based index
+
+// magical `nkevents` values for _pthread_wqthread
+#define WORKQ_EXIT_THREAD_NKEVENT   (-1)
+
+#endif // DTHREAD_WORKQUEUE_INTERNAL_H
