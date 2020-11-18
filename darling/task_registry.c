@@ -37,6 +37,7 @@
 #include <linux/eventfd.h>
 #include <linux/mutex.h>
 #include "debug_print.h"
+#include "uthreads.h"
 
 DEFINE_SPINLOCK(my_task_lock);
 DEFINE_SPINLOCK(my_thread_lock);
@@ -530,44 +531,38 @@ _Bool darling_task_marked_start_suspended(void)
 	return rv;
 }
 
+extern struct uthread* current_uthread(void);
+
 _Bool darling_thread_canceled(void)
 {
-	struct registry_entry* e = darling_thread_get_current_entry();
-	if (e != NULL)
-	{
-		debug_msg("flags = %d\n", e->flags);
-		return (e->flags & (THREAD_CANCELDISABLED|THREAD_CANCELED)) == THREAD_CANCELED;
-	}
-	else
-		return false;
+	struct uthread* uth = current_uthread();
+	return (uth == NULL) ? false : darling_uthread_is_canceling(uth);
 }
 
 void darling_thread_cancelable(_Bool cancelable)
 {
-	struct registry_entry* e = darling_thread_get_current_entry();
-	if (e != NULL)
-	{
-		if (cancelable)
-			e->flags &= ~THREAD_CANCELDISABLED;
-		else
-			e->flags |= THREAD_CANCELDISABLED;
+	struct uthread* uth = current_uthread();
+	if (uth != NULL) {
+		darling_uthread_change_cancelable(uth, cancelable);
 	}
 }
 
 extern struct task_struct* thread_get_linux_task(thread_t thread);
+extern struct uthread* get_bsdthread_info(thread_t thread);
+
 void darling_thread_markcanceled(unsigned int pid)
 {
 	struct registry_entry* e;
+	struct uthread* uth;
 
 	debug_msg("Marking thread %d as canceled\n", pid);
 
 	rcu_read_lock();
 	e = darling_thread_get_entry(pid);
+	uth = (e == NULL) ? NULL : get_bsdthread_info(e->thread);
 
-	if (e != NULL && !(e->flags & THREAD_CANCELDISABLED))
+	if (uth != NULL && darling_uthread_mark_canceling(uth))
 	{
-		e->flags |= THREAD_CANCELED;
-
 		// FIXME: We should be calling wake_up_state(TASK_INTERRUPTIBLE),
 		// but this function is not exported.
 		wake_up_process(thread_get_linux_task(e->thread));

@@ -1771,8 +1771,12 @@ ksyn_wqfind(user_addr_t uaddr, uint32_t mgen, uint32_t ugen, uint32_t sgen,
 						/* if all users are unlockers then wait for it to finish */
 						kwq->kw_pflags |= KSYN_WQ_WAITING;
 						// Drop the lock and wait for the kwq to be free.
+#ifdef __DARLING__
+						res = msleep(&kwq->kw_pflags, pthread_list_mlock, PDROP, "ksyn_wqfind", 0);
+#else
 						(void)msleep(&kwq->kw_pflags, pthread_list_mlock,
 								PDROP, "ksyn_wqfind", 0);
+#endif
 						continue;
 					} else {
 						_kwq_report_inuse(kwq);
@@ -2030,6 +2034,9 @@ ksyn_signal(ksyn_wait_queue_t kwq, kwq_queue_type_t kqi,
 int
 ksyn_findobj(user_addr_t uaddr, uint64_t *objectp, uint64_t *offsetp)
 {
+#ifdef __DARLING__
+	return ENOTSUP; // TODO vm_map_page_info
+#else
 	kern_return_t ret;
 	vm_page_info_basic_data_t info;
 	mach_msg_type_number_t count = VM_PAGE_INFO_BASIC_COUNT;
@@ -2047,6 +2054,7 @@ ksyn_findobj(user_addr_t uaddr, uint64_t *objectp, uint64_t *offsetp)
 	}
 	
 	return(0);
+#endif
 }
 
 
