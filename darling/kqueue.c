@@ -318,7 +318,7 @@ static int dkqueue_file_peek_with_poll_result(struct knote* kn, __poll_t poll_re
 	int result = 0;
 	dkqueue_ptc_t* ptc = kn->kn_hook;
 
-	if (poll_result & POLLHUP) {
+	if ((poll_result & POLLHUP) != 0 || (poll_result & POLLRDHUP) != 0 || (poll_result & POLLERR) != 0) {
 		// possible bug: are we supposed to set EV_EOF for EVFILT_SOCK?
 		result = 1;
 		kn->kn_flags |= EV_EOF;
