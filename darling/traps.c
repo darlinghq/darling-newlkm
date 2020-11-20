@@ -66,7 +66,7 @@
 #include "commpage.h"
 #include "foreign_mm.h"
 #include "continuation.h"
-#include <dthread/pthread_kext.h>
+#include "pthread_kext.h"
 #include "procs.h"
 #include "kqueue.h"
 

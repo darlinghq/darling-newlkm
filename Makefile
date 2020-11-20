@@ -396,13 +396,13 @@ OBJS_$(MIGDIR_REL)/osfmk/device = \
 OBJS_$(MIGDIR_REL)/osfmk/UserNotification = \
 	$(MIGDIR_REL)/osfmk/UserNotification/UNDReplyServer.o
 
-OBJS_dthread = \
-	dthread/kern_synch.o \
-	dthread/pthread_kext.o
+#OBJS_dthread = \
+#	dthread/kern_synch.o \
+#	dthread/pthread_kext.o
 
-CFLAGS_dthread = \
-	-DBUILDING_DTHREAD=1 \
-	-I$(BUILD_ROOT)/dthread/include
+#CFLAGS_dthread = \
+#	-DBUILDING_DTHREAD=1 \
+#	-I$(BUILD_ROOT)/dthread/include
 
 #
 # darling/
@@ -418,6 +418,8 @@ OBJS_darling = \
 	darling/kqueue.o \
 	darling/module.o \
 	darling/procs.o \
+	darling/psynch_support.o \
+	darling/pthread_kext.o \
 	darling/pthread_kill.o \
 	darling/task_registry.o \
 	darling/traps.o \
@@ -433,7 +435,6 @@ DARLING_MACH_ALL_OBJS = \
 	$(OBJS_libkern) \
 	$(OBJS_pexpert) \
 	$(OBJS_$(MIGDIR_REL)/osfmk) \
-	$(OBJS_dthread) \
 	$(OBJS_darling)
 
 #

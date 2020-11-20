@@ -98,6 +98,10 @@
 
 #include <sys/cdefs.h>
 
+#ifdef __DARLING__
+#include <darling/pthread_internal.h>
+#endif
+
 #ifdef  MACH_KERNEL_PRIVATE
 
 #include <mach_assert.h>
