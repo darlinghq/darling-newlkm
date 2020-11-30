@@ -261,9 +261,10 @@ loop:
 }
 
 #ifdef __DARLING__
-static
-#endif
+static struct file *fget_task_noconflict(struct task_struct *task, unsigned int fd)
+#else
 struct file *fget_task(struct task_struct *task, unsigned int fd)
+#endif
 {
 	struct file *file = NULL;
 
@@ -277,7 +278,7 @@ struct file *fget_task(struct task_struct *task, unsigned int fd)
 // </copied>
 
 int darling_fd_lookup(proc_t proc, int fd, struct file** out_file) {
-	struct file* tmp = fget_task(((task_t)proc->task)->map->linux_task, fd);
+	struct file* tmp = fget_task_noconflict(((task_t)proc->task)->map->linux_task, fd);
 	if (!tmp) {
 		return EBADF;
 	}
