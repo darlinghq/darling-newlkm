@@ -107,14 +107,18 @@ add_custom_target(lkm_generate
 		${CMAKE_CURRENT_BINARY_DIR}/osfmk/UserNotification/UNDReplyServer.c
 )
 
-# because KBuild doesn't include the module's Makefile when doing the final complation for a module (i.e. for `<module-name>.mod.c`), apparently
-# we then use it with `EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}`, but we really only need it to apply to `*.mod.c`
-# unforuntately, KBuild doesn't look at any specific variables for those files, only generic global CFLAGS variables like EXTRA_CFLAGS
-set(LKM_CLANG_COMPAT_FLAGS
-	-Wno-error=unknown-warning-option
-	"-include ${CMAKE_CURRENT_SOURCE_DIR}/include/duct/compiler/clang/asm-inline.h"
-)
-list(JOIN LKM_CLANG_COMPAT_FLAGS " " LKM_CLANG_COMPAT_FLAGS)
+if(BUILD_LKM_WITH_CLANG)
+	# because KBuild doesn't include the module's Makefile when doing the final complation for a module (i.e. for `<module-name>.mod.c`), apparently
+	# we then use it with `EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}`, but we really only need it to apply to `*.mod.c`
+	# unforuntately, KBuild doesn't look at any specific variables for those files, only generic global CFLAGS variables like EXTRA_CFLAGS
+	set(LKM_CLANG_COMPAT_FLAGS
+		-Wno-error=unknown-warning-option
+		"-include ${CMAKE_CURRENT_SOURCE_DIR}/include/duct/compiler/clang/asm-inline.h"
+	)
+	list(JOIN LKM_CLANG_COMPAT_FLAGS " " LKM_CLANG_COMPAT_FLAGS)
+else()
+	set(LKM_CLANG_COMPAT_FLAGS "")
+endif()
 
 add_custom_target(lkm
 	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} CC="${CMAKE_C_COMPILER}" "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}"
