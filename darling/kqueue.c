@@ -129,7 +129,11 @@ static int dkqueue_vnode_process(struct knote* kn, struct kevent_qos_s* kev);
 static int dkqueue_vnode_peek(struct knote* kn);
 
 static void dkqueue_vnode_init(void);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+static int dkqueue_vnode_fs_handle_event(struct fsnotify_group* group, u32 mask, const void* data, int data_type, struct inode* dir, const struct qstr* file_name, u32 cookie, struct fsnotify_iter_info* iter_info);
+#else
 static int dkqueue_vnode_fs_handle_event(struct fsnotify_group* group, struct inode* inode, u32 mask, const void* data, int data_type, const struct qstr* file_name, u32 cookie, struct fsnotify_iter_info* iter_info);
+#endif
 static void dkqueue_vnode_free_group(struct fsnotify_group *group);
 static void dkqueue_vnode_fs_free_event(struct fsnotify_event* event);
 static void dkqueue_vnode_fs_free_mark(struct fsnotify_mark* mark);
@@ -861,11 +865,22 @@ static void dkqueue_vnode_init(void) {
 	vnode_context_cache = kmem_cache_create("dkq_vnode_ctx", sizeof(dkqueue_vnode_context_t), 0, 0, NULL);
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+static int dkqueue_vnode_fs_handle_event(struct fsnotify_group *group, u32 mask, const void *data, int data_type, struct inode *dir, const struct qstr* file_name, u32 cookie, struct fsnotify_iter_info* iter_info) {
+#else
 static int dkqueue_vnode_fs_handle_event(struct fsnotify_group* group, struct inode* inode, u32 mask, const void* data, int data_type, const struct qstr* file_name, u32 cookie, struct fsnotify_iter_info* iter_info) {
+#endif
 	struct fsnotify_mark* fs_mark = fsnotify_iter_inode_mark(iter_info);
 	dkqueue_vnode_context_t* ctx = (dkqueue_vnode_context_t*)fs_mark;
 	uint32_t vnode_event_mask = 0;
 	struct kqueue* kq = fs_mark->group->private;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	struct inode* inode = fsnotify_data_inode(data, data_type);
+	if (!inode) {
+		dkqueue_log("received fsnotify event without an inode; ignoring...");
+		return 0;
+	}
+#endif
 
 	dkqueue_log("received fsnotify event for vnode filter");
 

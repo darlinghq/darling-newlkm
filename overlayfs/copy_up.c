@@ -19,7 +19,12 @@
 #include <linux/fdtable.h>
 #include <linux/ratelimit.h>
 #include <linux/exportfs.h>
+#include <linux/version.h>
 #include "overlayfs.h"
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+#define uninitialized_var(x) x = x
+#endif
 
 #define OVL_COPY_UP_CHUNK_SIZE (1 << 20)
 
@@ -41,6 +46,7 @@ int ovl_copy_xattr(struct dentry *old, struct dentry *new)
 {
 	ssize_t list_size, size, value_size = 0;
 	char *buf, *name, *value = NULL;
+
 	int uninitialized_var(error);
 	size_t slen;
 
