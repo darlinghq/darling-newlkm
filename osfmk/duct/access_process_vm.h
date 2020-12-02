@@ -23,7 +23,10 @@ static int __access_remote_vm_darling(struct task_struct *tsk, struct mm_struct 
                 void *maddr;
                 struct page *page = NULL;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+                ret = get_user_pages_remote(mm, addr, 1,
+                                gup_flags, &page, &vma, NULL);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
                 ret = get_user_pages_remote(tsk, mm, addr, 1,
                                 gup_flags, &page, &vma, NULL);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)

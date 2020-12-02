@@ -542,7 +542,11 @@ mach_vm_remap_kernel(
 	struct page** pages = (struct page**) kmalloc(sizeof(struct page*) * nr_pages, GFP_KERNEL);
 	long got_pages;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	got_pages = get_user_pages_remote(src_map->linux_task->mm, page_start, nr_pages, gup_flags,
+#else
 	got_pages = get_user_pages_remote(NULL, src_map->linux_task->mm, page_start, nr_pages, gup_flags,
+#endif
 		pages, NULL, NULL);
 
 	if (got_pages == -LINUX_EFAULT)
@@ -551,7 +555,11 @@ mach_vm_remap_kernel(
 		gup_flags &= ~FOLL_WRITE;
 		map_prot &= ~PROT_WRITE;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+		got_pages = get_user_pages_remote(src_map->linux_task->mm, page_start, nr_pages, gup_flags,
+#else
 		got_pages = get_user_pages_remote(NULL, src_map->linux_task->mm, page_start, nr_pages, gup_flags,
+#endif
 			pages, NULL, NULL);
 	}
 
