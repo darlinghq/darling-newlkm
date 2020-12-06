@@ -11,6 +11,7 @@
 #include <net/sock.h>
 #endif
 #include <linux/fsnotify_backend.h>
+#include <linux/workqueue.h>
 
 #if 0
 // unconditionally print messages; useful for debugging kqueue by itself (enabling debug output for the entire LKM produces *lots* of output)
@@ -51,6 +52,7 @@ typedef struct dkqueue_ptc {
 	struct knote* kn;
 	dkqueue_pte_head_t pte_head;
 	struct task_struct* polling_task;
+	struct work_struct activator;
 
 	bool triggered;
 
@@ -80,6 +82,8 @@ static struct kmem_cache* entry_cache = NULL;
 static struct kmem_cache* proc_context_cache = NULL;
 static struct kmem_cache* dkqueue_list_entry_cache = NULL;
 static struct kmem_cache* vnode_context_cache = NULL;
+
+static struct workqueue_struct* file_activation_wq = NULL;
 
 // TODO: fs filter
 const struct filterops fs_filtops = {
@@ -317,6 +321,7 @@ static bool knote_wants_events(struct knote* kn, int events, bool all_or_nothing
 static void dkqueue_file_init(void) {
 	container_cache = kmem_cache_create("dkqueue_ptc_t", sizeof(dkqueue_ptc_t), 0, 0, NULL);
 	entry_cache = kmem_cache_create("dkqueue_pte_t", sizeof(dkqueue_pte_t), 0, 0, NULL);
+	file_activation_wq = create_singlethread_workqueue("dkqueue_activator");
 };
 
 static int dkqueue_file_peek_with_poll_result(struct knote* kn, __poll_t poll_result) {
@@ -438,7 +443,6 @@ static int dkqueue_perform_default_wakeup(wait_queue_entry_t* wqe, unsigned int 
 static int dkqueue_poll_wakeup_callback(wait_queue_entry_t* wqe, unsigned int mode, int sync, void* context) {
 	dkqueue_pte_t* pte = (dkqueue_pte_t*)wqe;
 	dkqueue_ptc_t* ptc = wqe->private;
-	struct kqueue* kq = knote_get_kq(ptc->kn);
 	__poll_t poll_result;
 
 	dkqueue_log("wait queue for file %p woke up", ptc->kn->kn_fp);
@@ -459,10 +463,8 @@ static int dkqueue_poll_wakeup_callback(wait_queue_entry_t* wqe, unsigned int mo
 	if (dkqueue_file_peek_with_poll_result(ptc->kn, poll_result)) {
 		dkqueue_log("activating knote %p for file-based filter with file %p", ptc->kn, ptc->kn->kn_fp);
 
-		// tell kqueue we're awake
-		kqlock(kq);
-		knote_activate(kq, ptc->kn, FILTER_ACTIVE);
-		kqunlock(kq);
+		// queue an activator for the knote
+		queue_work(file_activation_wq, &ptc->activator);
 	}
 
 	return dkqueue_perform_default_wakeup(wqe, mode, sync, context);
@@ -486,6 +488,16 @@ static void dkqueue_poll_wait_callback(struct file* file, wait_queue_head_t* wqh
 
 	// subscribe to the wait queue we were given
 	add_wait_queue(wqh, &pte->wqe);
+};
+
+static void dkqueue_file_activate(struct work_struct* work) {
+	dkqueue_ptc_t* ptc = container_of(work, dkqueue_ptc_t, activator);
+	struct kqueue* kq = knote_get_kq(ptc->kn);
+
+	// tell kqueue we're awake
+	kqlock(kq);
+	knote_activate(kq, ptc->kn, FILTER_ACTIVE);
+	kqunlock(kq);
 };
 
 static int dkqueue_file_attach(struct knote* kn, struct kevent_qos_s* kev) {
@@ -544,6 +556,7 @@ static int dkqueue_file_attach(struct knote* kn, struct kevent_qos_s* kev) {
 	ptc->connected = connected;
 	ptc->send_shutdown = send_shutdown;
 	ptc->receive_shutdown = receive_shutdown;
+	INIT_WORK(&ptc->activator, dkqueue_file_activate);
 
 	if (!file_can_poll(file)) {
 		dkqueue_log("file is always active");
@@ -578,6 +591,9 @@ static void dkqueue_file_detach(struct knote* kn) {
 
 	// unsubscribe from all wait queues and destroy the `pte`s
 	dkqueue_poll_unsubscribe_all(ptc);
+
+	// make sure there aren't any more activators running
+	cancel_work_sync(&ptc->activator);
 
 	// deallocate the ptc
 	kmem_cache_free(container_cache, ptc);
