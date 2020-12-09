@@ -1204,7 +1204,7 @@ vm_page_module_init(void)
 	vm_size_t	vm_page_with_ppnum_size;
 
 	vm_page_array_zone = zinit((vm_size_t) sizeof(struct vm_page),
-			     0, PAGE_SIZE, "vm pages array");
+			     0, PAGE_SIZE, "vm_pages_array");
 
 	zone_change(vm_page_array_zone, Z_CALLERACCT, FALSE);
 	zone_change(vm_page_array_zone, Z_EXPAND, FALSE);
@@ -1227,7 +1227,7 @@ vm_page_module_init(void)
 	vm_page_with_ppnum_size = (sizeof(struct vm_page_with_ppnum) + (VM_PACKED_POINTER_ALIGNMENT-1)) & ~(VM_PACKED_POINTER_ALIGNMENT - 1);
 
 	vm_page_zone = zinit(vm_page_with_ppnum_size,
-			     0, PAGE_SIZE, "vm pages");
+			     0, PAGE_SIZE, "vm_pages");
 
 	zone_change(vm_page_zone, Z_CALLERACCT, FALSE);
 	zone_change(vm_page_zone, Z_EXPAND, FALSE);

@@ -126,7 +126,7 @@ device_pager_bootstrap(void)
 
 	size = (vm_size_t) sizeof(struct device_pager);
 	device_pager_zone = zinit(size, (vm_size_t) MAX_DNODE*size,
-				PAGE_SIZE, "device node pager structures");
+				PAGE_SIZE, "device_node_pager_structures");
 	zone_change(device_pager_zone, Z_CALLERACCT, FALSE);
 	return;
 }

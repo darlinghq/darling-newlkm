@@ -350,7 +350,7 @@ sched_multiq_init(void)
 	                         sizeof(struct sched_group),
 	                         task_max * sizeof(struct sched_group),
 	                         PAGE_SIZE,
-	                         "sched groups");
+	                         "sched_groups");
 
 	zone_change(sched_group_zone, Z_NOENCRYPT, TRUE);
 	zone_change(sched_group_zone, Z_NOCALLOUT, TRUE);

@@ -361,7 +361,7 @@ fpu_module_init(void)
 	ifps_zone = zinit(fp_register_state_size,
 			  thread_max * fp_register_state_size,
 			  64 * fp_register_state_size,
-			  "x86 fpsave state");
+			  "x86_fpsave_state");
 
 	/* To maintain the required alignment, disable
 	 * zone debugging for this zone as that appends

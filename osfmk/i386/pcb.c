@@ -1673,12 +1673,12 @@ machine_thread_init(void)
 	iss_zone = zinit(sizeof(x86_saved_state_t),
 			thread_max * sizeof(x86_saved_state_t),
 			THREAD_CHUNK * sizeof(x86_saved_state_t),
-			"x86_64 saved state");
+			"x86_64_saved_state");
 
         ids_zone = zinit(sizeof(x86_debug_state64_t),
 			 thread_max * sizeof(x86_debug_state64_t),
 			 THREAD_CHUNK * sizeof(x86_debug_state64_t),
-			 "x86_64 debug state");
+			 "x86_64_debug_state");
 
 	fpu_module_init();
 }

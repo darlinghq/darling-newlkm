@@ -168,7 +168,7 @@ ipc_bootstrap(void)
 	ipc_space_zone = zinit(sizeof(struct ipc_space),
 			       ipc_space_max * sizeof(struct ipc_space),
 			       sizeof(struct ipc_space),
-			       "ipc spaces");
+			       "ipc_spaces");
 	zone_change(ipc_space_zone, Z_NOENCRYPT, TRUE);
 
 	/*
@@ -178,7 +178,7 @@ ipc_bootstrap(void)
 		zinit(sizeof(struct ipc_port),
 		      ipc_port_max * sizeof(struct ipc_port),
 		      sizeof(struct ipc_port),
-		      "ipc ports");
+		      "ipc_ports");
 	/* cant charge callers for port allocations (references passed) */
 	zone_change(ipc_object_zones[IOT_PORT], Z_CALLERACCT, FALSE);
 	zone_change(ipc_object_zones[IOT_PORT], Z_NOENCRYPT, TRUE);
@@ -187,7 +187,7 @@ ipc_bootstrap(void)
 		zinit(sizeof(struct ipc_pset),
 		      ipc_pset_max * sizeof(struct ipc_pset),
 		      sizeof(struct ipc_pset),
-		      "ipc port sets");
+		      "ipc_port_sets");
 	zone_change(ipc_object_zones[IOT_PORT_SET], Z_NOENCRYPT, TRUE);
 
 	/*
@@ -198,7 +198,7 @@ ipc_bootstrap(void)
 			      ipc_port_max * MACH_PORT_QLIMIT_DEFAULT *
 			      IKM_SAVED_KMSG_SIZE,
 			      IKM_SAVED_KMSG_SIZE,
-			      "ipc kmsgs");
+			      "ipc_kmsgs");
 	zone_change(ipc_kmsg_zone, Z_CALLERACCT, FALSE);
 
 	/* create special spaces */

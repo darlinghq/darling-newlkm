@@ -4594,7 +4594,7 @@ ksyn_cvupdate_fixup(ksyn_wait_queue_t ckwq, uint32_t *updatep, ksyn_queue_t kfre
 void
 psynch_zoneinit(void)
 {
-        kwq_zone = (zone_t)zinit(sizeof(struct ksyn_wait_queue), 8192 * sizeof(struct ksyn_wait_queue), 4096, "ksyn_waitqueue zone");
-        kwe_zone = (zone_t)zinit(sizeof(struct ksyn_waitq_element), 8192 * sizeof(struct ksyn_waitq_element), 4096, "ksyn_waitq_element zone");
+        kwq_zone = (zone_t)zinit(sizeof(struct ksyn_wait_queue), 8192 * sizeof(struct ksyn_wait_queue), 4096, "ksyn_waitqueue_zone");
+        kwe_zone = (zone_t)zinit(sizeof(struct ksyn_waitq_element), 8192 * sizeof(struct ksyn_waitq_element), 4096, "ksyn_waitq_element_zone");
 }
 #endif

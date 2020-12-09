@@ -128,7 +128,7 @@ void duct_waitq_bootstrap (void)
         zinit ( sizeof(struct waitq),
                 WAIT_QUEUE_MAX * sizeof(struct waitq),
                 sizeof(struct waitq ),
-                "wait queues" );
+                "wait_queues" );
 
         // WC zone_change(_waitq_zone, Z_NOENCRYPT, TRUE);
 
@@ -136,14 +136,14 @@ void duct_waitq_bootstrap (void)
         zinit ( sizeof(struct waitq_set),
                 WAIT_QUEUE_SET_MAX * sizeof(struct waitq_set),
                 sizeof(struct waitq_set),
-                "wait queue sets" );
+                "wait_queue_sets" );
         // WC zone_change(_waitq_set_zone, Z_NOENCRYPT, TRUE);
 
         _waitq_link_zone   =
         zinit ( sizeof(struct waitq_link),
                 WAIT_QUEUE_LINK_MAX * sizeof(struct waitq_link),
                 sizeof(struct waitq_link),
-                "wait queue links" );
+                "wait_queue_links" );
 
         // WC zone_change(_waitq_link_zone, Z_NOENCRYPT, TRUE);
 }

@@ -4987,13 +4987,13 @@ void
 knote_init(void)
 {
 	knote_zone = zinit(sizeof(struct knote), 8192*sizeof(struct knote),
-	                   8192, "knote zone");
+	                   8192, "knote_zone");
 
 	kqfile_zone = zinit(sizeof(struct kqfile), 8192*sizeof(struct kqfile),
-	                    8192, "kqueue file zone");
+	                    8192, "kqueue_file_zone");
 
 	kqworkq_zone = zinit(sizeof(struct kqworkq), 8192*sizeof(struct kqworkq),
-	                    8192, "kqueue workq zone");
+	                    8192, "kqueue_workq_zone");
 
 	/* allocate kq lock group attribute and group */
 	kq_lck_grp_attr = lck_grp_attr_alloc_init();
