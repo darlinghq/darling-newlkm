@@ -214,13 +214,14 @@ thread_call_cancel(
 {
 	assert(_thread_call_wq != NULL);
 	debug_msg("thread_call_cancel(%p)\n", call);
-	return cancel_delayed_work_sync(&call->tc_work);
+	return cancel_delayed_work(&call->tc_work);
 }
 
 boolean_t
 thread_call_cancel_wait(thread_call_t call) {
-	// our `thread_call_cancel` waits anyways
-	return thread_call_cancel(call);
+	assert(_thread_call_wq != NULL);
+	debug_msg("thread_call_cancel_wait(%p)\n", call);
+	return cancel_delayed_work_sync(&call->tc_work);
 };
 
 boolean_t
