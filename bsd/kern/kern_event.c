@@ -5683,7 +5683,10 @@ kqueue_alloc_turnstile(kqueue_t kqu)
 		return TURNSTILE_NULL;
 	}
 
-#ifndef __DARLING__ // we don't have workloop support yet, so we don't need turnstiles
+#ifdef __DARLING__
+	// we don't have workloop support yet, so we don't need turnstiles
+	return TURNSTILE_NULL;
+#else
 	struct turnstile *ts = turnstile_alloc(), *free_ts = TURNSTILE_NULL;
 	bool workq_locked = false;
 

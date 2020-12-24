@@ -772,7 +772,11 @@ static void watchpoint_callback(struct perf_event* pevent, struct perf_sample_da
 					thread->triggered_watchpoint_operation = 0;
 					break;
 			}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
+			lthread->virtual_dr6 |= 1 << i;
+#else
 			lthread->debugreg6 |= 1 << i;
+#endif
 
 			break;
 		}
