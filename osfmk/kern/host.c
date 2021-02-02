@@ -576,6 +576,7 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 #ifdef __DARLING__
 	default:
 		printf("Unimplemented host_statistics: flavor %d\n", flavor);
+		return (KERN_INVALID_ARGUMENT);
 #endif
 	}
 }

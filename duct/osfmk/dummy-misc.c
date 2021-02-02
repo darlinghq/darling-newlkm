@@ -231,6 +231,7 @@ mach_memory_info(
 	mach_msg_type_number_t   *memoryInfoCntp)
 {
        kprintf("not implemented: mach_memory_info()");
+       return (KERN_NOT_SUPPORTED);
 }
 
 #if 0

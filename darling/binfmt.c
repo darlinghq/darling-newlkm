@@ -866,8 +866,10 @@ fail:
 
 int macho_coredump(struct coredump_params* cprm)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
 	mm_segment_t fs = get_fs();
 	set_fs(KERNEL_DS);
+#endif
 
 	// Write the Mach-O header and loader commands
 	if (test_thread_flag(TIF_IA32))
@@ -919,7 +921,9 @@ int macho_coredump(struct coredump_params* cprm)
 	dump_truncate(cprm);
 
 fail:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
 	set_fs(fs);
+#endif
 	return cprm->written > 0;
 }
 
