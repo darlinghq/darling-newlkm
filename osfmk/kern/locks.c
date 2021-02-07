@@ -132,24 +132,34 @@ uint64_t dtrace_spin_threshold = LOCK_PANIC_TIMEOUT / 1000000; // 500ns
 // (we need to build with GCC, but also, during testing, blocks were found to be prone
 // to making the Linux kernel crash)
 
-static void lck_helper_sleep_lock(void* context) {
+static void lck_helper_mutex_sleep_lock(void* context) {
 	lck_mtx_t* lock = context;
 	lck_mtx_lock(lock);
 };
 
-static void lck_helper_sleep_unlock(void* context) {
+static void lck_helper_mutex_sleep_unlock(void* context) {
 	lck_mtx_t* lock = context;
 	lck_mtx_unlock(lock);
 };
 
-static void lck_helper_sleep_spin_lock(void* context) {
+static void lck_helper_mutex_sleep_spin_lock(void* context) {
 	lck_mtx_t* lock = context;
 	lck_mtx_lock_spin(lock);
 };
 
-static void lck_helper_sleep_spin_lock_always(void* context) {
+static void lck_helper_mutx_sleep_spin_lock_always(void* context) {
 	lck_mtx_t* lock = context;
 	lck_mtx_lock_spin_always(lock);
+};
+
+static void lck_helper_spin_sleep_lock(void* context) {
+	lck_spin_t* lock = context;
+	lck_spin_lock(lock);
+};
+
+static void lck_helper_spin_sleep_unlock(void* context) {
+	lck_spin_t* lock = context;
+	lck_spin_unlock(lock);
 };
 
 struct lck_helper_rw_context {
@@ -2090,7 +2100,7 @@ lck_mtx_sleep_with_inheritor_and_turnstile_type(lck_mtx_t *lock, lck_sleep_actio
 #ifdef __DARLING__
 		           lock,
 		           NULL,
-		           lck_helper_sleep_unlock);
+		           lck_helper_mutex_sleep_unlock);
 #else
 		           ^{;},
 		           ^{lck_mtx_unlock(lock);});
@@ -2103,8 +2113,8 @@ lck_mtx_sleep_with_inheritor_and_turnstile_type(lck_mtx_t *lock, lck_sleep_actio
 		           type,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_spin_lock,
-		           lck_helper_sleep_unlock);
+		           lck_helper_mutex_sleep_spin_lock,
+		           lck_helper_mutex_sleep_unlock);
 #else
 		           ^{lck_mtx_lock_spin(lock);},
 		           ^{lck_mtx_unlock(lock);});
@@ -2117,8 +2127,8 @@ lck_mtx_sleep_with_inheritor_and_turnstile_type(lck_mtx_t *lock, lck_sleep_actio
 		           type,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_spin_lock_always,
-		           lck_helper_sleep_unlock);
+		           lck_helper_mutx_sleep_spin_lock_always,
+		           lck_helper_mutex_sleep_unlock);
 #else
 		           ^{lck_mtx_lock_spin_always(lock);},
 		           ^{lck_mtx_unlock(lock);});
@@ -2131,8 +2141,8 @@ lck_mtx_sleep_with_inheritor_and_turnstile_type(lck_mtx_t *lock, lck_sleep_actio
 		           type,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_lock,
-		           lck_helper_sleep_unlock);
+		           lck_helper_mutex_sleep_lock,
+		           lck_helper_mutex_sleep_unlock);
 #else
 		           ^{lck_mtx_lock(lock);},
 		           ^{lck_mtx_unlock(lock);});
@@ -2176,7 +2186,7 @@ lck_spin_sleep_with_inheritor(
 		return sleep_with_inheritor_and_turnstile_type(event, inheritor,
 		           interruptible, deadline, TURNSTILE_SLEEP_INHERITOR,
 #ifdef __DARLING__
-		           lock, NULL, lck_helper_sleep_unlock);
+		           lock, NULL, lck_helper_spin_sleep_unlock);
 #else
 		           ^{}, ^{ lck_spin_unlock(lock); });
 #endif
@@ -2184,7 +2194,7 @@ lck_spin_sleep_with_inheritor(
 		return sleep_with_inheritor_and_turnstile_type(event, inheritor,
 		           interruptible, deadline, TURNSTILE_SLEEP_INHERITOR,
 #ifdef __DARLING__
-		           lock, lck_helper_sleep_lock, lck_helper_sleep_unlock);
+		           lock, lck_helper_spin_sleep_lock, lck_helper_spin_sleep_unlock);
 #else
 		           ^{ lck_spin_lock(lock); }, ^{ lck_spin_unlock(lock); });
 #endif
@@ -3422,7 +3432,7 @@ lck_mtx_gate_wait(lck_mtx_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_ac
 		           deadline,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_unlock,
+		           lck_helper_mutex_sleep_unlock,
 		           NULL);
 #else
 		           ^{lck_mtx_unlock(lock);},
@@ -3434,8 +3444,8 @@ lck_mtx_gate_wait(lck_mtx_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_ac
 		           deadline,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_unlock,
-		           lck_helper_sleep_spin_lock);
+		           lck_helper_mutex_sleep_unlock,
+		           lck_helper_mutex_sleep_spin_lock);
 #else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{lck_mtx_lock_spin(lock);});
@@ -3446,8 +3456,8 @@ lck_mtx_gate_wait(lck_mtx_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_ac
 		           deadline,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_unlock,
-		           lck_helper_sleep_spin_lock_always);
+		           lck_helper_mutex_sleep_unlock,
+		           lck_helper_mutx_sleep_spin_lock_always);
 #else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{lck_mtx_lock_spin_always(lock);});
@@ -3458,8 +3468,8 @@ lck_mtx_gate_wait(lck_mtx_t *lock, gate_t *gate, lck_sleep_action_t lck_sleep_ac
 		           deadline,
 #ifdef __DARLING__
 		           lock,
-		           lck_helper_sleep_unlock,
-		           lck_helper_sleep_lock);
+		           lck_helper_mutex_sleep_unlock,
+		           lck_helper_mutex_sleep_lock);
 #else
 		           ^{lck_mtx_unlock(lock);},
 		           ^{lck_mtx_lock(lock);});
