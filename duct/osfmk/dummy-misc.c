@@ -231,9 +231,7 @@ mach_memory_info(
 	mach_msg_type_number_t   *memoryInfoCntp)
 {
        kprintf("not implemented: mach_memory_info()");
-       // NOTE(@facekapow): i'm adding `return 0` because that's what all the neighboring functions are doing,
-       //                   but maybe we (and maybe all the other functions) should be returning `KERN_FAILURE` instead
-       return 0;
+       return (KERN_NOT_SUPPORTED);
 }
 
 #if 0
