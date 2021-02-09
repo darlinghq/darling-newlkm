@@ -258,7 +258,7 @@ int load(struct linux_binprm* bprm,
 		if (arch && ((struct mach_header*) bprm->buf)->cputype != arch)
 			return -ENOEXEC;
 
-		return load64(bprm, file, NULL, false, lr);
+		return load64(bprm, file, NULL, arch != 0, lr);
 	}
 	else if (magic == MH_MAGIC || magic == MH_CIGAM)
 	{
@@ -267,7 +267,7 @@ int load(struct linux_binprm* bprm,
 			return -ENOEXEC;
 
 		// TODO: make process 32-bit
-		return load32(bprm, file, NULL, false, lr);
+		return load32(bprm, file, NULL, arch != 0, lr);
 	}
 	else if (magic == FAT_MAGIC || magic == FAT_CIGAM)
 	{
