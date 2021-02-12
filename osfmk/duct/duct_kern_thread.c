@@ -627,7 +627,11 @@ thread_block_parameter(
         thread_lock(thread);
 
         if (signal_pending(linux_current))
+        {
+            if (fatal_signal_pending(linux_current))
+                thread->active = FALSE;
             break;
+        }
     }
 
     if (thread->wait_result == THREAD_WAITING)
