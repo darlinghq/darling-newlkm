@@ -74,18 +74,38 @@ extern void duct_panic(const char* reason, ...);
 #define EFAULT  14
 #endif
 
-#define copyin(user_addr, kern_addr, nbytes) \
-        (copy_from_user (kern_addr, (const void __user *) user_addr, nbytes) ? EFAULT : 0)
+#define copyin(user_addr, kern_addr, nbytes) copyin_linux(user_addr, kern_addr, nbytes)
 
-#define copyinmsg(user_addr, kern_addr, nbytes) \
-        (copy_from_user (kern_addr, (const void __user *) user_addr, nbytes) ? EFAULT : 0)
+#define copyinmsg(user_addr, kern_addr, nbytes) copyin_linux(user_addr, kern_addr, nbytes)
 
-#define copyout(kern_addr, user_addr, nbytes) \
-        (copy_to_user ((void __user *) user_addr, kern_addr, nbytes) ? EFAULT : 0)
+#define copyout(kern_addr, user_addr, nbytes) copyout_linux(kern_addr, user_addr, nbytes)
 
-#define copyoutmsg(kern_addr, user_addr, nbytes) \
-        (copy_to_user ((void __user *) user_addr, kern_addr, nbytes) ? EFAULT : 0)
+#define copyoutmsg(kern_addr, user_addr, nbytes) copyout_linux(kern_addr, user_addr, nbytes)
 
+
+static inline int copyin_linux(const user_addr_t user_addr, void *kern_addr, size_t nbytes)
+{
+        if (linux_current->mm)
+                return (copy_from_user (kern_addr, (const void __user *) user_addr, nbytes) ? EFAULT : 0);
+        else
+        {
+                // kthreads may also call Mach APIs that use copyin/copyout
+                memcpy(kern_addr, (void*) user_addr, nbytes);
+                return 0;
+        }
+}
+
+static inline int copyout_linux(const void *kern_addr, user_addr_t user_addr, size_t nbytes)
+{
+        if (linux_current->mm)
+                return (copy_to_user ((void __user *) user_addr, kern_addr, nbytes) ? EFAULT : 0);
+        else
+        {
+                // kthreads may also call Mach APIs that use copyin/copyout
+                memcpy((void*) user_addr, kern_addr, nbytes);
+                return 0;
+        }
+}
 
 /* spin locks */
 #undef lck_spin_init

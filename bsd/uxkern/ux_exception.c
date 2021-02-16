@@ -120,7 +120,7 @@ extern mach_msg_return_t mach_msg_send(mach_msg_header_t *msg,
 extern thread_t convert_port_to_thread(ipc_port_t port);
 extern void ipc_port_release_send(ipc_port_t port);
 
-
+static struct task_struct* ux_kthread = NULL;
 
 
 /*
@@ -239,6 +239,9 @@ static int ux_handler(void* unused_arg)
 		panic("exception_handler");
 #else
 		xnu_kthread_deregister();
+
+		printf("ERROR: ux_exception: mach_msg_receive() returned %d\n", result);
+		ux_kthread = NULL;
 		return 0;
 #endif
 	}
@@ -256,7 +259,6 @@ host_set_exception_ports(
 extern host_priv_t
 host_priv_self(void);
 
-static struct task_struct* ux_kthread = NULL;
 #endif
 void
 ux_handler_init(void)
