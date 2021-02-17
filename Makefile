@@ -11,6 +11,8 @@ endif
 # ***
 #
 
+USE_NEW_PTHREAD_CODE ?= 0
+
 ifneq (,$(findstring clang,$(CC)))
 	COMPILER_NAME := CLANG
 else
@@ -396,13 +398,23 @@ OBJS_$(MIGDIR_REL)/osfmk/device = \
 OBJS_$(MIGDIR_REL)/osfmk/UserNotification = \
 	$(MIGDIR_REL)/osfmk/UserNotification/UNDReplyServer.o
 
-#OBJS_dthread = \
-#	dthread/kern_synch.o \
-#	dthread/pthread_kext.o
+ifeq ($(USE_NEW_PTHREAD_CODE),1)
+  OBJS_dthread = \
+    dthread/kern_synch.o \
+    dthread/pthread_kext.o
 
-#CFLAGS_dthread = \
-#	-DBUILDING_DTHREAD=1 \
-#	-I$(BUILD_ROOT)/dthread/include
+  CFLAGS_dthread = \
+    -DBUILDING_DTHREAD=1 \
+    -I$(BUILD_ROOT)/dthread/include
+
+  OBJS_old_psynch =
+else
+  OBJS_dthread =
+
+  OBJS_old_psynch = \
+    darling/psynch_support.o \
+    darling/pthread_kext.o
+endif
 
 #
 # darling/
@@ -418,12 +430,11 @@ OBJS_darling = \
 	darling/kqueue.o \
 	darling/module.o \
 	darling/procs.o \
-	darling/psynch_support.o \
-	darling/pthread_kext.o \
 	darling/pthread_kill.o \
 	darling/task_registry.o \
 	darling/traps.o \
-	darling/uthreads.o
+	darling/uthreads.o \
+	$(OBJS_old_psynch)
 
 #
 # full list of all objects in the darling-mach kernel module
@@ -435,7 +446,8 @@ DARLING_MACH_ALL_OBJS = \
 	$(OBJS_libkern) \
 	$(OBJS_pexpert) \
 	$(OBJS_$(MIGDIR_REL)/osfmk) \
-	$(OBJS_darling)
+	$(OBJS_darling) \
+	$(OBJS_dthread)
 
 #
 # normal includes
