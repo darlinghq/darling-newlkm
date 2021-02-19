@@ -619,7 +619,7 @@ thread_block_parameter(
     thread_lock(thread);
     thread->parameter = parameter;
     
-    while ((thread->state & TH_WAIT) && linux_current->state != TASK_RUNNING)
+    while ((thread->state & TH_WAIT) /*&& linux_current->state != TASK_RUNNING*/)
     {
         thread_unlock(thread);
 	debug_msg("about to schedule - my state: %d\n", thread->linux_task->state);
