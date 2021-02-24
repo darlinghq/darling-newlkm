@@ -539,6 +539,14 @@ mach_vm_remap_kernel(
 
 	printk(KERN_NOTICE "mach_vm_remap(): addr 0x%lx, page_start: 0x%lx, nr_pages: %d\n", memory_address, page_start, nr_pages);
 
+	if (copy) {
+		// determine the source's protection; this is so that execute permissions are copied across
+		struct vm_area_struct* vma = find_vma(src_map->linux_task->mm, memory_address);
+		if (vma->vm_flags & VM_EXEC) {
+			map_prot |= PROT_EXEC;
+		}
+	}
+
 	struct page** pages = (struct page**) kmalloc(sizeof(struct page*) * nr_pages, GFP_KERNEL);
 	long got_pages;
 
@@ -639,6 +647,8 @@ mach_vm_remap_kernel(
 	*cur_protection = VM_PROT_READ;
 	if (map_prot & PROT_WRITE)
 		*cur_protection |= VM_PROT_WRITE;
+	if (map_prot & PROT_EXEC)
+		*cur_protection |= VM_PROT_EXECUTE;
 
 	*max_protection = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
 
