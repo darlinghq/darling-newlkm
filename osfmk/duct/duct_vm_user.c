@@ -647,8 +647,12 @@ mach_vm_remap_kernel(
 	*cur_protection = VM_PROT_READ;
 	if (map_prot & PROT_WRITE)
 		*cur_protection |= VM_PROT_WRITE;
+
+	// LLDB doesn't like it when we tell it the memory is executable, for some reason
+#if 0
 	if (map_prot & PROT_EXEC)
 		*cur_protection |= VM_PROT_EXECUTE;
+#endif
 
 	*max_protection = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
 
