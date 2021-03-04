@@ -64,6 +64,9 @@ duct_thread_destroy(thread_t thread);
 extern task_t kernel_task;
 static thread_t my_thread;
 
+//#define thread_call_debug_msg(...) printk(KERN_ERR __VA_ARGS__)
+#define thread_call_debug_msg(...)
+
 /*
  *  thread_call_initialize:
  *
@@ -127,7 +130,7 @@ thread_call_setup(
     thread_call_func_t      func,
     thread_call_param_t     param0)
 {
-	debug_msg("thread_call_setup(call=%p)\n", call);
+	thread_call_debug_msg("thread_call_setup(call=%p)\n", call);
 	call_entry_setup((call_entry_t) call, func, param0);
 	INIT_DELAYED_WORK(&call->tc_work, thread_call_worker);
 	call->free = FALSE;
@@ -191,13 +194,11 @@ boolean_t
 thread_call_free(
         thread_call_t       call)
 {
-	call->free = TRUE;
-	if (!thread_call_cancel(call))
-	{
-		kfree(call, sizeof(struct thread_call));
-		return TRUE;
-	}
-	return FALSE;
+	if (atomic_long_read(&call->tc_work.work.data) & (WORK_STRUCT_PENDING | WORK_STRUCT_DELAYED))
+		return FALSE;
+
+	kfree(call, sizeof(struct thread_call));
+	return TRUE;
 }
 
 /*
@@ -213,15 +214,30 @@ thread_call_cancel(
         thread_call_t       call)
 {
 	assert(_thread_call_wq != NULL);
-	debug_msg("thread_call_cancel(%p)\n", call);
-	return cancel_delayed_work(&call->tc_work);
+	if (_thread_call_wq != NULL)
+	{
+		thread_call_debug_msg("thread_call_cancel(%p)\n", call);
+		return cancel_delayed_work(&call->tc_work);
+	}
+	else
+	{
+		return FALSE;
+	}
 }
 
 boolean_t
 thread_call_cancel_wait(thread_call_t call) {
 	assert(_thread_call_wq != NULL);
-	debug_msg("thread_call_cancel_wait(%p)\n", call);
-	return cancel_delayed_work_sync(&call->tc_work);
+
+	if (_thread_call_wq != NULL)
+	{
+		thread_call_debug_msg("thread_call_cancel_wait(%p)\n", call);
+		return cancel_delayed_work_sync(&call->tc_work);
+	}
+	else
+	{
+		return FALSE;
+	}
 };
 
 boolean_t
@@ -265,12 +281,17 @@ thread_call_enter_delayed(
 {
 	uint64_t delay;
 
-	debug_msg("thread_call_enter_delayed(call=%p, deadline=%lld)\n", call, deadline);
+	thread_call_debug_msg("thread_call_enter_delayed(call=%p, deadline=%lld)\n", call, deadline);
 	assert(_thread_call_wq != NULL);
+
+	if (_thread_call_wq == NULL)
+	{
+		return FALSE;
+	}
 
 	delay = deadline_to_delay(deadline, (call->tc_flags & THREAD_CALL_CONTINUOUS) != 0);
 
-	debug_msg("... delayed by %llu ns\n", delay);
+	thread_call_debug_msg("... delayed by %llu ns\n", delay);
 
 	if (queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(delay)) == 0)
 	{
@@ -280,8 +301,12 @@ thread_call_enter_delayed(
 			call->tc_deadline = deadline;
 		} else {
 			// Re-schedule
-			cancel_delayed_work_sync(&call->tc_work);
-			queue_delayed_work(_thread_call_wq, &call->tc_work, nsecs_to_jiffies(delay));
+			thread_call_debug_msg("... mod timer expiry\n");
+			// Important details: if thread_call_enter_delayed() returns TRUE, then no new
+			// callout was scheduled. So we may not re-queue the work, we may only
+			// change the delay.
+			// Whether the delay took effect or it was too late, is caller's problem.
+			call->tc_work.timer.expires = jiffies + nsecs_to_jiffies(delay);
 		}
 		return TRUE;
 	}
@@ -302,19 +327,7 @@ boolean_t
 thread_call_enter(
         thread_call_t       call)
 {
-	if (queue_delayed_work(_thread_call_wq, &call->tc_work, 0) == 0)
-	{
-		if ((call->tc_flags & THREAD_CALL_ONCE) != 0) {
-			call->tc_flags |= THREAD_CALL_RESCHEDULE;
-			call->tc_deadline = 0;
-		} else {
-			// Re-schedule
-			cancel_delayed_work_sync(&call->tc_work);
-			queue_delayed_work(_thread_call_wq, &call->tc_work, 0);
-		}
-		return TRUE;
-	}
-	return FALSE;
+	return thread_call_enter_delayed(call, 0);
 }
 
 boolean_t
@@ -331,8 +344,8 @@ thread_call_worker(struct work_struct* work)
 {
 	thread_call_t call;
 
-	debug_msg("thread_call_worker() invoked\n");
 	call = container_of(to_delayed_work(work), struct thread_call, tc_work);
+	thread_call_debug_msg("thread_call_worker() invoked on call %p\n", call);
 	
 	darling_thread_register(my_thread);
 	call->tc_call.func(call->tc_call.param0, call->tc_call.param1);
@@ -341,6 +354,7 @@ thread_call_worker(struct work_struct* work)
 	if (call->free)
 		kfree(call, sizeof(struct thread_call));
 	else if ((call->tc_flags & THREAD_CALL_RESCHEDULE) != 0) {
+		thread_call_debug_msg("... asked to reschedule\n");
 		call->tc_flags &= ~THREAD_CALL_RESCHEDULE;
 		queue_delayed_work(_thread_call_wq, &call->tc_work, deadline_to_delay(call->tc_deadline, (call->tc_flags & THREAD_CALL_CONTINUOUS) != 0));
 	}
