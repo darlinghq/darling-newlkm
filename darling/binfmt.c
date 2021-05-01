@@ -54,6 +54,12 @@
 // To get LINUX_SIGRTMIN
 #include <rtsig.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0)
+#	define check_64bit_mode(regs) !test_thread_flag(TIF_IA32)
+#else
+#	define check_64bit_mode(regs) any_64bit_mode(regs)
+#endif
+
 extern char* task_copy_vchroot_path(task_t t);
 
 struct load_results
@@ -222,7 +228,7 @@ int setup_space(struct linux_binprm* bprm, struct load_results* lr)
 	// Explanation:
 	// Using STACK_TOP would cause the stack to be placed just above the commpage
 	// and would collide with it eventually.
-	unsigned long stackAddr = commpage_address(!test_thread_flag(TIF_IA32));
+	unsigned long stackAddr = commpage_address(check_64bit_mode(current_pt_regs()));
 
 	setup_new_exec(bprm);
 	#if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
@@ -560,7 +566,7 @@ start_thread_common(struct pt_regs *regs, unsigned long new_ip,
 void
 start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
-	bool ia32 = test_thread_flag(TIF_IA32);
+	bool ia32 = !check_64bit_mode(regs);
 	start_thread_common(regs, new_ip, new_sp,
 			ia32 ? __USER32_CS : __USER_CS,
 			__USER_DS,
@@ -872,7 +878,7 @@ int macho_coredump(struct coredump_params* cprm)
 #endif
 
 	// Write the Mach-O header and loader commands
-	if (test_thread_flag(TIF_IA32))
+	if (!check_64bit_mode(current_pt_regs()))
 	{
 		// 32-bit executables
 		if (!macho_dump_headers32(cprm))

@@ -30,7 +30,9 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/eventfd.h>
+#define current linux_current
 #include <linux/fdtable.h>
+#undef current
 #include <linux/syscalls.h>
 #include <linux/fs_struct.h>
 #include <linux/moduleparam.h>
@@ -76,6 +78,12 @@
 #endif
 
 #undef kfree
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0)
+#	define check_64bit_mode(regs) !test_thread_flag(TIF_IA32)
+#else
+#	define check_64bit_mode(regs) any_64bit_mode(regs)
+#endif
 
 typedef long (*trap_handler)(task_t, ...);
 
@@ -445,7 +453,7 @@ int mach_dev_mmap(struct file* file, struct vm_area_struct *vma)
 	if (vma->vm_pgoff != 0)
 		return -LINUX_EINVAL;
 
-	if (test_thread_flag(TIF_IA32))
+	if (!check_64bit_mode(current_pt_regs()))
 	{
 		if (length != commpage_length(false))
 			return -LINUX_EINVAL;
@@ -490,7 +498,7 @@ struct file* xnu_task_setup(void)
 int commpage_install(struct file* xnu_task)
 {
 	unsigned long addr;
-	bool _64bit = !test_thread_flag(TIF_IA32);
+	bool _64bit = check_64bit_mode(current_pt_regs());
 
 	addr = vm_mmap(xnu_task, commpage_address(_64bit), commpage_length(_64bit), PROT_READ, MAP_SHARED | MAP_FIXED, 0);
 
@@ -2138,7 +2146,7 @@ thread_get_state(
 static int state_to_kernel(const struct thread_state* state)
 {
 #ifdef __x86_64__
-	if (!test_thread_flag(TIF_IA32))
+	if (check_64bit_mode(current_pt_regs()))
 	{
 		x86_thread_state64_t tstate;
 		x86_float_state64_t fstate;
@@ -2175,7 +2183,7 @@ static int state_to_kernel(const struct thread_state* state)
 static int state_from_kernel(struct thread_state* state)
 {
 #ifdef __x86_64__
-	if (!test_thread_flag(TIF_IA32))
+	if (check_64bit_mode(current_pt_regs()))
 	{
 		x86_thread_state64_t tstate;
 		x86_float_state64_t fstate;
