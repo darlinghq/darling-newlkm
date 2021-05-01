@@ -624,7 +624,7 @@ thread_set_state(
 		{
 			if (state_count < x86_FLOAT_STATE64_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (!darling_is_task_64bit()))
+			if (!darling_is_task_64bit())
 				return KERN_INVALID_ARGUMENT;
 
 			const x86_float_state64_t* s = (x86_float_state64_t*) state;
