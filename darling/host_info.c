@@ -25,6 +25,12 @@
 #include <mach/mach_types.h>
 #include <duct/duct_post_xnu.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0)
+#	define check_64bit_mode(regs) !test_thread_flag(TIF_IA32)
+#else
+#	define check_64bit_mode(regs) any_64bit_mode(regs)
+#endif
+
 kern_return_t darling_host_info(host_flavor_t flavor, host_info_t host_info_out, mach_msg_type_number_t* host_info_outCnt)
 {
 	switch (flavor)
@@ -49,7 +55,7 @@ kern_return_t darling_host_info(host_flavor_t flavor, host_info_t host_info_out,
 			hinfo->cpu_type = CPU_TYPE_I386;
 			hinfo->cpu_subtype = CPU_SUBTYPE_I386_ALL;
 #elif defined(__x86_64__)
-			if (!test_thread_flag(TIF_IA32))
+			if (check_64bit_mode(task_pt_regs(linux_current)))
 			{
 				hinfo->cpu_type = CPU_TYPE_I386;
 				hinfo->cpu_subtype = CPU_SUBTYPE_X86_64_ALL;

@@ -437,8 +437,10 @@ boolean_t vm_map_copy_validate_size(vm_map_t dst_map, vm_map_copy_t copy, vm_map
 
 int darling_is_task_64bit(void)
 {
-#if __x86_64__ || __arm64__
+#if (__x86_64__ || __arm64__) && LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0)
     return !test_thread_flag(TIF_IA32);
+#elif (__x86_64__ || __arm64__)
+	return any_64bit_mode(task_pt_regs(linux_current));
 #else
     return 0;
 #endif

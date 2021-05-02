@@ -62,6 +62,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 #include <rtsig.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0)
+#	define check_64bit_mode(regs)		(!test_thread_flag(TIF_IA32))
+#	define check_64bit_mode_task(task)	(!test_ti_thread_flag(task_thread_info(task), TIF_IA32))
+#else
+#	define check_64bit_mode(regs)		any_64bit_mode(regs)
+#	define check_64bit_mode_task(task)	any_64bit_mode(task_pt_regs(ltask))
+#endif
+
 extern wait_queue_head_t global_wait_queue_head;
 
 static void fill_breakpoint(struct perf_event_attr* attr, __uint64_t dr7, int index);
@@ -204,8 +212,7 @@ thread_get_state_internal(
 
 			if (*state_count < x86_THREAD_STATE_COUNT)
 				return KERN_INVALID_ARGUMENT;
-
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 			{
 				s->tsh.flavor = flavor = x86_THREAD_STATE64;
 				s->tsh.count = x86_THREAD_STATE64_COUNT;
@@ -229,7 +236,7 @@ thread_get_state_internal(
 			if (*state_count < x86_FLOAT_STATE_COUNT)
 				return KERN_INVALID_ARGUMENT;
 
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 			{
 				s->fsh.flavor = flavor = x86_FLOAT_STATE64;
 				s->fsh.count = x86_FLOAT_STATE64_COUNT;
@@ -252,7 +259,7 @@ thread_get_state_internal(
 			if (*state_count < x86_DEBUG_STATE_COUNT)
 				return KERN_INVALID_ARGUMENT;
 
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 			{
 				s->dsh.flavor = flavor = x86_DEBUG_STATE64;
 				s->dsh.count = x86_DEBUG_STATE64_COUNT;
@@ -276,7 +283,7 @@ thread_get_state_internal(
 		{
 			if (*state_count < x86_THREAD_STATE32_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			x86_thread_state32_t* s = (x86_thread_state32_t*) state;
@@ -291,7 +298,7 @@ thread_get_state_internal(
 		{
 			if (*state_count < x86_FLOAT_STATE32_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			x86_float_state32_t* s = (x86_float_state32_t*) state;
@@ -317,7 +324,7 @@ thread_get_state_internal(
 		{
 			if (*state_count < x86_THREAD_STATE64_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (!check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			x86_thread_state64_t* s = (x86_thread_state64_t*) state;
@@ -333,7 +340,7 @@ thread_get_state_internal(
 		{
 			if (*state_count < x86_DEBUG_STATE32_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			x86_debug_state32_t* s = (x86_debug_state32_t*) state;
@@ -364,7 +371,7 @@ thread_get_state_internal(
 		{
 			if (*state_count < x86_DEBUG_STATE64_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (!check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			x86_debug_state64_t* s = (x86_debug_state64_t*) state;
@@ -492,7 +499,7 @@ thread_set_state(
 
 			if (s->tsh.flavor == x86_THREAD_STATE32)
 			{
-				if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+				if (check_64bit_mode_task(ltask))
 					return KERN_INVALID_ARGUMENT;
 
 				state_count = s->tsh.count;
@@ -500,7 +507,7 @@ thread_set_state(
 			}
 			else if (s->tsh.flavor == x86_THREAD_STATE64)
 			{
-				if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+				if (!check_64bit_mode_task(ltask))
 					return KERN_INVALID_ARGUMENT;
 
 				state_count = s->tsh.count;
@@ -521,7 +528,7 @@ thread_set_state(
 
 			if (s->fsh.flavor == x86_FLOAT_STATE32)
 			{
-				if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+				if (check_64bit_mode_task(ltask))
 					return KERN_INVALID_ARGUMENT;
 
 				state_count = s->fsh.count;
@@ -529,7 +536,7 @@ thread_set_state(
 			}
 			else if (s->fsh.flavor == x86_FLOAT_STATE64)
 			{
-				if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+				if (!check_64bit_mode_task(ltask))
 					return KERN_INVALID_ARGUMENT;
 
 				state_count = s->fsh.count;
@@ -550,7 +557,7 @@ thread_set_state(
 
 			if (s->dsh.flavor == x86_DEBUG_STATE32)
 			{
-				if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+				if (check_64bit_mode_task(ltask))
 					return KERN_INVALID_ARGUMENT;
 
 				state_count = s->dsh.count;
@@ -558,7 +565,7 @@ thread_set_state(
 			}
 			else if (s->dsh.flavor == x86_DEBUG_STATE64)
 			{
-				if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+				if (!check_64bit_mode_task(ltask))
 					return KERN_INVALID_ARGUMENT;
 
 				state_count = s->dsh.count;
@@ -578,7 +585,7 @@ thread_set_state(
 		{
 			if (state_count < x86_THREAD_STATE32_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			const x86_thread_state32_t* s = (x86_thread_state32_t*) state;
@@ -590,7 +597,7 @@ thread_set_state(
 		{
 			if (state_count < x86_THREAD_STATE64_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (!check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			const x86_thread_state64_t* s = (x86_thread_state64_t*) state;
@@ -604,7 +611,7 @@ thread_set_state(
 		{
 			if (state_count < x86_FLOAT_STATE32_COUNT)
 				return KERN_INVALID_ARGUMENT;
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			const x86_float_state32_t* s = (x86_float_state32_t*) state;
@@ -627,7 +634,7 @@ thread_set_state(
 		}
 		case x86_DEBUG_STATE32:
 		{
-			if (!test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 			const x86_debug_state32_t* s = (x86_debug_state32_t*) state;
 			x86_debug_state64_t s64;
@@ -646,7 +653,7 @@ thread_set_state(
 		}
 		case x86_DEBUG_STATE64:
 		{
-			if (test_ti_thread_flag(task_thread_info(ltask), TIF_IA32))
+			if (!check_64bit_mode_task(ltask))
 				return KERN_INVALID_ARGUMENT;
 
 			const x86_debug_state64_t* s = (x86_debug_state64_t*) state;

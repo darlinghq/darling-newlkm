@@ -4,7 +4,9 @@
 #include <linux/slab.h>
 #include <linux/anon_inodes.h>
 #include <linux/fs.h>
+#define current linux_current
 #include <linux/fdtable.h>
+#undef current
 #include <linux/poll.h>
 #if 0 // TODO: EVFILT_SOCK support (we've gotta fix some header collisions)
 #include <linux/net.h>
@@ -32,8 +34,17 @@
 #include "kqueue.h"
 #include "task_registry.h"
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,11,0)
+#	define darling_fcheck_files fcheck_files
+#	define darling_close_fd ksys_close
+#else
+#	define darling_fcheck_files files_lookup_fd_rcu
+#	define darling_close_fd close_fd
+#endif
+
+
 // re-define `fcheck` because we use `linux_current`
-#define fcheck(fd) fcheck_files(linux_current->files, fd)
+#define fcheck(fd) darling_fcheck_files(linux_current->files, fd)
 
 struct dkqueue_pte;
 typedef SLIST_HEAD(dkqueue_pte_head, dkqueue_pte) dkqueue_pte_head_t;
@@ -252,7 +263,7 @@ static struct file *__fget_files(struct files_struct *files, unsigned int fd,
 
 	rcu_read_lock();
 loop:
-	file = fcheck_files(files, fd);
+	file = darling_fcheck_files(files, fd);
 	if (file) {
 		/* File object ref couldn't be taken.
 		 * dup2() atomicity guarantee is the reason
@@ -1137,7 +1148,7 @@ static void dkqueue_fork_listener(int pid, void* context, darling_proc_event_t e
 	LIST_FOREACH(curr, &parent_proc->p_fd->kqueue_list, link) {
 		dkqueue_log("closing kqueue with fd %d on fork", curr->fd);
 		proc_fdunlock(parent_proc);
-		ksys_close(curr->fd);
+		darling_close_fd(curr->fd);
 		proc_fdlock(parent_proc);
 	}
 	proc_fdunlock(parent_proc);
@@ -1258,7 +1269,7 @@ int darling_kqueue_create(struct task* task) {
 
 error_out:
 	if (fd >= 0) {
-		ksys_close(fd);
+		darling_close_fd(fd);
 	} else {
 		// we only cleanup the rest ourselves if the fd still hasn't been created.
 		// otherwise (if it *has* been created), Linux will call `dkqueue_release` on the file
