@@ -599,11 +599,11 @@ ifneq ($(KERNELRELEASE),)
   )
 
   # same as before for darling-mach, except this one is for darling-overlay
-  $(call iterate_objs,DARLING_OVERLAY)
+  #$(call iterate_objs,DARLING_OVERLAY)
 
-  obj-m := darling-mach.o darling-overlay.o
+  obj-m := darling-mach.o #darling-overlay.o
   darling-mach-objs := $(DARLING_MACH_ALL_OBJS)
-  darling-overlay-objs := $(DARLING_OVERLAY_ALL_OBJS)
+  #darling-overlay-objs := $(DARLING_OVERLAY_ALL_OBJS)
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
