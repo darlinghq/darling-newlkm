@@ -2227,7 +2227,7 @@ static int state_from_kernel(struct thread_state* state)
 
 static void thread_suspended_logic(task_t task)
 {
-	while (current_thread()->suspend_count > 0 && !fatal_signal_pending(linux_current))
+	while (current_thread()->suspend_count > 0 && !signal_pending(linux_current))
 	{
 		debug_msg("sigexc - thread(%p) susp: %d, task susp: %d\n",
 			current_thread(),
@@ -2235,7 +2235,7 @@ static void thread_suspended_logic(task_t task)
 
 		// Cannot use TASK_STOPPED, because Linux doesn't export wake_up_state()
 		// and TASK_STOPPED isn't TASK_NORMAL.
-		set_current_state(TASK_KILLABLE);
+		set_current_state(TASK_INTERRUPTIBLE);
 		schedule();
 		set_current_state(TASK_RUNNING);
 		debug_msg("sigexc - woken up\n");
