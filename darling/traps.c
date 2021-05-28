@@ -810,7 +810,7 @@ int mach_msg_overwrite_entry(task_t task, struct mach_msg_overwrite_args* in_arg
 	out.rcv_size = args.recv_size;
 	out.rcv_name = args.rcv_name;
 	out.timeout = args.timeout;
-	// out.notify = args.notify;
+	out.override = args.notify;
 	out.rcv_msg = (user_addr_t) args.rcv_msg;
 
 	return XNU_CONTINUATION_ENABLED(mach_msg_overwrite_trap(&out));
