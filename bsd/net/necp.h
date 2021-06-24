@@ -719,6 +719,7 @@ struct kev_necp_policies_changed_data {
 #define NECP_CLIENT_FLOW_FLAGS_USE_CLIENT_ID            0x02    // Register the client ID rather than the flow registration ID with network agents
 #define NECP_CLIENT_FLOW_FLAGS_BROWSE                      0x04    // Create request with a browse agent
 #define NECP_CLIENT_FLOW_FLAGS_RESOLVE                      0x08    // Create request with a resolution agent
+#define NECP_CLIENT_FLOW_FLAGS_OVERRIDE_ADDRESS                      0x10    // Flow has a different remote address than the parent flow
 
 struct necp_client_flow_stats {
 	u_int32_t stats_type; // NECP_CLIENT_STATISTICS_TYPE_*

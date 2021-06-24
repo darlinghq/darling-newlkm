@@ -1337,6 +1337,57 @@ done:
 	return error;
 }
 
+static void
+necp_client_add_nexus_flow(struct necp_client_flow_registration *flow_registration,
+    uuid_t nexus_agent,
+    uint32_t interface_index,
+    uint16_t interface_flags)
+{
+	struct necp_client_flow *new_flow = mcache_alloc(necp_flow_cache, MCR_SLEEP);
+	if (new_flow == NULL) {
+		NECPLOG0(LOG_ERR, "Failed to allocate nexus flow");
+		return;
+	}
+
+	memset(new_flow, 0, sizeof(*new_flow));
+
+	new_flow->nexus = TRUE;
+	uuid_copy(new_flow->u.nexus_agent, nexus_agent);
+	new_flow->interface_index = interface_index;
+	new_flow->interface_flags = interface_flags;
+	new_flow->check_tcp_heuristics = TRUE;
+
+
+	LIST_INSERT_HEAD(&flow_registration->flow_list, new_flow, flow_chain);
+}
+
+static void
+necp_client_add_nexus_flow_if_needed(struct necp_client_flow_registration *flow_registration,
+    uuid_t nexus_agent,
+    uint32_t interface_index)
+{
+	struct necp_client_flow *flow = NULL;
+	LIST_FOREACH(flow, &flow_registration->flow_list, flow_chain) {
+		if (flow->nexus &&
+		    uuid_compare(flow->u.nexus_agent, nexus_agent) == 0) {
+			return;
+		}
+	}
+
+	uint16_t interface_flags = 0;
+	ifnet_t ifp = NULL;
+	ifnet_head_lock_shared();
+	if (interface_index != IFSCOPE_NONE && interface_index <= (u_int32_t)if_index) {
+		ifp = ifindex2ifnet[interface_index];
+		if (ifp != NULL) {
+			ifnet_lock_shared(ifp);
+			interface_flags = nstat_ifnet_to_flags(ifp);
+			ifnet_lock_done(ifp);
+		}
+	}
+	ifnet_head_done();
+	necp_client_add_nexus_flow(flow_registration, nexus_agent, interface_index, interface_flags);
+}
 
 static struct necp_client_flow *
 necp_client_add_interface_flow(struct necp_client_flow_registration *flow_registration,
@@ -5400,6 +5451,192 @@ done:
 	return error;
 }
 
+static int
+necp_client_add_flow(struct necp_fd_data *fd_data, struct necp_client_action_args *uap, int *retval)
+{
+	int error = 0;
+	struct necp_client *client = NULL;
+	uuid_t client_id;
+	struct necp_client_nexus_parameters parameters = {};
+	struct proc *proc = PROC_NULL;
+	struct necp_client_add_flow *add_request = NULL;
+	struct necp_client_add_flow *allocated_add_request = NULL;
+	struct necp_client_add_flow_default default_add_request = {};
+	const size_t buffer_size = uap->buffer_size;
+
+	if (uap->client_id == 0 || uap->client_id_len != sizeof(uuid_t)) {
+		error = EINVAL;
+		NECPLOG(LOG_ERR, "necp_client_add_flow invalid client_id (length %zu)", (size_t)uap->client_id_len);
+		goto done;
+	}
+
+	if (uap->buffer == 0 || buffer_size < sizeof(struct necp_client_add_flow) ||
+	    buffer_size > sizeof(struct necp_client_add_flow_default) * 4) {
+		error = EINVAL;
+		NECPLOG(LOG_ERR, "necp_client_add_flow invalid buffer (length %zu)", buffer_size);
+		goto done;
+	}
+
+	error = copyin(uap->client_id, client_id, sizeof(uuid_t));
+	if (error) {
+		NECPLOG(LOG_ERR, "necp_client_add_flow copyin client_id error (%d)", error);
+		goto done;
+	}
+
+	if (buffer_size <= sizeof(struct necp_client_add_flow_default)) {
+		// Fits in default size
+		error = copyin(uap->buffer, &default_add_request, buffer_size);
+		if (error) {
+			NECPLOG(LOG_ERR, "necp_client_add_flow copyin default_add_request error (%d)", error);
+			goto done;
+		}
+
+		add_request = (struct necp_client_add_flow *)&default_add_request;
+	} else {
+		allocated_add_request = _MALLOC(buffer_size, M_NECP, M_WAITOK | M_ZERO);
+		if (allocated_add_request == NULL) {
+			error = ENOMEM;
+			goto done;
+		}
+
+		error = copyin(uap->buffer, allocated_add_request, buffer_size);
+		if (error) {
+			NECPLOG(LOG_ERR, "necp_client_add_flow copyin default_add_request error (%d)", error);
+			goto done;
+		}
+
+		add_request = (struct necp_client_add_flow *)allocated_add_request;
+	}
+
+	NECP_FD_LOCK(fd_data);
+	pid_t pid = fd_data->proc_pid;
+	proc = proc_find(pid);
+	if (proc == PROC_NULL) {
+		NECP_FD_UNLOCK(fd_data);
+		NECPLOG(LOG_ERR, "necp_client_add_flow process not found for pid %d error (%d)", pid, error);
+		error = ESRCH;
+		goto done;
+	}
+
+	client = necp_client_fd_find_client_and_lock(fd_data, client_id);
+	if (client == NULL) {
+		error = ENOENT;
+		NECP_FD_UNLOCK(fd_data);
+		goto done;
+	}
+
+	// Using ADD_FLOW indicates that the client supports multiple flows per client
+	client->legacy_client_is_flow = false;
+
+	necp_client_retain_locked(client);
+	necp_client_copy_parameters_locked(client, &parameters);
+
+	struct necp_client_flow_registration *new_registration = necp_client_create_flow_registration(fd_data, client);
+	if (new_registration == NULL) {
+		error = ENOMEM;
+		NECP_CLIENT_UNLOCK(client);
+		NECP_FD_UNLOCK(fd_data);
+		NECPLOG0(LOG_ERR, "Failed to allocate flow registration");
+		goto done;
+	}
+
+	new_registration->flags = add_request->flags;
+
+	// Copy new ID out to caller
+	uuid_copy(add_request->registration_id, new_registration->registration_id);
+
+	// Copy override address
+	if (add_request->flags & NECP_CLIENT_FLOW_FLAGS_OVERRIDE_ADDRESS) {
+		size_t offset_of_address = (sizeof(struct necp_client_add_flow) +
+		    add_request->stats_request_count * sizeof(struct necp_client_flow_stats));
+		if (buffer_size >= offset_of_address + sizeof(struct sockaddr_in)) {
+			struct sockaddr *override_address = (struct sockaddr *)(((uint8_t *)add_request) + offset_of_address);
+			if (buffer_size >= offset_of_address + override_address->sa_len &&
+			    override_address->sa_len <= sizeof(parameters.remote_addr)) {
+				memcpy(&parameters.remote_addr, override_address, override_address->sa_len);
+			}
+		}
+	}
+
+
+	if (error == 0 &&
+	    (add_request->flags & NECP_CLIENT_FLOW_FLAGS_BROWSE ||
+	    add_request->flags & NECP_CLIENT_FLOW_FLAGS_RESOLVE)) {
+		uint32_t interface_index = IFSCOPE_NONE;
+		ifnet_head_lock_shared();
+		struct ifnet *interface = NULL;
+		TAILQ_FOREACH(interface, &ifnet_head, if_link) {
+			ifnet_lock_shared(interface);
+			if (interface->if_agentids != NULL) {
+				for (u_int32_t i = 0; i < interface->if_agentcount; i++) {
+					if (uuid_compare(interface->if_agentids[i], add_request->agent_uuid) == 0) {
+						interface_index = interface->if_index;
+						break;
+					}
+				}
+			}
+			ifnet_lock_done(interface);
+			if (interface_index != IFSCOPE_NONE) {
+				break;
+			}
+		}
+		ifnet_head_done();
+
+		necp_client_add_nexus_flow_if_needed(new_registration, add_request->agent_uuid, interface_index);
+
+		error = netagent_client_message_with_params(add_request->agent_uuid,
+		    ((new_registration->flags & NECP_CLIENT_FLOW_FLAGS_USE_CLIENT_ID) ?
+		    client->client_id :
+		    new_registration->registration_id),
+		    pid, client->agent_handle,
+		    NETAGENT_MESSAGE_TYPE_CLIENT_ASSERT,
+		    (struct necp_client_agent_parameters *)&parameters,
+		    NULL, NULL);
+		if (error != 0) {
+			NECPLOG(LOG_ERR, "netagent_client_message error (%d)", error);
+		}
+	}
+
+	if (error != 0) {
+		// Encountered an error in adding the flow, destroy the flow registration
+		NECP_FLOW_TREE_LOCK_EXCLUSIVE();
+		RB_REMOVE(_necp_client_flow_global_tree, &necp_client_flow_global_tree, new_registration);
+		NECP_FLOW_TREE_UNLOCK();
+		RB_REMOVE(_necp_fd_flow_tree, &fd_data->flows, new_registration);
+		necp_destroy_client_flow_registration(client, new_registration, fd_data->proc_pid, true);
+		new_registration = NULL;
+	}
+
+	NECP_CLIENT_UNLOCK(client);
+	NECP_FD_UNLOCK(fd_data);
+
+	necp_client_release(client);
+
+	if (error != 0) {
+		goto done;
+	}
+
+	// Copy the request back out to the caller with assigned fields
+	error = copyout(add_request, uap->buffer, buffer_size);
+	if (error != 0) {
+		NECPLOG(LOG_ERR, "necp_client_add_flow copyout add_request error (%d)", error);
+	}
+
+done:
+	*retval = error;
+	if (error != 0) {
+		NECPLOG(LOG_ERR, "Add flow error (%d)", error);
+	}
+
+	if (allocated_add_request != NULL) {
+		FREE(allocated_add_request, M_NECP);
+	}
+
+	if (proc != PROC_NULL) {
+		proc_rele(proc);
+	}
+	return error;
+}
 
 static void
 necp_client_add_assertion(struct necp_client *client, uuid_t netagent_uuid)
@@ -6110,6 +6347,10 @@ necp_client_action(struct proc *p, struct necp_client_action_args *uap, int *ret
 	}
 	case NECP_CLIENT_ACTION_COPY_LIST: {
 		return_value = necp_client_list(fd_data, uap, retval);
+		break;
+	}
+	case NECP_CLIENT_ACTION_ADD_FLOW: {
+		return_value = necp_client_add_flow(fd_data, uap, retval);
 		break;
 	}
 	case NECP_CLIENT_ACTION_AGENT: {
