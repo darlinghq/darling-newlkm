@@ -917,14 +917,20 @@ int macho_coredump(struct coredump_params* cprm)
 				put_page(page);
 			}
 			else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,13,0)
+				dump_skip(cprm, PAGE_SIZE);
+#else
 				stop = !dump_skip(cprm, PAGE_SIZE);
+#endif
 
 			if (stop)
 				goto fail;
 		}
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,13,0)
 	dump_truncate(cprm);
+#endif
 
 fail:
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,8,0)
