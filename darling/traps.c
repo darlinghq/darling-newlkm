@@ -1558,7 +1558,7 @@ int pid_get_state_entry(task_t task_self, void* pid_in)
 
 	task = __find_task_by_vpid((int)(long) pid_in);
 	if (task != NULL)
-		rv = task->state;
+		rv = task->__state;
 
 	rcu_read_unlock();
 	return rv;

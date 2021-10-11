@@ -598,7 +598,7 @@ static kern_return_t state_to_task(task_t task, int state)
 
 	do
 	{
-		smp_store_mb(t->state, state);
+		smp_store_mb(t->__state, state);
 		if (state != TASK_STOPPED)
 			wake_up_process(t);
 	}
