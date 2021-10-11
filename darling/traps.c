@@ -1558,7 +1558,11 @@ int pid_get_state_entry(task_t task_self, void* pid_in)
 
 	task = __find_task_by_vpid((int)(long) pid_in);
 	if (task != NULL)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 		rv = task->__state;
+#else
+		rv = task->state;
+#endif
 
 	rcu_read_unlock();
 	return rv;

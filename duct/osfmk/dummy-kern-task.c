@@ -598,7 +598,11 @@ static kern_return_t state_to_task(task_t task, int state)
 
 	do
 	{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 		smp_store_mb(t->__state, state);
+#else
+		smp_store_mb(t->state, state);
+#endif
 		if (state != TASK_STOPPED)
 			wake_up_process(t);
 	}

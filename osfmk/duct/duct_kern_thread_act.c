@@ -81,7 +81,11 @@ kern_return_t duct_thread_terminate (thread_t thread)
         struct task_struct        * linux_task      = thread->linux_task;
 
         debug_msg( "- duct_thread_terminate, thread: %p, linux_task: %p, pid: %d, state: %ld\n",
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
                  thread, linux_task, linux_task->pid, linux_task->__state);
+#else
+                 thread, linux_task, linux_task->pid, linux_task->state);
+#endif
 
         kern_return_t   result;
 
@@ -169,7 +173,11 @@ thread_info(
 			out->system_time.seconds = stimeus / USEC_PER_SEC;
 			out->system_time.microseconds = stimeus % USEC_PER_SEC;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 			if (thread->linux_task->__state & TASK_UNINTERRUPTIBLE)
+#else
+			if (thread->linux_task->state & TASK_UNINTERRUPTIBLE)
+#endif
 				out->run_state = TH_STATE_UNINTERRUPTIBLE;
 			else if (task_is_stopped(thread->linux_task))
 				out->run_state = TH_STATE_STOPPED;
