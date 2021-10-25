@@ -622,7 +622,11 @@ thread_block_parameter(
     while ((thread->state & TH_WAIT) /*&& linux_current->state != TASK_RUNNING*/)
     {
         thread_unlock(thread);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
+	debug_msg("about to schedule - my state: %d\n", thread->linux_task->__state);
+#else
 	debug_msg("about to schedule - my state: %d\n", thread->linux_task->state);
+#endif
         schedule();
         thread_lock(thread);
 
@@ -811,7 +815,11 @@ wait_interrupt_t
 thread_interrupt_level(
 	wait_interrupt_t new_level)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
+    int rv = (linux_current->__state & TASK_UNINTERRUPTIBLE) ? THREAD_UNINT : THREAD_INTERRUPTIBLE;
+#else
     int rv = (linux_current->state & TASK_UNINTERRUPTIBLE) ? THREAD_UNINT : THREAD_INTERRUPTIBLE;
+#endif
     set_current_state(new_level == THREAD_UNINT ? TASK_KILLABLE : TASK_INTERRUPTIBLE);
     return rv;
 }
