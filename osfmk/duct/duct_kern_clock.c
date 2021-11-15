@@ -132,6 +132,19 @@ clock_continuoustime_interval_to_deadline(
 	*result = mach_continuous_time() + conttime;
 }
 
+void
+clock_interval_to_deadline(
+	uint32_t                        interval,
+	uint32_t                        scale_factor,
+	uint64_t                        *result)
+{
+	uint64_t        abstime;
+
+	clock_interval_to_absolutetime_interval(interval, scale_factor, &abstime);
+
+	*result = mach_absolute_time() + abstime;
+}
+
 // </copied>
 
 void clock_get_calendar_nanotime(clock_sec_t* secs, clock_nsec_t* nanosecs) {

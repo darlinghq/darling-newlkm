@@ -61,7 +61,6 @@ assert_wait_deadline(
         return 0;
 }
 
-#endif
 
 
 
@@ -76,7 +75,7 @@ clock_interval_to_deadline (
 {
         kprintf("not implemented: clock_interval_to_deadline()\n");
 }
-
+#endif
 
 
 
