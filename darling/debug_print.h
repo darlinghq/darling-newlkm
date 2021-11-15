@@ -20,7 +20,7 @@
 #ifndef DEBUG_H
 #define	DEBUG_H
 
-extern int printk(const char *fmt, ...);
+#include <linux/printk.h>
 
 extern bool debug_output;
 

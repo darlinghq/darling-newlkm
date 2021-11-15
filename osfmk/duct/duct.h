@@ -389,9 +389,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // for linux/arch/arm/mach-msm/include/mach/memory.h
 #undef __CONCAT
 
-// for linux/include/linux/compiler-gcc4.h
-#undef __used
-
 // for linux/include/linux/compiler-gcc.h
 #undef __pure
 

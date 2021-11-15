@@ -194,7 +194,11 @@ boolean_t
 thread_call_free(
         thread_call_t       call)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	if (atomic_long_read(&call->tc_work.work.data) & (WORK_STRUCT_PENDING | WORK_STRUCT_INACTIVE))
+#else
 	if (atomic_long_read(&call->tc_work.work.data) & (WORK_STRUCT_PENDING | WORK_STRUCT_DELAYED))
+#endif
 		return FALSE;
 
 	kfree(call, sizeof(struct thread_call));
