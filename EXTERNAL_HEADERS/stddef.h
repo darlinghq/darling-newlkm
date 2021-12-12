@@ -26,9 +26,21 @@
 #ifndef __STDDEF_H
 #define __STDDEF_H
 
+#undef NULL
+#ifdef __cplusplus
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#else
+#undef __null  // VC++ hack.
+#define NULL __null
+#endif
+#else
+#define NULL ((void*)0)
+#endif
+
 #ifndef _PTRDIFF_T
 #define _PTRDIFF_T
-typedef __typeof__(((int*)0)-((int*)0)) ptrdiff_t;
+typedef __typeof__(((int*)NULL)-((int*)NULL)) ptrdiff_t;
 #endif
 #ifndef _SIZE_T
 #define _SIZE_T
@@ -41,15 +53,9 @@ typedef __WCHAR_TYPE__ wchar_t;
 #endif
 #endif
 
-#undef NULL
-#ifdef __cplusplus
-#undef __null  // VC++ hack.
-#define NULL __null
-#else
-#define NULL ((void*)0)
-#endif
-
+#ifndef offsetof
 #define offsetof(t, d) __builtin_offsetof(t, d)
+#endif
 
 #endif /* __STDDEF_H */
 

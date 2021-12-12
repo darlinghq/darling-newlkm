@@ -157,9 +157,14 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO: {
 		i = 0;
+		/*
+		 * for backwards compatibility, we keep the old field names, but the
+		 * new data is being put in dyld_shared_cache_loadinfo
+		 */
 		_SUBTYPE(KC_ST_UINT64, struct dyld_uuid_info_64_v2, imageLoadAddress);
 		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_uuid_info_64_v2, imageUUID, 16);
 		_SUBTYPE(KC_ST_UINT64, struct dyld_uuid_info_64_v2, imageSlidBaseAddress);
+		_SUBTYPE(KC_ST_UINT64, struct dyld_shared_cache_loadinfo, sharedCacheSlidFirstMapping);
 		setup_type_definition(retval, type_id, i, "shared_cache_dyld_load_info");
 		break;
 	}
@@ -546,10 +551,12 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_STACKSHOT_DURATION: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_duration, stackshot_duration);
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_duration, stackshot_duration_outer);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_duration_v2, stackshot_duration);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_duration_v2, stackshot_duration_outer);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_duration_v2, stackshot_duration_prior);
 		subtypes[0].kcs_flags |= KCS_SUBTYPE_FLAGS_MERGE;
 		subtypes[1].kcs_flags |= KCS_SUBTYPE_FLAGS_MERGE;
+		subtypes[2].kcs_flags |= KCS_SUBTYPE_FLAGS_MERGE;
 		setup_type_definition(retval, type_id, i, "stackshot_duration");
 		break;
 	}
@@ -847,6 +854,14 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo, number_of_hops);
 		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, turnstile_flags);
 		setup_type_definition(retval, type_id, i, "thread_turnstileinfo");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_TASK_CPU_ARCHITECTURE: {
+		i = 0;
+		_SUBTYPE(KC_ST_INT32, struct stackshot_cpu_architecture, cputype);
+		_SUBTYPE(KC_ST_INT32, struct stackshot_cpu_architecture, cpusubtype);
+		setup_type_definition(retval, type_id, i, "task_cpu_architecture");
 		break;
 	}
 

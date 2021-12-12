@@ -151,6 +151,10 @@ oid_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1, int arg2, stru
 	int error = EINVAL;
 	uint32_t request = arg2;
 
+	if (!IOStatistics::isEnabled()) {
+		return ENOENT;
+	}
+
 	switch (request) {
 	case kIOStatisticsGeneral:
 		error = IOStatistics::getStatistics(req);
@@ -171,16 +175,17 @@ oid_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1, int arg2, stru
 SYSCTL_NODE(_debug, OID_AUTO, iokit_statistics, CTLFLAG_RW | CTLFLAG_LOCKED, NULL, "IOStatistics");
 
 static SYSCTL_PROC(_debug_iokit_statistics, OID_AUTO, general,
-    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_NOAUTO | CTLFLAG_KERN | CTLFLAG_LOCKED,
+    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED,
     NULL, kIOStatisticsGeneral, oid_sysctl, "S", "");
 
 static SYSCTL_PROC(_debug_iokit_statistics, OID_AUTO, workloop,
-    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_NOAUTO | CTLFLAG_KERN | CTLFLAG_LOCKED,
+    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_KERN | CTLFLAG_LOCKED,
     NULL, kIOStatisticsWorkLoop, oid_sysctl, "S", "");
 
 static SYSCTL_PROC(_debug_iokit_statistics, OID_AUTO, userclient,
-    CTLTYPE_STRUCT | CTLFLAG_RW | CTLFLAG_NOAUTO | CTLFLAG_KERN | CTLFLAG_LOCKED,
+    CTLTYPE_STRUCT | CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
     NULL, kIOStatisticsUserClient, oid_sysctl, "S", "");
+
 
 void
 IOStatistics::initialize()
@@ -193,10 +198,6 @@ IOStatistics::initialize()
 	if (!(kIOStatistics & gIOKitDebug)) {
 		return;
 	}
-
-	sysctl_register_oid(&sysctl__debug_iokit_statistics_general);
-	sysctl_register_oid(&sysctl__debug_iokit_statistics_workloop);
-	sysctl_register_oid(&sysctl__debug_iokit_statistics_userclient);
 
 	lock = IORWLockAlloc();
 	if (!lock) {
@@ -679,13 +680,12 @@ IOStatistics::getStatistics(sysctl_req *req)
 		goto exit;
 	}
 
-	buffer = (char*)kalloc(calculatedSize);
+	buffer = (char*)kheap_alloc(KHEAP_TEMP, calculatedSize,
+	    (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!buffer) {
 		error = ENOMEM;
 		goto exit;
 	}
-
-	memset(buffer, 0, calculatedSize);
 
 	ptr = buffer;
 
@@ -740,7 +740,7 @@ IOStatistics::getStatistics(sysctl_req *req)
 
 	error = SYSCTL_OUT(req, buffer, calculatedSize);
 
-	kfree(buffer, calculatedSize);
+	kheap_free(KHEAP_TEMP, buffer, calculatedSize);
 
 exit:
 	IORWLockUnlock(IOStatistics::lock);
@@ -775,12 +775,12 @@ IOStatistics::getWorkLoopStatistics(sysctl_req *req)
 		goto exit;
 	}
 
-	buffer = (char*)kalloc(calculatedSize);
+	buffer = (char*)kheap_alloc(KHEAP_TEMP, calculatedSize,
+	    (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!buffer) {
 		error = ENOMEM;
 		goto exit;
 	}
-	memset(buffer, 0, calculatedSize);
 	header = (IOStatisticsWorkLoopHeader*)((void*)buffer);
 
 	header->sig = IOSTATISTICS_SIG_WORKLOOP;
@@ -798,7 +798,7 @@ IOStatistics::getWorkLoopStatistics(sysctl_req *req)
 
 	error = SYSCTL_OUT(req, buffer, size);
 
-	kfree(buffer, calculatedSize);
+	kheap_free(KHEAP_TEMP, buffer, calculatedSize);
 
 exit:
 	IORWLockUnlock(IOStatistics::lock);
@@ -841,12 +841,12 @@ IOStatistics::getUserClientStatistics(sysctl_req *req)
 
 	LOG(2, "IOStatistics::getUserClientStatistics - requesting kext w/load tag: %d\n", requestedLoadTag);
 
-	buffer = (char*)kalloc(calculatedSize);
+	buffer = (char*)kheap_alloc(KHEAP_TEMP, calculatedSize,
+	    (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!buffer) {
 		error = ENOMEM;
 		goto exit;
 	}
-	memset(buffer, 0, calculatedSize);
 	header = (IOStatisticsUserClientHeader*)((void*)buffer);
 
 	header->sig = IOSTATISTICS_SIG_USERCLIENT;
@@ -866,7 +866,7 @@ IOStatistics::getUserClientStatistics(sysctl_req *req)
 		error = EINVAL;
 	}
 
-	kfree(buffer, calculatedSize);
+	kheap_free(KHEAP_TEMP, buffer, calculatedSize);
 
 exit:
 	IORWLockUnlock(IOStatistics::lock);
@@ -1312,10 +1312,13 @@ IOStatistics::countAlloc(uint32_t index, vm_size_t size)
 	if (!enabled) {
 		return;
 	}
+	if (size > INT_MAX) {
+		return;
+	}
 
 	ke = getKextNodeFromBacktrace(FALSE);
 	if (ke) {
-		OSAddAtomic(size, &ke->memoryCounters[index]);
+		OSAddAtomic((SInt32) size, &ke->memoryCounters[index]);
 		releaseKextNode(ke);
 	}
 }

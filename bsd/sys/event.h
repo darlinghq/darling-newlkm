@@ -465,7 +465,7 @@ enum {
 #define NOTE_EXEC               0x20000000      /* process exec'd */
 #define NOTE_REAP               ((unsigned int)eNoteReapDeprecated /* 0x10000000 */ )   /* process reaped */
 #define NOTE_SIGNAL             0x08000000      /* shared with EVFILT_SIGNAL */
-#define NOTE_EXITSTATUS         0x04000000      /* exit status to be returned, valid for child process only */
+#define NOTE_EXITSTATUS         0x04000000      /* exit status to be returned, valid for child process or when allowed to signal target pid */
 #define NOTE_EXIT_DETAIL        0x02000000      /* provide details on reasons for exit */
 
 #define NOTE_PDATAMASK  0x000fffff              /* mask for signal & exit status */
@@ -670,14 +670,11 @@ SLIST_HEAD(klist, knote);
 
 #ifdef XNU_KERNEL_PRIVATE
 #include <sys/queue.h>
+#include <mach/vm_param.h>
 #include <kern/kern_types.h>
 #include <sys/fcntl.h> /* FREAD, FWRITE */
 #include <kern/debug.h> /* panic */
 #include <pthread/priority_private.h>
-
-#ifdef MALLOC_DECLARE
-MALLOC_DECLARE(M_KQUEUE);
-#endif
 
 LIST_HEAD(knote_list, knote);
 TAILQ_HEAD(kqtailq, knote);     /* a list of "queued" events */
@@ -701,9 +698,18 @@ __options_decl(kn_status_t, uint16_t /* 12 bits really */, {
 	KN_SUPPRESSED     = 0x800,  /* event is suppressed during delivery */
 });
 
-#define KNOTE_KQ_BITSIZE    42
-_Static_assert(KNOTE_KQ_BITSIZE > VM_KERNEL_POINTER_SIGNIFICANT_BITS,
-    "Make sure sign extending kn_kq_packed is legit");
+#if __LP64__
+#define KNOTE_KQ_PACKED_BITS   42
+#define KNOTE_KQ_PACKED_SHIFT   0
+#define KNOTE_KQ_PACKED_BASE    0
+#else
+#define KNOTE_KQ_PACKED_BITS   32
+#define KNOTE_KQ_PACKED_SHIFT   0
+#define KNOTE_KQ_PACKED_BASE    0
+#endif
+
+_Static_assert(!VM_PACKING_IS_BASE_RELATIVE(KNOTE_KQ_PACKED),
+    "Make sure the knote pointer packing is based on arithmetic shifts");
 
 struct kqueue;
 struct knote {
@@ -718,10 +724,10 @@ struct knote {
 	    kn_is_fd:1,                             /* knote is an fd */
 	    kn_vnode_kqok:1,
 	    kn_vnode_use_ofst:1;
-#if __LP64__ && !defined(__DARLING__) // clang refuses to do sign extension for this (at least when building the LKM)
-	intptr_t                    kn_kq_packed : KNOTE_KQ_BITSIZE;
+#if __LP64__
+	uintptr_t                   kn_kq_packed : KNOTE_KQ_PACKED_BITS;
 #else
-	intptr_t                    kn_kq_packed;
+	uintptr_t                   kn_kq_packed;
 #endif
 
 	/* per filter stash of data (pointer, uint32_t or uint64_t) */
@@ -737,11 +743,7 @@ struct knote {
 
 	/* per filter pointer to the resource being watched */
 	union {
-#ifdef __DARLING__
-		struct file        *kn_fp;          /* Linux file pointer */
-#else
 		struct fileproc    *kn_fp;          /* file data pointer */
-#endif
 		struct proc        *kn_proc;        /* proc pointer */
 		struct ipc_mqueue  *kn_mqueue;      /* pset pointer */
 		struct thread_call *kn_thcall;
@@ -799,7 +801,7 @@ struct knote {
 static inline struct kqueue *
 knote_get_kq(struct knote *kn)
 {
-	return (struct kqueue *)kn->kn_kq_packed;
+	return (struct kqueue *)VM_UNPACK_POINTER(kn->kn_kq_packed, KNOTE_KQ_PACKED);
 }
 
 static inline int
@@ -823,11 +825,7 @@ struct kevent_ctx_s {
 	user_size_t      kec_data_size;     /* total extra data size */
 	user_size_t      kec_data_resid;    /* residual extra data size */
 	uint64_t         kec_deadline;      /* wait deadline unless KEVENT_FLAG_IMMEDIATE */
-#ifdef __DARLING__
-	struct file     *kec_fp;            /* Linux file pointer (works like XNU's kec_fp: `fput` it when your done) */
-#else
 	struct fileproc *kec_fp;            /* fileproc to pass to fp_drop or NULL */
-#endif
 	int              kec_fd;            /* fd to pass to fp_drop or -1 */
 
 	/* the fields below are only set during process / scan */
@@ -1133,7 +1131,7 @@ extern const struct filterops *knote_fops(struct knote *kn);
 extern struct turnstile *kqueue_turnstile(struct kqueue *);
 extern struct turnstile *kqueue_alloc_turnstile(struct kqueue *);
 
-int kevent_proc_copy_uptrs(void *proc, uint64_t *buf, int bufsize);
+int kevent_proc_copy_uptrs(void *proc, uint64_t *buf, uint32_t bufsize);
 int kevent_copyout_proc_dynkqids(void *proc, user_addr_t ubuf,
     uint32_t ubufsize, int32_t *nkqueues_out);
 int kevent_copyout_dynkqinfo(void *proc, kqueue_id_t kq_id, user_addr_t ubuf,

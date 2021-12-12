@@ -60,7 +60,13 @@ typedef uint8_t OSKextExcludeLevel;
 #define kOSKextExcludeKext  (1)
 #define kOSKextExcludeAll   (2)
 
-#define kOSKextManagementEntitlement "com.apple.private.security.kext-management"
+#define kIOCatalogManagementEntitlement "com.apple.private.security.iocatalog-management"
+#define kOSKextCollectionManagementEntitlement "com.apple.private.security.kext-collection-management"
+#define kOSKextOnlyBootKCManagementEntitlement "com.apple.private.security.only-bootkc-management"
+
+#define kOSKextCodelessKextLoadAddr (0x7FFFFFFFFFFFFFFFULL)
+
+#define kIOKitDaemonName "kernelmanagerd"
 
 #if PRAGMA_MARK
 #pragma mark -
@@ -103,6 +109,28 @@ typedef uint8_t OSKextExcludeLevel;
  *           KPI, and needs special loading behavior.
  */
 #define kAppleKernelExternalComponentKey        "AppleKernelExternalComponent"
+
+/*!
+ * @define kOSKextInfoPlistDigestKey
+ * @abstract SHA-256 data of the kext's Info.plist
+ */
+#define kOSKextInfoPlistDigestKey       "_InfoPlistDigest"
+
+/*!
+ * @define kOSKextBundleCollectionTypeKey
+ * @abstract The type of collection in which a kext is linked. Possible
+ *           values: kKCTypePrimary, kKCTypeSystem, kKCTypeAuxiliary,
+ *                   kKCTypeCodeless
+ */
+#define kOSKextBundleCollectionTypeKey  "_BundleCollectionType"
+
+/*!
+ * @define kOSKextAuxKCAvailabilityKey
+ * @abstract boolean value: false if the kext is in the AuxKC and
+ *           is not loadable; true otherwise.
+ */
+#define kOSKextAuxKCAvailabilityKey     "_AuxKCAvailability"
+
 
 // properties found in the registry root
 #define kOSKernelCPUTypeKey             "OSKernelCPUType"
@@ -159,6 +187,18 @@ typedef uint8_t OSKextExcludeLevel;
 #define kOSMetaClassNameKey                     "OSMetaClassName"
 #define kOSMetaClassSuperclassNameKey           "OSMetaClassSuperclassName"
 #define kOSMetaClassTrackingCountKey            "OSMetaClassTrackingCount"
+
+#if PRAGMA_MARK
+#pragma mark -
+/********************************************************************/
+#pragma mark Kext Collection Type Keys
+/********************************************************************/
+#endif
+#define kKCTypePrimary   "Primary"
+#define kKCTypeSystem    "System"
+#define kKCTypeAuxiliary "Auxiliary"
+#define kKCTypeCodeless  "Codeless"
+#define kKCTypeAny       "Any"
 
 #if PRAGMA_MARK
 #pragma mark -
@@ -746,6 +786,12 @@ void kext_dump_panic_lists(int (*printf_func)(const char *fmt, ...));
 
 #ifdef XNU_KERNEL_PRIVATE
 
+/*!
+ * @define kOSKextReceiptQueried
+ * @abstract Whether or not the kext receipt has been successfully loaded.
+ */
+#define kOSKextReceiptQueried  "OSKextReceiptQueried"
+
 #if PRAGMA_MARK
 #pragma mark -
 /********************************************************************/
@@ -864,6 +910,8 @@ OSReturn OSKextUnloadKextWithLoadTag(uint32_t loadTag);
  * @field loadTag The kext's load tag.
  * @field flags Internal tracking flags.
  * @field reference_list who this refs (links on).
+ * @field text_exec_address The address of the __TEXT_EXEC segment (if it exists), otherwise __TEXT
+ * @field text_exec_size The size of the segment pointed to by text_address
  *
  * @discussion
  * The OSKextLoadedKextSummary structure contains a basic set of information
@@ -878,6 +926,8 @@ typedef struct _loaded_kext_summary {
 	uint32_t    loadTag;
 	uint32_t    flags;
 	uint64_t    reference_list;
+	uint64_t    text_exec_address;
+	size_t      text_exec_size;
 } OSKextLoadedKextSummary;
 
 /*!
@@ -937,6 +987,7 @@ extern const vm_allocation_site_t * OSKextGetAllocationSiteForCaller(uintptr_t a
 extern uint32_t                     OSKextGetKmodIDForSite(const vm_allocation_site_t * site,
     char * name, vm_size_t namelen);
 extern void                         OSKextFreeSite(vm_allocation_site_t * site);
+extern kern_return_t                OSKextSetReceiptQueried(void);
 
 #if CONFIG_IMAGEBOOT
 extern int OSKextGetUUIDForName(const char *, uuid_t);

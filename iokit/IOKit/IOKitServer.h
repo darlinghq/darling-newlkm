@@ -155,6 +155,7 @@ extern mach_port_name_t iokit_make_send_right( task_t task,
     io_object_t obj, ipc_kobject_type_t type );
 
 extern mach_port_t ipc_port_make_send(mach_port_t);
+extern mach_port_t ipc_port_copy_send(mach_port_t);
 extern void ipc_port_release_send(ipc_port_t port);
 
 extern io_object_t iokit_lookup_io_object(ipc_port_t port, ipc_kobject_type_t type);
@@ -168,6 +169,7 @@ extern io_object_t iokit_lookup_uext_ref_current_task(mach_port_name_t name);
 
 extern void iokit_retain_port( ipc_port_t port );
 extern void iokit_release_port( ipc_port_t port );
+extern void iokit_make_port_send( ipc_port_t port );
 extern void iokit_release_port_send( ipc_port_t port );
 
 extern void iokit_lock_port(ipc_port_t port);
@@ -185,6 +187,8 @@ extern mach_msg_header_t * ipc_kmsg_msg_header(ipc_kmsg_t);
 extern kern_return_t
 uext_server(ipc_kmsg_t request, ipc_kmsg_t * preply);
 
+extern kern_return_t
+iokit_label_dext_task(task_t task);
 
 /*
  * Functions imported by iokit:IOMemoryDescriptor.cpp

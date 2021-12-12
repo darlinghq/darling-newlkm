@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -77,6 +77,7 @@
 #include <vm/cpm.h>
 #include <kern/ledger.h>
 #include <kern/bits.h>
+#include <kern/startup.h>
 
 #include <string.h>
 
@@ -94,8 +95,6 @@
 SECURITY_READ_ONLY_LATE(vm_map_t) kernel_map;
 vm_map_t         kernel_pageable_map;
 
-extern boolean_t vm_kernel_ready;
-
 /*
  * Forward declarations for internal functions.
  */
@@ -112,7 +111,7 @@ kmem_alloc_contig(
 	vm_offset_t             mask,
 	ppnum_t                 max_pnum,
 	ppnum_t                 pnum_mask,
-	int                     flags,
+	kma_flags_t             flags,
 	vm_tag_t                tag)
 {
 	vm_object_t             object;
@@ -253,8 +252,8 @@ kernel_memory_allocate(
 	vm_offset_t     *addrp,
 	vm_size_t       size,
 	vm_offset_t     mask,
-	int                     flags,
-	vm_tag_t                tag)
+	kma_flags_t     flags,
+	vm_tag_t        tag)
 {
 	vm_object_t             object;
 	vm_object_offset_t      offset;
@@ -269,16 +268,11 @@ kernel_memory_allocate(
 	vm_page_t               wired_page_list = NULL;
 	int                     guard_page_count = 0;
 	int                     wired_page_count = 0;
-	int                     page_grab_count = 0;
-	int                     i;
 	int                     vm_alloc_flags;
 	vm_map_kernel_flags_t   vmk_flags;
 	vm_prot_t               kma_prot;
-#if DEVELOPMENT || DEBUG
-	task_t                                  task = current_task();
-#endif /* DEVELOPMENT || DEBUG */
 
-	if (!vm_kernel_ready) {
+	if (startup_phase < STARTUP_SUB_KMEM) {
 		panic("kernel_memory_allocate: VM is not ready");
 	}
 
@@ -350,64 +344,25 @@ kernel_memory_allocate(
 	assert(wired_page_count * PAGE_SIZE_64 == fill_size);
 
 #if DEBUG || DEVELOPMENT
-	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_START, size, 0, 0, 0);
+	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_START,
+	    size, 0, 0, 0);
 #endif
 
-	for (i = 0; i < guard_page_count; i++) {
-		for (;;) {
-			mem = vm_page_grab_guard();
-
-			if (mem != VM_PAGE_NULL) {
-				break;
-			}
-			if (flags & KMA_NOPAGEWAIT) {
-				kr = KERN_RESOURCE_SHORTAGE;
-				goto out;
-			}
-			vm_page_more_fictitious();
+	for (int i = 0; i < guard_page_count; i++) {
+		mem = vm_page_grab_guard((flags & KMA_NOPAGEWAIT) == 0);
+		if (mem == VM_PAGE_NULL) {
+			kr = KERN_RESOURCE_SHORTAGE;
+			goto out;
 		}
 		mem->vmp_snext = guard_page_list;
 		guard_page_list = mem;
 	}
 
 	if (!(flags & (KMA_VAONLY | KMA_PAGEABLE))) {
-		for (i = 0; i < wired_page_count; i++) {
-			for (;;) {
-				if (flags & KMA_LOMEM) {
-					mem = vm_page_grablo();
-				} else {
-					mem = vm_page_grab();
-				}
-
-				if (mem != VM_PAGE_NULL) {
-					break;
-				}
-
-				if (flags & KMA_NOPAGEWAIT) {
-					kr = KERN_RESOURCE_SHORTAGE;
-					goto out;
-				}
-				if ((flags & KMA_LOMEM) && (vm_lopage_needed == TRUE)) {
-					kr = KERN_RESOURCE_SHORTAGE;
-					goto out;
-				}
-
-				/* VM privileged threads should have waited in vm_page_grab() and not get here. */
-				assert(!(current_thread()->options & TH_OPT_VMPRIV));
-
-				uint64_t unavailable = (vm_page_wire_count + vm_page_free_target) * PAGE_SIZE;
-				if (unavailable > max_mem || map_size > (max_mem - unavailable)) {
-					kr = KERN_RESOURCE_SHORTAGE;
-					goto out;
-				}
-				VM_PAGE_WAIT();
-			}
-			page_grab_count++;
-			if (KMA_ZERO & flags) {
-				vm_page_zero_fill(mem);
-			}
-			mem->vmp_snext = wired_page_list;
-			wired_page_list = mem;
+		kr = vm_page_alloc_list(wired_page_count, flags,
+		    &wired_page_list);
+		if (kr != KERN_SUCCESS) {
+			goto out;
 		}
 	}
 
@@ -427,6 +382,10 @@ kernel_memory_allocate(
 
 	if (flags & KMA_ATOMIC) {
 		vmk_flags.vmkf_atomic_entry = TRUE;
+	}
+
+	if (flags & KMA_KHEAP) {
+		vm_alloc_flags |= VM_MAP_FIND_LAST_FREE;
 	}
 
 	kr = vm_map_find_space(map, &map_addr,
@@ -514,7 +473,9 @@ kernel_memory_allocate(
 			mem->vmp_pmapped = TRUE;
 			mem->vmp_wpmapped = TRUE;
 
-			PMAP_ENTER_OPTIONS(kernel_pmap, map_addr + pg_offset, mem,
+			PMAP_ENTER_OPTIONS(kernel_pmap, map_addr + pg_offset,
+			    0, /* fault_phys_offset */
+			    mem,
 			    kma_prot, VM_PROT_NONE, ((flags & KMA_KSTACK) ? VM_MEM_STACK : 0), TRUE,
 			    PMAP_OPTIONS_NOWAIT, pe_result);
 
@@ -575,12 +536,9 @@ kernel_memory_allocate(
 	}
 
 #if DEBUG || DEVELOPMENT
-	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END, page_grab_count, 0, 0, 0);
-	if (task != NULL) {
-		ledger_credit(task->ledger, task_ledgers.pages_grabbed_kern, page_grab_count);
-	}
+	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END,
+	    wired_page_count, 0, 0, 0);
 #endif
-
 	/*
 	 *	Return the memory, not zeroed.
 	 */
@@ -597,13 +555,114 @@ out:
 	}
 
 #if DEBUG || DEVELOPMENT
-	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END, page_grab_count, 0, 0, 0);
-	if (task != NULL && kr == KERN_SUCCESS) {
-		ledger_credit(task->ledger, task_ledgers.pages_grabbed_kern, page_grab_count);
+	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END,
+	    wired_page_count, 0, 0, 0);
+#endif
+	return kr;
+}
+
+void
+kernel_memory_populate_with_pages(
+	vm_map_t        map,
+	vm_offset_t     addr,
+	vm_size_t       size,
+	vm_page_t       page_list,
+	kma_flags_t     flags,
+	vm_tag_t        tag)
+{
+	vm_object_t     object;
+	kern_return_t   pe_result;
+	vm_page_t       mem;
+	int             page_count = atop_64(size);
+
+	if (flags & KMA_COMPRESSOR) {
+		panic("%s(%p,0x%llx,0x%llx,0x%x): KMA_COMPRESSOR", __func__,
+		    map, (uint64_t) addr, (uint64_t) size, flags);
+	}
+
+	if (flags & KMA_KOBJECT) {
+		object = kernel_object;
+
+		vm_object_lock(object);
+	} else {
+		/*
+		 * If it's not the kernel object, we need to:
+		 *      lock map;
+		 *      lookup entry;
+		 *      lock object;
+		 *	take reference on object;
+		 *      unlock map;
+		 */
+		panic("%s(%p,0x%llx,0x%llx,0x%x): !KMA_KOBJECT", __func__,
+		    map, (uint64_t) addr, (uint64_t) size, flags);
+	}
+
+	for (vm_object_offset_t pg_offset = 0;
+	    pg_offset < size;
+	    pg_offset += PAGE_SIZE_64) {
+		if (page_list == NULL) {
+			panic("%s: page_list too short", __func__);
+		}
+
+		mem = page_list;
+		page_list = mem->vmp_snext;
+		mem->vmp_snext = NULL;
+
+		assert(mem->vmp_q_state == VM_PAGE_NOT_ON_Q);
+		mem->vmp_q_state = VM_PAGE_IS_WIRED;
+		mem->vmp_wire_count++;
+		if (mem->vmp_wire_count == 0) {
+			panic("%s(%p): wire_count overflow", __func__, mem);
+		}
+
+		vm_page_insert_wired(mem, object, addr + pg_offset, tag);
+
+		mem->vmp_busy = FALSE;
+		mem->vmp_pmapped = TRUE;
+		mem->vmp_wpmapped = TRUE;
+
+		PMAP_ENTER_OPTIONS(kernel_pmap, addr + pg_offset,
+		    0, /* fault_phys_offset */
+		    mem,
+		    VM_PROT_READ | VM_PROT_WRITE, VM_PROT_NONE,
+		    ((flags & KMA_KSTACK) ? VM_MEM_STACK : 0), TRUE,
+		    PMAP_OPTIONS_NOWAIT, pe_result);
+
+		if (pe_result == KERN_RESOURCE_SHORTAGE) {
+			vm_object_unlock(object);
+
+			PMAP_ENTER(kernel_pmap, addr + pg_offset, mem,
+			    VM_PROT_READ | VM_PROT_WRITE, VM_PROT_NONE,
+			    ((flags & KMA_KSTACK) ? VM_MEM_STACK : 0), TRUE,
+			    pe_result);
+
+			vm_object_lock(object);
+		}
+
+		assert(pe_result == KERN_SUCCESS);
+
+		if (flags & KMA_NOENCRYPT) {
+			__nosan_bzero(CAST_DOWN(void *, (addr + pg_offset)), PAGE_SIZE);
+			pmap_set_noencrypt(VM_PAGE_GET_PHYS_PAGE(mem));
+		}
+	}
+	if (page_list) {
+		panic("%s: page_list too long", __func__);
+	}
+	vm_object_unlock(object);
+
+	vm_page_lockspin_queues();
+	vm_page_wire_count += page_count;
+	vm_page_unlock_queues();
+	vm_tag_update_size(tag, size);
+
+#if KASAN
+	if (map == compressor_map) {
+		kasan_notify_address_nopoison(addr, size);
+	} else {
+		kasan_notify_address(addr, size);
 	}
 #endif
-
-	return kr;
 }
 
 kern_return_t
@@ -611,24 +670,20 @@ kernel_memory_populate(
 	vm_map_t        map,
 	vm_offset_t     addr,
 	vm_size_t       size,
-	int             flags,
+	kma_flags_t     flags,
 	vm_tag_t        tag)
 {
 	vm_object_t             object;
 	vm_object_offset_t      offset, pg_offset;
-	kern_return_t           kr, pe_result;
+	kern_return_t           kr = KERN_SUCCESS;
 	vm_page_t               mem;
 	vm_page_t               page_list = NULL;
-	int                     page_count = 0;
-	int                     page_grab_count = 0;
-	int                     i;
+	int                     page_count = atop_64(size);
 
 #if DEBUG || DEVELOPMENT
-	task_t                                  task = current_task();
-	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_START, size, 0, 0, 0);
+	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_START,
+	    size, 0, 0, 0);
 #endif
-
-	page_count = (int) (size / PAGE_SIZE_64);
 
 	assert((flags & (KMA_COMPRESSOR | KMA_KOBJECT)) != (KMA_COMPRESSOR | KMA_KOBJECT));
 
@@ -645,7 +700,6 @@ kernel_memory_populate(
 
 				VM_PAGE_WAIT();
 			}
-			page_grab_count++;
 			if (KMA_ZERO & flags) {
 				vm_page_zero_fill(mem);
 			}
@@ -692,163 +746,40 @@ kernel_memory_populate(
 #endif
 
 #if DEBUG || DEVELOPMENT
-		VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END, page_grab_count, 0, 0, 0);
+		task_t task = current_task();
 		if (task != NULL) {
-			ledger_credit(task->ledger, task_ledgers.pages_grabbed_kern, page_grab_count);
+			ledger_credit(task->ledger, task_ledgers.pages_grabbed_kern, page_count);
 		}
 #endif
-		return KERN_SUCCESS;
-	}
-
-	for (i = 0; i < page_count; i++) {
-		for (;;) {
-			if (flags & KMA_LOMEM) {
-				mem = vm_page_grablo();
-			} else {
-				mem = vm_page_grab();
-			}
-
-			if (mem != VM_PAGE_NULL) {
-				break;
-			}
-
-			if (flags & KMA_NOPAGEWAIT) {
-				kr = KERN_RESOURCE_SHORTAGE;
-				goto out;
-			}
-			if ((flags & KMA_LOMEM) &&
-			    (vm_lopage_needed == TRUE)) {
-				kr = KERN_RESOURCE_SHORTAGE;
-				goto out;
-			}
-			VM_PAGE_WAIT();
-		}
-		page_grab_count++;
-		if (KMA_ZERO & flags) {
-			vm_page_zero_fill(mem);
-		}
-		mem->vmp_snext = page_list;
-		page_list = mem;
-	}
-	if (flags & KMA_KOBJECT) {
-		offset = addr;
-		object = kernel_object;
-
-		vm_object_lock(object);
 	} else {
-		/*
-		 * If it's not the kernel object, we need to:
-		 *      lock map;
-		 *      lookup entry;
-		 *      lock object;
-		 *	take reference on object;
-		 *      unlock map;
-		 */
-		panic("kernel_memory_populate(%p,0x%llx,0x%llx,0x%x): "
-		    "!KMA_KOBJECT",
-		    map, (uint64_t) addr, (uint64_t) size, flags);
-	}
-
-	for (pg_offset = 0;
-	    pg_offset < size;
-	    pg_offset += PAGE_SIZE_64) {
-		if (page_list == NULL) {
-			panic("kernel_memory_populate: page_list == NULL");
+		kr = vm_page_alloc_list(page_count, flags, &page_list);
+		if (kr == KERN_SUCCESS) {
+			kernel_memory_populate_with_pages(map, addr, size,
+			    page_list, flags, tag);
 		}
-
-		mem = page_list;
-		page_list = mem->vmp_snext;
-		mem->vmp_snext = NULL;
-
-		assert(mem->vmp_q_state == VM_PAGE_NOT_ON_Q);
-		mem->vmp_q_state = VM_PAGE_IS_WIRED;
-		mem->vmp_wire_count++;
-		if (__improbable(mem->vmp_wire_count == 0)) {
-			panic("kernel_memory_populate(%p): wire_count overflow", mem);
-		}
-
-		vm_page_insert_wired(mem, object, offset + pg_offset, tag);
-
-		mem->vmp_busy = FALSE;
-		mem->vmp_pmapped = TRUE;
-		mem->vmp_wpmapped = TRUE;
-
-		PMAP_ENTER_OPTIONS(kernel_pmap, addr + pg_offset, mem,
-		    VM_PROT_READ | VM_PROT_WRITE, VM_PROT_NONE,
-		    ((flags & KMA_KSTACK) ? VM_MEM_STACK : 0), TRUE,
-		    PMAP_OPTIONS_NOWAIT, pe_result);
-
-		if (pe_result == KERN_RESOURCE_SHORTAGE) {
-			vm_object_unlock(object);
-
-			PMAP_ENTER(kernel_pmap, addr + pg_offset, mem,
-			    VM_PROT_READ | VM_PROT_WRITE, VM_PROT_NONE,
-			    ((flags & KMA_KSTACK) ? VM_MEM_STACK : 0), TRUE,
-			    pe_result);
-
-			vm_object_lock(object);
-		}
-
-		assert(pe_result == KERN_SUCCESS);
-
-		if (flags & KMA_NOENCRYPT) {
-			bzero(CAST_DOWN(void *, (addr + pg_offset)), PAGE_SIZE);
-			pmap_set_noencrypt(VM_PAGE_GET_PHYS_PAGE(mem));
-		}
-	}
-	vm_page_lockspin_queues();
-	vm_page_wire_count += page_count;
-	vm_page_unlock_queues();
-
-#if DEBUG || DEVELOPMENT
-	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END, page_grab_count, 0, 0, 0);
-	if (task != NULL) {
-		ledger_credit(task->ledger, task_ledgers.pages_grabbed_kern, page_grab_count);
-	}
-#endif
-
-	if (kernel_object == object) {
-		vm_tag_update_size(tag, size);
-	}
-
-	vm_object_unlock(object);
-
-#if KASAN
-	if (map == compressor_map) {
-		kasan_notify_address_nopoison(addr, size);
-	} else {
-		kasan_notify_address(addr, size);
-	}
-#endif
-	return KERN_SUCCESS;
-
-out:
-	if (page_list) {
-		vm_page_free_list(page_list, FALSE);
 	}
 
 #if DEBUG || DEVELOPMENT
-	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END, page_grab_count, 0, 0, 0);
-	if (task != NULL && kr == KERN_SUCCESS) {
-		ledger_credit(task->ledger, task_ledgers.pages_grabbed_kern, page_grab_count);
-	}
+	VM_DEBUG_CONSTANT_EVENT(vm_kern_request, VM_KERN_REQUEST, DBG_FUNC_END,
+	    page_count, 0, 0, 0);
 #endif
-
 	return kr;
 }
 
 
 void
 kernel_memory_depopulate(
-	vm_map_t        map,
-	vm_offset_t     addr,
-	vm_size_t       size,
-	int             flags)
+	vm_map_t           map,
+	vm_offset_t        addr,
+	vm_size_t          size,
+	kma_flags_t        flags,
+	vm_tag_t           tag)
 {
-	vm_object_t             object;
-	vm_object_offset_t      offset, pg_offset;
-	vm_page_t               mem;
-	vm_page_t               local_freeq = NULL;
+	vm_object_t        object;
+	vm_object_offset_t offset, pg_offset;
+	vm_page_t          mem;
+	vm_page_t          local_freeq = NULL;
+	unsigned int       pages_unwired;
 
 	assert((flags & (KMA_COMPRESSOR | KMA_KOBJECT)) != (KMA_COMPRESSOR | KMA_KOBJECT));
 
@@ -877,7 +808,7 @@ kernel_memory_depopulate(
 	}
 	pmap_protect(kernel_map->pmap, offset, offset + size, VM_PROT_NONE);
 
-	for (pg_offset = 0;
+	for (pg_offset = 0, pages_unwired = 0;
 	    pg_offset < size;
 	    pg_offset += PAGE_SIZE_64) {
 		mem = vm_page_lookup(object, offset + pg_offset);
@@ -886,6 +817,7 @@ kernel_memory_depopulate(
 
 		if (mem->vmp_q_state != VM_PAGE_USED_BY_COMPRESSOR) {
 			pmap_disconnect(VM_PAGE_GET_PHYS_PAGE(mem));
+			pages_unwired++;
 		}
 
 		mem->vmp_busy = TRUE;
@@ -896,7 +828,7 @@ kernel_memory_depopulate(
 
 		assert(mem->vmp_pageq.next == 0 && mem->vmp_pageq.prev == 0);
 		assert((mem->vmp_q_state == VM_PAGE_USED_BY_COMPRESSOR) ||
-		    (mem->vmp_q_state == VM_PAGE_NOT_ON_Q));
+		    (mem->vmp_q_state == VM_PAGE_IS_WIRED));
 
 		mem->vmp_q_state = VM_PAGE_NOT_ON_Q;
 		mem->vmp_snext = local_freeq;
@@ -904,8 +836,15 @@ kernel_memory_depopulate(
 	}
 	vm_object_unlock(object);
 
+
 	if (local_freeq) {
 		vm_page_free_list(local_freeq, TRUE);
+		if (pages_unwired != 0) {
+			vm_page_lockspin_queues();
+			vm_page_wire_count -= pages_unwired;
+			vm_page_unlock_queues();
+			vm_tag_update_size(tag, -ptoa_64(pages_unwired));
+		}
 	}
 }
 
@@ -942,10 +881,12 @@ kmem_alloc_flags(
 	vm_offset_t     *addrp,
 	vm_size_t       size,
 	vm_tag_t        tag,
-	int             flags)
+	kma_flags_t     flags)
 {
 	kern_return_t kr = kernel_memory_allocate(map, addrp, size, 0, flags, tag);
-	TRACE_MACHLEAKS(KMEM_ALLOC_CODE, KMEM_ALLOC_CODE_2, size, *addrp);
+	if (kr == KERN_SUCCESS) {
+		TRACE_MACHLEAKS(KMEM_ALLOC_CODE, KMEM_ALLOC_CODE_2, size, *addrp);
+	}
 	return kr;
 }
 
@@ -1378,7 +1319,12 @@ kmem_set_user_wire_limits(void)
 	size_t wire_limit_percents_length = sizeof(wire_limit_percents) /
 	    sizeof(vm_map_size_t);
 	vm_map_size_t limit;
-	available_mem_log = bit_floor(max_mem);
+	uint64_t config_memsize = max_mem;
+#if defined(XNU_TARGET_OS_OSX)
+	config_memsize = max_mem_actual;
+#endif /* defined(XNU_TARGET_OS_OSX) */
+
+	available_mem_log = bit_floor(config_memsize);
 
 	if (available_mem_log < VM_USER_WIREABLE_MIN_CONFIG) {
 		available_mem_log = 0;
@@ -1390,15 +1336,17 @@ kmem_set_user_wire_limits(void)
 	}
 	max_wire_percent = wire_limit_percents[available_mem_log];
 
-	limit = max_mem * max_wire_percent / 100;
+	limit = config_memsize * max_wire_percent / 100;
 	/* Cap the number of non lockable bytes at VM_NOT_USER_WIREABLE_MAX */
-	if (max_mem - limit > VM_NOT_USER_WIREABLE_MAX) {
-		limit = max_mem - VM_NOT_USER_WIREABLE_MAX;
+	if (config_memsize - limit > VM_NOT_USER_WIREABLE_MAX) {
+		limit = config_memsize - VM_NOT_USER_WIREABLE_MAX;
 	}
 
 	vm_global_user_wire_limit = limit;
 	/* the default per task limit is the same as the global limit */
 	vm_per_task_user_wire_limit = limit;
+	vm_add_wire_count_over_global_limit = 0;
+	vm_add_wire_count_over_user_limit = 0;
 }
 
 
@@ -1408,6 +1356,7 @@ kmem_set_user_wire_limits(void)
  *	Initialize the kernel's virtual memory map, taking
  *	into account all memory allocated up to this time.
  */
+__startup_func
 void
 kmem_init(
 	vm_offset_t     start,
@@ -1541,9 +1490,7 @@ copyinmap(
  *	Routine:	copyoutmap
  *	Purpose:
  *		Like copyout, except that toaddr is an address
- *		in the specified VM map.  This implementation
- *		is incomplete; it handles the current user map
- *		and the kernel map/submaps.
+ *		in the specified VM map.
  */
 kern_return_t
 copyoutmap(
@@ -1552,21 +1499,88 @@ copyoutmap(
 	vm_map_address_t        toaddr,
 	vm_size_t               length)
 {
+	kern_return_t   kr = KERN_SUCCESS;
+	vm_map_t        oldmap;
+
 	if (vm_map_pmap(map) == pmap_kernel()) {
 		/* assume a correct copy */
 		memcpy(CAST_DOWN(void *, toaddr), fromdata, length);
-		return KERN_SUCCESS;
+	} else if (current_map() == map) {
+		if (copyout(fromdata, toaddr, length) != 0) {
+			kr = KERN_INVALID_ADDRESS;
+		}
+	} else {
+		vm_map_reference(map);
+		oldmap = vm_map_switch(map);
+		if (copyout(fromdata, toaddr, length) != 0) {
+			kr = KERN_INVALID_ADDRESS;
+		}
+		vm_map_switch(oldmap);
+		vm_map_deallocate(map);
 	}
+	return kr;
+}
 
-	if (current_map() != map) {
-		return KERN_NOT_SUPPORTED;
+/*
+ *	Routine:	copyoutmap_atomic{32, 64}
+ *	Purpose:
+ *		Like copyoutmap, except that the operation is atomic.
+ *      Takes in value rather than *fromdata pointer.
+ */
+kern_return_t
+copyoutmap_atomic32(
+	vm_map_t                map,
+	uint32_t                value,
+	vm_map_address_t        toaddr)
+{
+	kern_return_t   kr = KERN_SUCCESS;
+	vm_map_t        oldmap;
+
+	if (vm_map_pmap(map) == pmap_kernel()) {
+		/* assume a correct toaddr */
+		*(uint32_t *)toaddr = value;
+	} else if (current_map() == map) {
+		if (copyout_atomic32(value, toaddr) != 0) {
+			kr = KERN_INVALID_ADDRESS;
+		}
+	} else {
+		vm_map_reference(map);
+		oldmap = vm_map_switch(map);
+		if (copyout_atomic32(value, toaddr) != 0) {
+			kr = KERN_INVALID_ADDRESS;
+		}
+		vm_map_switch(oldmap);
+		vm_map_deallocate(map);
 	}
+	return kr;
+}
 
-	if (copyout(fromdata, toaddr, length) != 0) {
-		return KERN_INVALID_ADDRESS;
+kern_return_t
+copyoutmap_atomic64(
+	vm_map_t                map,
+	uint64_t                value,
+	vm_map_address_t        toaddr)
+{
+	kern_return_t   kr = KERN_SUCCESS;
+	vm_map_t        oldmap;
+
+	if (vm_map_pmap(map) == pmap_kernel()) {
+		/* assume a correct toaddr */
+		*(uint64_t *)toaddr = value;
+	} else if (current_map() == map) {
+		if (copyout_atomic64(value, toaddr) != 0) {
+			kr = KERN_INVALID_ADDRESS;
+		}
+	} else {
+		vm_map_reference(map);
+		oldmap = vm_map_switch(map);
+		if (copyout_atomic64(value, toaddr) != 0) {
+			kr = KERN_INVALID_ADDRESS;
+		}
+		vm_map_switch(oldmap);
+		vm_map_deallocate(map);
 	}
-
-	return KERN_SUCCESS;
+	return kr;
 }
 
 /*
@@ -1660,4 +1674,47 @@ vm_kernel_unslide_or_perm_external(
 	vm_offset_t *up_addr)
 {
 	vm_kernel_addrperm_external(addr, up_addr);
+}
+
+void
+vm_packing_pointer_invalid(vm_offset_t ptr, vm_packing_params_t params)
+{
+	if (ptr & ((1ul << params.vmpp_shift) - 1)) {
+		panic("pointer %p can't be packed: low %d bits aren't 0",
+		    (void *)ptr, params.vmpp_shift);
+	} else if (ptr <= params.vmpp_base) {
+		panic("pointer %p can't be packed: below base %p",
+		    (void *)ptr, (void *)params.vmpp_base);
+	} else {
+		panic("pointer %p can't be packed: maximum encodable pointer is %p",
+		    (void *)ptr, (void *)vm_packing_max_packable(params));
+	}
+}
+
+void
+vm_packing_verify_range(
+	const char *subsystem,
+	vm_offset_t min_address,
+	vm_offset_t max_address,
+	vm_packing_params_t params)
+{
+	if (min_address > max_address) {
+		panic("%s: %s range invalid min:%p > max:%p",
+		    __func__, subsystem, (void *)min_address, (void *)max_address);
+	}
+
+	if (!params.vmpp_base_relative) {
+		return;
+	}
+
+	if (min_address <= params.vmpp_base) {
+		panic("%s: %s range invalid min:%p <= base:%p",
+		    __func__, subsystem, (void *)min_address, (void *)params.vmpp_base);
+	}
+
+	if (max_address > vm_packing_max_packable(params)) {
+		panic("%s: %s range invalid max:%p >= max packable:%p",
+		    __func__, subsystem, (void *)max_address,
+		    (void *)vm_packing_max_packable(params));
+	}
 }

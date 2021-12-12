@@ -14,6 +14,11 @@ import subprocess
 import logging
 import contextlib
 import base64
+import zlib
+
+# can be removed once we move to Python3.1+
+from future.utils.surrogateescape import register_surrogateescape
+register_surrogateescape()
 
 class Globals(object):
     pass
@@ -98,6 +103,11 @@ kcdata_type_def = {
     'STACKSHOT_KCTYPE_SYS_SHAREDCACHE_LAYOUT' : 0x927,
     'STACKSHOT_KCTYPE_THREAD_DISPATCH_QUEUE_LABEL' : 0x928,
     'STACKSHOT_KCTYPE_THREAD_TURNSTILEINFO' : 0x929,
+    'STACKSHOT_KCTYPE_TASK_CPU_ARCHITECTURE' : 0x92a,
+    'STACKSHOT_KCTYPE_LATENCY_INFO' : 0x92b,
+    'STACKSHOT_KCTYPE_LATENCY_INFO_TASK' : 0x92c,
+    'STACKSHOT_KCTYPE_LATENCY_INFO_THREAD' : 0x92d,
+    'STACKSHOT_KCTYPE_LOADINFO64_TEXT_EXEC' : 0x92e,
 
     'STACKSHOT_KCTYPE_TASK_DELTA_SNAPSHOT': 0x940,
     'STACKSHOT_KCTYPE_THREAD_DELTA_SNAPSHOT': 0x941,
@@ -146,6 +156,7 @@ kcdata_type_def = {
     'KCDATA_BUFFER_BEGIN_CRASHINFO':       0xDEADF157,
     'KCDATA_BUFFER_BEGIN_DELTA_STACKSHOT': 0xDE17A59A,
     'KCDATA_BUFFER_BEGIN_STACKSHOT':       0x59a25807,
+    'KCDATA_BUFFER_BEGIN_COMPRESSED':      0x434f4d50,
     'KCDATA_BUFFER_BEGIN_OS_REASON':       0x53A20900,
     'KCDATA_BUFFER_BEGIN_XNUPOST_CONFIG':  0x1E21C09F
 }
@@ -158,6 +169,17 @@ KNOWN_TOPLEVEL_CONTAINER_TYPES = ()
 def enum(**args):
     return type('enum', (), args)
 
+#
+# Decode bytes as UTF-8, using surrogateescape if there are invalid UTF-8
+# sequences; see PEP-383
+#
+def BytesToString(b):
+    return b.decode('utf-8', errors="surrogateescape")
+
+# important keys
+SC_SLID_FIRSTMAPPING_KEY = 'sharedCacheSlidFirstMapping'
+
+# important builtin types
 KCSUBTYPE_TYPE = enum(KC_ST_CHAR=1, KC_ST_INT8=2, KC_ST_UINT8=3, KC_ST_INT16=4, KC_ST_UINT16=5, KC_ST_INT32=6, KC_ST_UINT32=7, KC_ST_INT64=8, KC_ST_UINT64=9)
 
 
@@ -203,7 +225,7 @@ class KCSubTypeElement(object):
     @staticmethod
     def FromBinaryTypeData(byte_data):
         (st_flag, st_type, st_offset, st_size, st_name) = struct.unpack_from('=BBHI32s', byte_data)
-        st_name = st_name.rstrip('\x00')
+        st_name = BytesToString(st_name.rstrip('\0'))
         return KCSubTypeElement(st_name, st_type, st_size, st_offset, st_flag)
 
     @staticmethod
@@ -231,7 +253,10 @@ class KCSubTypeElement(object):
         return self.totalsize
 
     def GetValueAsString(self, base_data, array_pos=0):
-        return str(self.GetValue(base_data, array_pos))
+        v = self.GetValue(base_data, array_pos)
+        if isinstance(v, bytes):
+            return BytesToString(v)
+        return str(v)
 
     def GetValue(self, base_data, array_pos=0):
         return struct.unpack_from(self.unpack_fmt, base_data[self.offset + (array_pos * self.size):])[0]
@@ -421,8 +446,9 @@ class KCObject(object):
 
         if self.i_type == GetTypeForName('KCDATA_TYPE_CONTAINER_BEGIN'):
             self.__class__ = KCContainerObject
-
-        if self.i_type in KNOWN_TOPLEVEL_CONTAINER_TYPES:
+        elif self.i_type == GetTypeForName('KCDATA_BUFFER_BEGIN_COMPRESSED'):
+            self.__class__ = KCCompressedBufferObject
+        elif self.i_type in KNOWN_TOPLEVEL_CONTAINER_TYPES:
             self.__class__ = KCBufferObject
 
         self.InitAfterParse()
@@ -491,14 +517,14 @@ class KCObject(object):
         elif self.i_type == GetTypeForName('KCDATA_TYPE_UINT32_DESC'):
             self.is_naked_type = True
             u_d = struct.unpack_from('32sI', self.i_data)
-            self.i_name = u_d[0].strip(chr(0))
+            self.i_name = BytesToString(u_d[0].rstrip('\0'))
             self.obj = u_d[1]
             logging.info("0x%08x: %s%s" % (self.offset, INDENT(), self.i_name))
 
         elif self.i_type == GetTypeForName('KCDATA_TYPE_UINT64_DESC'):
             self.is_naked_type = True
             u_d = struct.unpack_from('32sQ', self.i_data)
-            self.i_name = u_d[0].strip(chr(0))
+            self.i_name = BytesToString(u_d[0].rstrip('\0'))
             self.obj = u_d[1]
             logging.info("0x%08x: %s%s" % (self.offset, INDENT(), self.i_name))
 
@@ -660,6 +686,40 @@ class KCBufferObject(KCContainerObject):
 
     no_end_message = "could not find buffer end marker"
 
+class KCCompressedBufferObject(KCContainerObject):
+
+    def ReadItems(self, iterator):
+        self.header = dict()
+        with INDENT.indent():
+            for i in iterator:
+                o = KCObject.FromKCItem(i)
+                if self.IsEndMarker(o):
+                    self.compressed_type = o.i_type
+                    self.blob_start = o.offset + 16
+                    break
+                o.ParseData()
+                self.header[o.i_name] = o.obj
+
+    def IsEndMarker(self, o):
+        return o.i_type in KNOWN_TOPLEVEL_CONTAINER_TYPES
+
+    def GetCompressedBlob(self, data):
+        if self.header['kcd_c_type'] != 1:
+            raise NotImplementedError
+        blob = data[self.blob_start:self.blob_start+self.header['kcd_c_totalout']]
+        if len(blob) != self.header['kcd_c_totalout']:
+            raise ValueError
+        return blob
+
+    def Decompress(self, data):
+        start_marker = struct.pack('<IIII', self.compressed_type, 0, 0, 0)
+        end_marker = struct.pack('<IIII', GetTypeForName('KCDATA_TYPE_BUFFER_END'), 0, 0, 0)
+        decompressed = zlib.decompress(self.GetCompressedBlob(data))
+        if len(decompressed) != self.header['kcd_c_totalin']:
+            raise ValueError, "length of decompressed: %d vs expected %d" % (len(decompressed), self.header['kcd_c_totalin'])
+        alignbytes = b'\x00' * (-len(decompressed) % 16)
+        return start_marker + decompressed + alignbytes + end_marker
+
 
 class KCData_item:
     """ a basic kcdata_item type object.
@@ -707,7 +767,7 @@ def kcdata_item_iterator(data):
 def _get_data_element(elementValues):
     return json.dumps(elementValues[-1])
 
-KNOWN_TOPLEVEL_CONTAINER_TYPES = map(GetTypeForName, ('KCDATA_BUFFER_BEGIN_CRASHINFO', 'KCDATA_BUFFER_BEGIN_STACKSHOT', 'KCDATA_BUFFER_BEGIN_DELTA_STACKSHOT', 'KCDATA_BUFFER_BEGIN_OS_REASON','KCDATA_BUFFER_BEGIN_XNUPOST_CONFIG'))
+KNOWN_TOPLEVEL_CONTAINER_TYPES = map(GetTypeForName, ('KCDATA_BUFFER_BEGIN_COMPRESSED', 'KCDATA_BUFFER_BEGIN_CRASHINFO', 'KCDATA_BUFFER_BEGIN_STACKSHOT', 'KCDATA_BUFFER_BEGIN_DELTA_STACKSHOT', 'KCDATA_BUFFER_BEGIN_OS_REASON','KCDATA_BUFFER_BEGIN_XNUPOST_CONFIG'))
 
 KNOWN_TYPES_COLLECTION[GetTypeForName('KCDATA_TYPE_UINT32_DESC')] = KCTypeDescription(GetTypeForName('KCDATA_TYPE_UINT32_DESC'), (
     KCSubTypeElement('desc', KCSUBTYPE_TYPE.KC_ST_CHAR, KCSubTypeElement.GetSizeForArray(32, 1), 0, 1),
@@ -891,10 +951,18 @@ KNOWN_TYPES_COLLECTION[GetTypeForName('KCDATA_TYPE_LIBRARY_LOADINFO')] = KCTypeD
     legacy_size = 20
 )
 
+KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_LOADINFO64_TEXT_EXEC')] = KCTypeDescription(GetTypeForName('STACKSHOT_KCTYPE_LOADINFO64_TEXT_EXEC'), (
+    KCSubTypeElement('imageLoadAddress', KCSUBTYPE_TYPE.KC_ST_UINT64, 8, 0, 0),
+    KCSubTypeElement('imageUUID', KCSUBTYPE_TYPE.KC_ST_UINT8, KCSubTypeElement.GetSizeForArray(16, 1), 8, 1),
+),
+    'dyld_load_info_text_exec'
+)
+
 KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO')] = KCTypeDescription(GetTypeForName('STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO'), (
     KCSubTypeElement('imageLoadAddress', KCSUBTYPE_TYPE.KC_ST_UINT64, 8, 0, 0),
     KCSubTypeElement('imageUUID', KCSUBTYPE_TYPE.KC_ST_UINT8, KCSubTypeElement.GetSizeForArray(16, 1), 8, 1),
     KCSubTypeElement('imageSlidBaseAddress', KCSUBTYPE_TYPE.KC_ST_UINT64, 8, 24, 0),
+    KCSubTypeElement('sharedCacheSlidFirstMapping', KCSUBTYPE_TYPE.KC_ST_UINT64, 8, 32, 0),
 ),
     'shared_cache_dyld_load_info',
     legacy_size = 0x18
@@ -1043,6 +1111,52 @@ KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_INSTRS_CYCLES')] = KCTyp
             ),
             'instrs_cycles_snapshot')
 
+KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_TASK_CPU_ARCHITECTURE')] = KCTypeDescription(GetTypeForName('STACKSHOT_KCTYPE_TASK_CPU_ARCHITECTURE'),
+            (
+                        KCSubTypeElement.FromBasicCtype('cputype', KCSUBTYPE_TYPE.KC_ST_INT32, 0),
+                        KCSubTypeElement.FromBasicCtype('cpusubtype', KCSUBTYPE_TYPE.KC_ST_INT32, 4)
+            ),
+            'task_cpu_architecture')
+
+KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_LATENCY_INFO')] = KCTypeDescription(GetTypeForName('STACKSHOT_KCTYPE_LATENCY_INFO'),
+            (
+                        KCSubTypeElement.FromBasicCtype('latency_version', KCSUBTYPE_TYPE.KC_ST_UINT64, 0),
+                        KCSubTypeElement.FromBasicCtype('setup_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 8),
+                        KCSubTypeElement.FromBasicCtype('total_task_iteration_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 16),
+                        KCSubTypeElement.FromBasicCtype('total_terminated_task_iteration_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 24)
+            ),
+            'stackshot_latency_collection')
+
+KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_LATENCY_INFO_TASK')] = KCTypeDescription(GetTypeForName('STACKSHOT_KCTYPE_LATENCY_INFO_TASK'),
+            (
+                        KCSubTypeElement.FromBasicCtype('task_uniqueid', KCSUBTYPE_TYPE.KC_ST_UINT64, 0),
+                        KCSubTypeElement.FromBasicCtype('setup_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 8),
+                        KCSubTypeElement.FromBasicCtype('task_thread_count_loop_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 16),
+                        KCSubTypeElement.FromBasicCtype('task_thread_data_loop_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 24),
+                        KCSubTypeElement.FromBasicCtype('cur_tsnap_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 32),
+                        KCSubTypeElement.FromBasicCtype('pmap_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 40),
+                        KCSubTypeElement.FromBasicCtype('bsd_proc_ids_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 48),
+                        KCSubTypeElement.FromBasicCtype('misc_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 56),
+                        KCSubTypeElement.FromBasicCtype('misc2_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 64),
+                        KCSubTypeElement.FromBasicCtype('end_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 72)
+            ),
+            'stackshot_latency_task')
+
+KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_LATENCY_INFO_THREAD')] = KCTypeDescription(GetTypeForName('STACKSHOT_KCTYPE_LATENCY_INFO_THREAD'),
+            (
+                        KCSubTypeElement.FromBasicCtype('thread_id', KCSUBTYPE_TYPE.KC_ST_UINT64, 0),
+                        KCSubTypeElement.FromBasicCtype('cur_thsnap1_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 8),
+                        KCSubTypeElement.FromBasicCtype('dispatch_serial_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 16),
+                        KCSubTypeElement.FromBasicCtype('dispatch_label_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 24),
+                        KCSubTypeElement.FromBasicCtype('cur_thsnap2_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 32),
+                        KCSubTypeElement.FromBasicCtype('thread_name_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 40),
+                        KCSubTypeElement.FromBasicCtype('sur_times_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 48),
+                        KCSubTypeElement.FromBasicCtype('user_stack_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 56),
+                        KCSubTypeElement.FromBasicCtype('kernel_stack_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 64),
+                        KCSubTypeElement.FromBasicCtype('misc_latency', KCSUBTYPE_TYPE.KC_ST_UINT64, 72),
+            ),
+            'stackshot_latency_thread')
+
 def set_type(name, *args):
     typ = GetTypeForName(name)
     KNOWN_TYPES_COLLECTION[typ] = KCTypeDescription(GetTypeForName(typ), *args)
@@ -1143,6 +1257,7 @@ KNOWN_TYPES_COLLECTION[GetTypeForName('STACKSHOT_KCTYPE_STACKSHOT_DURATION')] = 
     (
         KCSubTypeElement.FromBasicCtype('stackshot_duration', KCSUBTYPE_TYPE.KC_ST_UINT64, 0),
         KCSubTypeElement.FromBasicCtype('stackshot_duration_outer', KCSUBTYPE_TYPE.KC_ST_UINT64, 8),
+        KCSubTypeElement.FromBasicCtype('stackshot_duration_prior', KCSUBTYPE_TYPE.KC_ST_UINT64, 16),
     ), 'stackshot_duration', merge=True
 )
 
@@ -1288,6 +1403,9 @@ kThreadWaitPThreadCondVar       = 0x0e
 kThreadWaitParkedWorkQueue      = 0x0f
 kThreadWaitWorkloopSyncWait     = 0x10
 kThreadWaitOnProcess            = 0x11
+kThreadWaitSleepWithInheritor   = 0x12
+kThreadWaitEventlink            = 0x13
+kThreadWaitCompressor           = 0x14
 
 
 UINT64_MAX = 0xffffffffffffffff
@@ -1299,10 +1417,12 @@ STACKSHOT_WAITOWNER_MTXSPIN     = (UINT64_MAX - 5)
 STACKSHOT_WAITOWNER_THREQUESTED = (UINT64_MAX - 6)
 STACKSHOT_WAITOWNER_SUSPENDED   = (UINT64_MAX - 7)
 
-STACKSHOT_TURNSTILE_STATUS_UNKNOWN      = 0x01
-STACKSHOT_TURNSTILE_STATUS_LOCKED_WAITQ = 0x02
-STACKSHOT_TURNSTILE_STATUS_WORKQUEUE    = 0x04
-STACKSHOT_TURNSTILE_STATUS_THREAD       = 0x08
+STACKSHOT_TURNSTILE_STATUS_UNKNOWN         = 0x01
+STACKSHOT_TURNSTILE_STATUS_LOCKED_WAITQ    = 0x02
+STACKSHOT_TURNSTILE_STATUS_WORKQUEUE       = 0x04
+STACKSHOT_TURNSTILE_STATUS_THREAD          = 0x08
+STACKSHOT_TURNSTILE_STATUS_BLOCKED_ON_TASK = 0x10
+STACKSHOT_TURNSTILE_STATUS_HELD_IPLOCK     = 0x20
 
 def formatWaitInfo(info):
     s = 'thread %d: ' % info['waiter'];
@@ -1397,6 +1517,18 @@ def formatWaitInfo(info):
             s += "waitpid, for process group %d" % abs(owner - 2**64)
         else:
             s += "waitpid, for pid %d" % owner
+    elif type == kThreadWaitSleepWithInheritor:
+        if owner == 0:
+            s += "turnstile, held waitq"
+        else:
+            s += "turnstile, pushing thread %d" % owner
+    elif type == kThreadWaitEventlink:
+        if owner == 0:
+            s += "eventlink, held waitq"
+        else:
+            s += "eventlink, signaled by thread %d" % owner
+    elif type == kThreadWaitCompressor:
+        s += "in compressor segment %x, busy for thread %d" % (context, owner)
 
     else:
         s += "unknown type %d (owner %d, context %x)" % (type, owner, context)
@@ -1411,6 +1543,10 @@ def formatTurnstileInfo(ti):
     ctx = int(ti['turnstile_context'])
     hop = int(ti['number_of_hops'])
     prio = int(ti['turnstile_priority'])
+    if ts_flags & STACKSHOT_TURNSTILE_STATUS_HELD_IPLOCK:
+        return " [turnstile blocked on task, but ip_lock was held]"
+    if ts_flags & STACKSHOT_TURNSTILE_STATUS_BLOCKED_ON_TASK:
+        return " [turnstile blocked on task pid %d, hops: %d, priority: %d]" % (ctx, hop, prio)
     if ts_flags & STACKSHOT_TURNSTILE_STATUS_LOCKED_WAITQ:
         return " [turnstile was in process of being updated]"
     if ts_flags & STACKSHOT_TURNSTILE_STATUS_WORKQUEUE:
@@ -1444,9 +1580,9 @@ def SaveStackshotReport(j, outfile_name, incomplete):
         print "No KCDATA_BUFFER_BEGIN_STACKSHOT object found. Skipping writing report."
         return
 
-    timestamp = ss.get('usecs_since_epoch', int(time.time()))
+    timestamp = ss.get('usecs_since_epoch')
     try:
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S %z",time.gmtime(timestamp))
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S +0000",time.gmtime(timestamp / 1000000 if timestamp else None))
     except ValueError, e:
         print "couldn't convert timestamp:", str(e)
         timestamp = None
@@ -1454,11 +1590,39 @@ def SaveStackshotReport(j, outfile_name, incomplete):
     os_version = ss.get('osversion', 'Unknown')
     timebase = ss.get('mach_timebase_info', {"denom": 1, "numer": 1})
 
+    sc_note = None
+    extra_note = None
     dsc_common = None
     shared_cache_info = ss.get('shared_cache_dyld_load_info')
     if shared_cache_info:
         shared_cache_base_addr = shared_cache_info['imageSlidBaseAddress']
-        dsc_common = [format_uuid(shared_cache_info['imageUUID']), shared_cache_info['imageSlidBaseAddress'], "S" ]
+        # If we have a slidFirstMapping and it's >= base_address, use that.
+        #
+        # Otherwise we're processing a stackshot from before the slidFirstMapping
+        # field was introduced and corrected.  On ARM the SlidBaseAddress is the
+        # same, but on x86 it's off by 0x20000000.  We use 'X86_64' in the
+        # kernel version string plus checking kern_page_size == 4k' as
+        # proxy for x86_64, and only adjust SlidBaseAddress if the unslid
+        # address is precisely the expected incorrect value.
+        #
+        is_intel = ('X86_64' in ss.get('osversion', "") and
+           ss.get('kernel_page_size', 0) == 4096)
+        slidFirstMapping = shared_cache_info.get(SC_SLID_FIRSTMAPPING_KEY, -1);
+        if slidFirstMapping >= shared_cache_base_addr:
+            shared_cache_base_addr = slidFirstMapping
+            sc_note = "base-accurate"
+
+        elif is_intel:
+            sc_slide = shared_cache_info['imageLoadAddress']
+            if (shared_cache_base_addr - sc_slide) == 0x7fff00000000:
+                shared_cache_base_addr += 0x20000000
+                sc_note = "base-x86-adjusted"
+                extra_note = "Shared cache base adjusted for x86. "
+            else:
+                sc_note = "base-x86-unknown"
+
+        dsc_common = [format_uuid(shared_cache_info['imageUUID']),
+                shared_cache_base_addr, "S" ]
         print "Shared cache UUID found from the binary data is <%s> " % str(dsc_common[0])
 
     dsc_layout = ss.get('system_shared_cache_layout')
@@ -1483,10 +1647,15 @@ def SaveStackshotReport(j, outfile_name, incomplete):
     obj["frontmostPids"] = [0]
     obj["exception"] = "0xDEADF157"
     obj["processByPid"] = {}
+    if sc_note is not None:
+        obj["sharedCacheNote"] = sc_note
 
     if incomplete:
         obj["reason"] = "!!!INCOMPLETE!!! kernel panic stackshot"
         obj["notes"] = "This stackshot report generated from incomplete data!   Some information is missing! "
+
+    if extra_note is not None:
+        obj["notes"] = obj.get("notes", "") + extra_note
         
     processByPid = obj["processByPid"]
     ssplist = ss.get('task_snapshots', {})
@@ -1500,6 +1669,11 @@ def SaveStackshotReport(j, outfile_name, incomplete):
         kl_infos = ssplist["0"].get("dyld_load_info", [])
         for dlinfo in kl_infos:
             kern_load_info.append([format_uuid(dlinfo['imageUUID']), dlinfo['imageLoadAddress'], "K"])
+
+        kl_infos_text_exec = ssplist["0"].get("dyld_load_info_text_exec", [])
+        for dlinfo in kl_infos_text_exec:
+            kern_load_info.append([format_uuid(dlinfo['imageUUID']), dlinfo['imageLoadAddress'], "T"])
+
     for pid,piddata in ssplist.iteritems():
         processByPid[str(pid)] = {}
         tsnap = processByPid[str(pid)]
@@ -1638,30 +1812,6 @@ def RunCommand(bash_cmd_string, get_stderr = True):
         return (exit_code, output_str)
 
 
-parser = argparse.ArgumentParser(description="Decode a kcdata binary file.")
-parser.add_argument("-l", "--listtypes", action="store_true", required=False, default=False,
-                    help="List all known types",
-                    dest="list_known_types")
-
-parser.add_argument("-s", "--stackshot", required=False, default=False,
-                    help="Generate a stackshot report file",
-                    dest="stackshot_file")
-
-parser.add_argument("--multiple", help="look for multiple stackshots in a single file", action='store_true')
-
-parser.add_argument("-p", "--plist", required=False, default=False,
-                    help="output as plist", action="store_true")
-
-parser.add_argument("-S", "--sdk", required=False, default="", help="sdk property passed to xcrun command to find the required tools. Default is empty string.", dest="sdk")
-parser.add_argument("--pretty", default=False, action='store_true', help="make the output a little more human readable")
-parser.add_argument("--incomplete", action='store_true', help="accept incomplete data")
-parser.add_argument("kcdata_file", type=argparse.FileType('r'), help="Path to a kcdata binary file.")
-
-class VerboseAction(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
-parser.add_argument('-v', "--verbose", action=VerboseAction, nargs=0)
-
 @contextlib.contextmanager
 def data_from_stream(stream):
     try:
@@ -1678,9 +1828,18 @@ def iterate_kcdatas(kcdata_file):
     with data_from_stream(kcdata_file) as data:
         iterator = kcdata_item_iterator(data)
         kcdata_buffer = KCObject.FromKCItem(iterator.next())
+
+        if isinstance(kcdata_buffer, KCCompressedBufferObject):
+            kcdata_buffer.ReadItems(iterator)
+            decompressed = kcdata_buffer.Decompress(data)
+            iterator = kcdata_item_iterator(decompressed)
+            kcdata_buffer = KCObject.FromKCItem(iterator.next())
+
         if not isinstance(kcdata_buffer, KCBufferObject):
+            # ktrace stackshot chunk
             iterator = kcdata_item_iterator(data[16:])
             kcdata_buffer = KCObject.FromKCItem(iterator.next())
+
         if not isinstance(kcdata_buffer, KCBufferObject):
             try:
                 decoded = base64.b64decode(data)
@@ -1699,8 +1858,10 @@ def iterate_kcdatas(kcdata_file):
             else:
                 iterator = kcdata_item_iterator(decompressed)
                 kcdata_buffer = KCObject.FromKCItem(iterator.next())
+
         if not isinstance(kcdata_buffer, KCBufferObject):
             raise Exception, "unknown file type"
+
 
         kcdata_buffer.ReadItems(iterator)
         yield kcdata_buffer
@@ -1726,12 +1887,11 @@ def prettify(data):
                 value = '%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X' % tuple(value)
             elif 'address' in key.lower() and isinstance(value, (int, long)):
                 value = '0x%X' % value
-            elif key == 'lr':
+            elif key == 'lr' or key == SC_SLID_FIRSTMAPPING_KEY:
                 value = '0x%X' % value
             elif key == 'thread_waitinfo':
                 value = map(formatWaitInfo, value)
             elif key == 'stack_contents':
-                print value
                 (address,) = struct.unpack("<Q", struct.pack("B"*8, *value))
                 value = '0x%X' % address
             else:
@@ -1745,6 +1905,30 @@ def prettify(data):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Decode a kcdata binary file.")
+    parser.add_argument("-l", "--listtypes", action="store_true", required=False, default=False,
+                        help="List all known types",
+                        dest="list_known_types")
+
+    parser.add_argument("-s", "--stackshot", required=False, default=False,
+                        help="Generate a stackshot report file",
+                        dest="stackshot_file")
+
+    parser.add_argument("--multiple", help="look for multiple stackshots in a single file", action='store_true')
+
+    parser.add_argument("-p", "--plist", required=False, default=False,
+                        help="output as plist", action="store_true")
+
+    parser.add_argument("-S", "--sdk", required=False, default="", help="sdk property passed to xcrun command to find the required tools. Default is empty string.", dest="sdk")
+    parser.add_argument("--pretty", default=False, action='store_true', help="make the output a little more human readable")
+    parser.add_argument("--incomplete", action='store_true', help="accept incomplete data")
+    parser.add_argument("kcdata_file", type=argparse.FileType('r'), help="Path to a kcdata binary file.")
+
+    class VerboseAction(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
+    parser.add_argument('-v', "--verbose", action=VerboseAction, nargs=0)
+
     args = parser.parse_args()
 
     if args.multiple and args.stackshot_file:

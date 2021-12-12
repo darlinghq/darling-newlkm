@@ -10,7 +10,13 @@
 #include <mach/host_info.h>
 #include <mach/mach_host.h>
 #include <arm/cpuid.h>
+#include <kern/zalloc.h>
 #include <libkern/libkern.h>
+#include <pexpert/device_tree.h>
+
+#if HYPERVISOR
+#include <kern/hv_support.h>
+#endif
 
 extern uint64_t wake_abstime;
 extern int      lck_mtx_adaptive_spin_mode;
@@ -46,6 +52,30 @@ SYSCTL_PROC(_machdep, OID_AUTO, wake_conttime,
     0, 0, sysctl_wake_conttime, "I",
     "Continuous Time at the last wakeup");
 
+#if defined(HAS_IPI)
+static int
+cpu_signal_deferred_timer(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int new_value = 0;
+	int changed   = 0;
+
+	int old_value = (int)ml_cpu_signal_deferred_get_timer();
+
+	int error = sysctl_io_number(req, old_value, sizeof(int), &new_value, &changed);
+
+	if (error == 0 && changed) {
+		ml_cpu_signal_deferred_adjust_timer((uint64_t)new_value);
+	}
+
+	return error;
+}
+
+SYSCTL_PROC(_machdep, OID_AUTO, deferred_ipi_timeout,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0,
+    cpu_signal_deferred_timer, "I", "Deferred IPI timeout (nanoseconds)");
+
+#endif /* defined(HAS_IPI) */
 
 /*
  * For source compatibility, here's some machdep.cpu mibs that
@@ -131,12 +161,49 @@ SYSCTL_PROC(_machdep_cpu, OID_AUTO, thread_count,
     sizeof(integer_t),
     arm_host_info, "I", "Number of enabled threads per package");
 
+static SECURITY_READ_ONLY_LATE(char*) brand_string = NULL;
+static SECURITY_READ_ONLY_LATE(size_t) brand_string_len = 0;
+
+/*
+ * SecureDTLookupEntry() is only guaranteed to work before PE_init_iokit(),
+ * so we load the brand string (if available) in a startup handler.
+ */
+__startup_func
+static void
+sysctl_load_brand_string(void)
+{
+	DTEntry node;
+	void const *value = NULL;
+	unsigned int size = 0;
+
+	if (kSuccess != SecureDTLookupEntry(0, "/product", &node)) {
+		return;
+	}
+
+	if (kSuccess != SecureDTGetProperty(node, "product-soc-name", (void const **) &value, &size)) {
+		return;
+	}
+
+	if (size == 0) {
+		return;
+	}
+
+	brand_string = zalloc_permanent(size, ZALIGN_NONE);
+	if (brand_string == NULL) {
+		return;
+	}
+
+	memcpy(brand_string, value, size);
+	brand_string_len = size;
+}
+STARTUP(SYSCTL, STARTUP_RANK_MIDDLE, sysctl_load_brand_string);
+
 /*
  * machdep.cpu.brand_string
  *
  * x86: derived from CPUID data.
- * ARM: cons something up from the CPUID register. Could include cpufamily
- *	here and map it to a "marketing" name, but there's no obvious need;
+ * ARM: Grab the product string from the device tree, if it exists.
+ *      Otherwise, cons something up from the CPUID register.
  *      the value is already exported via the commpage. So keep it simple.
  */
 static int
@@ -145,6 +212,10 @@ make_brand_string SYSCTL_HANDLER_ARGS
 	__unused struct sysctl_oid *unused_oidp = oidp;
 	__unused void *unused_arg1 = arg1;
 	__unused int unused_arg2 = arg2;
+
+	if (brand_string != NULL) {
+		return SYSCTL_OUT(req, brand_string, brand_string_len);
+	}
 
 	const char *impl;
 
@@ -159,6 +230,8 @@ make_brand_string SYSCTL_HANDLER_ARGS
 		impl = "ARM architecture";
 		break;
 	}
+
+
 	char buf[80];
 	snprintf(buf, sizeof(buf), "%s processor", impl);
 	return SYSCTL_OUT(req, buf, strlen(buf) + 1);
@@ -168,10 +241,25 @@ SYSCTL_PROC(_machdep_cpu, OID_AUTO, brand_string,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
     0, 0, make_brand_string, "A", "CPU brand string");
 
+
 static
 SYSCTL_INT(_machdep, OID_AUTO, lck_mtx_adaptive_spin_mode,
     CTLFLAG_RW, &lck_mtx_adaptive_spin_mode, 0,
     "Enable adaptive spin behavior for kernel mutexes");
+
+static int
+virtual_address_size SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2, oidp)
+	int return_value = 64 - T0SZ_BOOT;
+	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
+}
+
+static
+SYSCTL_PROC(_machdep, OID_AUTO, virtual_address_size,
+    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED,
+    0, 0, virtual_address_size, "I",
+    "Number of addressable bits in userspace virtual addresses");
 
 
 #if DEVELOPMENT || DEBUG
@@ -180,118 +268,40 @@ SYSCTL_QUAD(_machdep, OID_AUTO, tlto,
     CTLFLAG_RW | CTLFLAG_LOCKED, &TLockTimeOut,
     "Ticket spinlock timeout (MATUs): use with care");
 
-static int
-sysctl_sysreg_vbar_el1 SYSCTL_HANDLER_ARGS
-{
-#pragma unused(arg1, arg2, oidp)
-	uint64_t return_value = __builtin_arm_rsr64("VBAR_EL1");
-	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
-}
 
 /*
- * machdep.cpu.sysreg_vbar_el1
- *
- * ARM64: Vector Base Address Register.
- * Read from the current CPU's system registers.
+ * macro to generate a sysctl machdep.cpu.sysreg_* for a given system register
+ * using __builtin_arm_rsr64.
  */
-SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_vbar_el1,
-    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,
-    0, 0, sysctl_sysreg_vbar_el1, "Q",
-    "VBAR_EL1 register on the current CPU");
+#define SYSCTL_PROC_MACHDEP_CPU_SYSREG(name)                            \
+static int                                                              \
+sysctl_sysreg_##name SYSCTL_HANDLER_ARGS                                \
+{                                                                       \
+_Pragma("unused(arg1, arg2, oidp)")                                     \
+	uint64_t return_value = __builtin_arm_rsr64(#name);                 \
+	return SYSCTL_OUT(req, &return_value, sizeof(return_value));        \
+}                                                                       \
+SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_##name,                      \
+    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,                         \
+    0, 0, sysctl_sysreg_##name, "Q",                                    \
+    #name " register on the current CPU");
 
-static int
-sysctl_sysreg_mair_el1 SYSCTL_HANDLER_ARGS
-{
-#pragma unused(arg1, arg2, oidp)
-	uint64_t return_value = __builtin_arm_rsr64("MAIR_EL1");
-	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
-}
 
-/*
- * machdep.cpu.sysreg_mair_el1
- *
- * ARM64: Memory Attribute Indirection Register.
- * Read from the current CPU's system registers.
- */
-SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_mair_el1,
-    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,
-    0, 0, sysctl_sysreg_mair_el1, "Q",
-    "MAIR_EL1 register on the current CPU");
+// CPU system registers
+// ARM64: AArch64 Vector Base Address Register
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(VBAR_EL1);
+// ARM64: AArch64 Memory Attribute Indirection Register
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(MAIR_EL1);
+// ARM64: AArch64 Translation table base register 1
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(TTBR1_EL1);
+// ARM64: AArch64 System Control Register
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(SCTLR_EL1);
+// ARM64: AArch64 Translation Control Register
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(TCR_EL1);
+// ARM64: AArch64 Memory Model Feature Register 0
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(ID_AA64MMFR0_EL1);
+// ARM64: AArch64 Instruction Set Attribute Register 1
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(ID_AA64ISAR1_EL1);
 
-static int
-sysctl_sysreg_ttbr1_el1 SYSCTL_HANDLER_ARGS
-{
-#pragma unused(arg1, arg2, oidp)
-	uint64_t return_value = __builtin_arm_rsr64("TTBR1_EL1");
-	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
-}
+#endif /* DEVELOPMENT || DEBUG */
 
-/*
- * machdep.cpu.sysreg_ttbr1_el1
- *
- * ARM64: Translation table base register 1.
- * Read from the current CPU's system registers.
- */
-SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_ttbr1_el1,
-    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,
-    0, 0, sysctl_sysreg_ttbr1_el1, "Q",
-    "TTBR1_EL1 register on the current CPU");
-
-static int
-sysctl_sysreg_sctlr_el1 SYSCTL_HANDLER_ARGS
-{
-#pragma unused(arg1, arg2, oidp)
-	uint64_t return_value = __builtin_arm_rsr64("SCTLR_EL1");
-	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
-}
-
-/*
- * machdep.cpu.sysreg_sctlr_el1
- *
- * ARM64: System Control Register.
- * Read from the current CPU's system registers.
- */
-SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_sctlr_el1,
-    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,
-    0, 0, sysctl_sysreg_sctlr_el1, "Q",
-    "SCTLR_EL1 register on the current CPU");
-
-static int
-sysctl_sysreg_tcr_el1 SYSCTL_HANDLER_ARGS
-{
-#pragma unused(arg1, arg2, oidp)
-	uint64_t return_value = __builtin_arm_rsr64("TCR_EL1");
-	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
-}
-
-/*
- * machdep.cpu.sysreg_tcr_el1
- *
- * ARM64: Translation Control Register.
- * Read from the current CPU's system registers.
- */
-SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_tcr_el1,
-    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,
-    0, 0, sysctl_sysreg_tcr_el1, "Q",
-    "TCR_EL1 register on the current CPU");
-
-static int
-sysctl_sysreg_id_aa64mmfr0_el1 SYSCTL_HANDLER_ARGS
-{
-#pragma unused(arg1, arg2, oidp)
-	uint64_t return_value = __builtin_arm_rsr64("ID_AA64MMFR0_EL1");
-	return SYSCTL_OUT(req, &return_value, sizeof(return_value));
-}
-
-/*
- * machdep.cpu.sysreg_id_aa64mmfr0_el1
- *
- * ARM64: AArch64 Memory Model Feature Register 0.
- * Read from the current CPU's system registers.
- */
-SYSCTL_PROC(_machdep_cpu, OID_AUTO, sysreg_id_aa64mmfr0_el1,
-    CTLFLAG_RD | CTLTYPE_QUAD | CTLFLAG_LOCKED,
-    0, 0, sysctl_sysreg_id_aa64mmfr0_el1, "Q",
-    "ID_AA64MMFR0_EL1 register on the current CPU");
-
-#endif

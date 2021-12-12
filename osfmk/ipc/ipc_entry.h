@@ -100,11 +100,16 @@
 
 #define IPC_ENTRY_DIST_BITS   12
 #define IPC_ENTRY_DIST_MAX    ((1 << IPC_ENTRY_DIST_BITS) - 1)
+#ifdef __LP64__
+#define IPC_ENTRY_INDEX_BITS  32
+#define IPC_ENTRY_INDEX_MAX   (UINT32_MAX)
+#else
 #define IPC_ENTRY_INDEX_BITS  20
 #define IPC_ENTRY_INDEX_MAX   ((1 << IPC_ENTRY_INDEX_BITS) - 1)
+#endif
 
 struct ipc_entry {
-	struct ipc_object  *ie_object;
+	struct ipc_object  *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_object") ie_object;
 	ipc_entry_bits_t    ie_bits;
 	uint32_t            ie_dist  : IPC_ENTRY_DIST_BITS;
 	mach_port_index_t   ie_index : IPC_ENTRY_INDEX_BITS;
@@ -226,12 +231,6 @@ extern kern_return_t ipc_entries_hold(
 
 /* claim and initialize a held entry in a locked space */
 extern kern_return_t ipc_entry_claim(
-	ipc_space_t             space,
-	mach_port_name_t        *namep,
-	ipc_entry_t             *entryp);
-
-/* Allocate an entry in a space */
-extern kern_return_t ipc_entry_get(
 	ipc_space_t             space,
 	mach_port_name_t        *namep,
 	ipc_entry_t             *entryp);

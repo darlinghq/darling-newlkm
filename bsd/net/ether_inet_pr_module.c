@@ -246,7 +246,7 @@ ether_inet_pre_output(ifnet_t ifp, protocol_family_t protocol_family,
 
 	switch (dst_netaddr->sa_family) {
 	case AF_INET: {
-		struct sockaddr_dl ll_dest;
+		struct sockaddr_dl ll_dest = {};
 
 		result = arp_lookup_ip(ifp,
 		    (const struct sockaddr_in *)(uintptr_t)(size_t)dst_netaddr,
@@ -453,10 +453,6 @@ ether_inet_arp(ifnet_t ifp, u_short arpop, const struct sockaddr_dl *sender_hw,
 
 	eh = mbuf_data(m);
 	eh->ether_type = htons(ETHERTYPE_ARP);
-
-#if CONFIG_MACF_NET
-	mac_mbuf_label_associate_linklayer(ifp, m);
-#endif
 
 	/* Fill out the arp header */
 	ea->arp_pro = htons(ETHERTYPE_IP);

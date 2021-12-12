@@ -57,11 +57,13 @@
 #include <machine/asm.h>
 #include <arm/proc_reg.h>
 #include <pexpert/arm/board_config.h>
+#include <mach/arm/traps.h>
 #include <mach/exception_types.h>
 #include <mach_kdp.h>
 #include <mach_assert.h>
 #include <config_dtrace.h>
 #include "assym.s"
+#include "dwarf_unwind.h"
 
 #define TRACE_SYSCALL 0
 
@@ -101,7 +103,6 @@ Lreset_low_vector:
 	adr		r4, EXT(ResetHandlerData)
 	ldr		r0, [r4, BOOT_ARGS]
 	ldr		r1, [r4, CPU_DATA_ENTRIES]
-#if	__ARM_SMP__
 #if	defined(ARMA7)
 	// physical cpu number is stored in MPIDR Affinity level 0
 	mrc		p15, 0, r6, c0, c0, 5				// Read MPIDR
@@ -109,9 +110,6 @@ Lreset_low_vector:
 #else
 #error missing Who Am I implementation
 #endif
-#else
-	mov	r6, #0
-#endif /* __ARM_SMP__ */
 	// physical cpu number matches cpu number
 //#if cdeSize != 16
 //#error cpu_data_entry is not 16bytes in size
@@ -529,7 +527,7 @@ swi_from_user:
 	/* Check for special mach_absolute_time trap value.
 	 * This is intended to be a super-lightweight call to ml_get_timebase(), which
 	 * is handrolled assembly and does not use the stack, thus not requiring us to setup a kernel stack. */
-	cmp		r12, #-3
+	cmp		r12, #MACH_ARM_TRAP_ABSTIME
 	beq		fleh_swi_trap_tb
 	stmia	sp, {r0-r12, sp, lr}^				// Save user context on PCB
 	mov		r7, #0								// Zero the frame pointer
@@ -564,14 +562,14 @@ swi_from_user:
 #if	!CONFIG_SKIP_PRECISE_USER_KERNEL_TIME
 	bl		EXT(timer_state_event_user_to_kernel)
 	mrc		p15, 0, r9, c13, c0, 4				// Read TPIDRPRW
-	add		r8, r9, ACT_PCBDATA					// Reload arm_saved_state pointer
+	add		r8, r9, ACT_PCBDATA				// Reload arm_saved_state pointer
 #endif
-	ldr		r10, [r9, ACT_TASK]					// Load the current task
+	ldr		r10, [r9, ACT_TASK]				// Load the current task
 
 	/* enable interrupts */
-	cpsie	i									// Enable IRQ
+	cpsie	i							// Enable IRQ
 
-	cmp		r11, #-4					// Special value for mach_continuous_time
+	cmp		r11, #MACH_ARM_TRAP_CONTTIME			// Special value for mach_continuous_time
 	beq		fleh_swi_trap_mct
 
 	cmp		r11, #0x80000000
@@ -887,6 +885,9 @@ IF_USERMODE_EXCEPTION prefabt
 	b		load_and_go_user
 
 ELSE_IF_KERNELMODE_EXCEPTION prefabt
+	
+UNWIND_PROLOGUE
+	
 	/*
 	 * We have a kernel stack already, and I will use it to save contexts:
 	 *     ------------------
@@ -941,6 +942,10 @@ ELSE_IF_KERNELMODE_EXCEPTION prefabt
 	mov		r0, sp
 	ALIGN_STACK r1, r2
 	mov		r1, T_PREFETCH_ABT					// Pass abort type
+
+
+UNWIND_DIRECTIVES	
+	
 	bl		EXT(sleh_abort) 					// Call second level handler
 	UNALIGN_STACK
 
@@ -961,6 +966,7 @@ ELSE_IF_KERNELMODE_EXCEPTION prefabt
 
 	b		load_and_go_sys
 
+UNWIND_EPILOGUE
 
 /*
  * First Level Exception Handler for Data Abort
@@ -1028,6 +1034,9 @@ IF_USERMODE_EXCEPTION dataabt
 	b		load_and_go_user
 
 ELSE_IF_KERNELMODE_EXCEPTION dataabt
+
+UNWIND_PROLOGUE	
+	
 	/*
 	 * We have a kernel stack already, and I will use it to save contexts:
 	 *     ------------------
@@ -1081,6 +1090,9 @@ ELSE_IF_KERNELMODE_EXCEPTION dataabt
 	mov		r0, sp								// Argument
 	ALIGN_STACK r1, r2
 	mov		r1, T_DATA_ABT						// Pass abort type
+
+UNWIND_DIRECTIVES
+	
 	bl		EXT(sleh_abort)						// Call second level handler
 	UNALIGN_STACK
 
@@ -1179,7 +1191,9 @@ lags1:
 	ldmia	sp, {r0-r12}						// Restore other registers
 
 	movs	pc, lr								// Return to sys (svc, irq, fiq)
-
+	
+UNWIND_EPILOGUE
+	
 /*
  * First Level Exception Handler for address exception
  * Not supported
@@ -1346,19 +1360,9 @@ fleh_irq_handler:
 	movs	r8, r8
 	COND_EXTERN_BLNE(interrupt_trace_exit)
 #endif
-	mrc		p15, 0, r9, c13, c0, 4				// Reload r9 from TPIDRPRW
-	bl		EXT(ml_get_timebase)				// get current timebase
-	LOAD_ADDR(r3, EntropyData)
-	ldr		r2, [r3, ENTROPY_SAMPLE_COUNT]
-	add		r1, r2, 1
-	str		r1, [r3, ENTROPY_SAMPLE_COUNT]
-	and		r2, r2, ENTROPY_BUFFER_INDEX_MASK
-	add		r1, r3, ENTROPY_BUFFER
-	ldr		r4, [r1, r2, lsl #2]
-	eor		r0, r0, r4, ror #9
-	str		r0, [r1, r2, lsl #2]				// Update gEntropie
-
+	bl		EXT(entropy_collect)
 return_from_irq:
+	mrc		p15, 0, r9, c13, c0, 4				// Reload r9 from TPIDRPRW
 	mov		r5, #0
 	ldr		r4, [r9, ACT_CPUDATAP]				// Get current cpu
 	str		r5, [r4, CPU_INT_STATE]				// Clear cpu_int_state
@@ -1552,8 +1556,6 @@ fleh_decirq_handler:
 	movs	r4, r4
 	COND_EXTERN_BLNE(interrupt_trace_exit)
 #endif
-
-	mrc		p15, 0, r9, c13, c0, 4				// Reload r9 from TPIDRPRW
 
 	b		return_from_irq
 
@@ -1800,8 +1802,6 @@ LEXT(fleh_dec)
 #endif
 	UNALIGN_STACK
 
-	mrc		p15, 0, r9, c13, c0, 4				// Reload r9 from TPIDRPRW
-
 	b       return_from_irq
 
 /*
@@ -1870,21 +1870,25 @@ return_to_user_now:
 /*
  * Assert that the preemption level is zero prior to the return to user space
  */
-	ldr		r1, [r9, ACT_PREEMPT_CNT]           		// Load preemption count
-	movs		r1, r1						// Test
-	beq		0f						// Continue if zero, or...
-	adr		r0, L_lagu_panic_str				// Load the panic string...
-	blx		EXT(panic)					// Finally, panic
-0:
-	ldr		r2, [r9, TH_RWLOCK_CNT]           		// Load RW lock count
-	movs		r2, r2						// Test
-	beq		0f						// Continue if zero, or...
-	adr		r0, L_lagu_rwlock_cnt_panic_str			// Load the panic string...
-	mov		r1, r9						// Thread argument for panic string
-	blx		EXT(panic)					// Finally, panic
+	ldr		r1, [r9, ACT_PREEMPT_CNT]			// Load preemption count
+	cmp		r1, #0						// Test
+	bne		L_lagu_preempt_panic				// Panic if not zero
+
+/*
+ * Assert that the preemption level is zero prior to the return to user space
+ */
+	ldr		r2, [r9, TH_RWLOCK_CNT]				// Load RW lock count
+	cmp		r2, #0						// Test
+	bne		L_lagu_rwlock_cnt_panic				// Panic if not zero
 #endif
 
-0:
+/*
+ * Assert that we aren't leaking KHEAP_TEMP allocations prior to the return to user space
+ */
+	ldr		r1, [r9, TH_TMP_ALLOC_CNT]			// Load temp alloc count
+	cmp		r1, #0						// Test
+	bne		L_lagu_temp_alloc_cnt_panic			// Panic if not zero
+
 #if	!CONFIG_SKIP_PRECISE_USER_KERNEL_TIME
 	bl		EXT(timer_state_event_kernel_to_user)
 	mrc		p15, 0, r9, c13, c0, 4				// Read TPIDRPRW
@@ -1929,8 +1933,34 @@ return_to_user_now:
 	nop											// Hardware problem
 	movs	pc, lr								// Return to user
 
+/*
+ * r1: tmp alloc count
+ * r9: current_thread()
+ */
+L_lagu_temp_alloc_cnt_panic:
+	mov		r0, r9						// Thread argument
+	blx		EXT(kheap_temp_leak_panic)			// Finally, panic
+
+#if MACH_ASSERT
+/*
+ * r1: current preemption count
+ * r9: current_thread()
+ */
+L_lagu_preempt_panic:
+	adr		r0, L_lagu_preempt_panic_str			// Load the panic string...
+	blx		EXT(panic)					// Finally, panic
+
+/*
+ * r2: rwlock count
+ * r9: current_thread()
+ */
+L_lagu_rwlock_cnt_panic:
+	adr		r0, L_lagu_rwlock_cnt_panic_str			// Load the panic string...
+	mov		r1, r9						// Thread argument for panic string
+	blx		EXT(panic)					// Finally, panic
+
 	.align  2
-L_lagu_panic_str:
+L_lagu_preempt_panic_str:
 	.asciz  "load_and_go_user: preemption_level %d"
 	.align  2
 
@@ -1938,11 +1968,12 @@ L_lagu_panic_str:
 L_lagu_rwlock_cnt_panic_str:
 	.asciz  "load_and_go_user: RW lock count not 0 on thread %p (%u)"
 	.align  2
+#endif /* MACH_ASSERT */
 
-        .align  2
+	.align  2
 L_evimpanic_str:
-        .ascii  "Exception Vector: Illegal Mode: 0x%08X\n\000"
-        .align  2
+	.ascii  "Exception Vector: Illegal Mode: 0x%08X\n\000"
+	.align  2
 
 	.text
 	.align 2

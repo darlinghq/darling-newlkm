@@ -85,11 +85,9 @@
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
 
-#if INET6
 #include <netinet6/nd6.h>
 #include <netinet6/in6_ifattach.h>
 #include <netinet6/ip6_var.h>
-#endif
 
 /* #include "vlan.h" */
 #if NVLAN > 0
@@ -163,7 +161,7 @@ ether_inet6_pre_output(ifnet_t ifp, protocol_family_t protocol_family,
 {
 #pragma unused(protocol_family)
 	errno_t result;
-	struct sockaddr_dl sdl;
+	struct sockaddr_dl sdl = {};
 	struct mbuf *m = *m0;
 
 	/*

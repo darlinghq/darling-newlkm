@@ -223,17 +223,20 @@ enum generic_snapshot_flags {
 
 #define VM_PRESSURE_TIME_WINDOW 5 /* seconds */
 
-enum {
+__options_decl(stackshot_flags_t, uint64_t, {
 	STACKSHOT_GET_DQ                           = 0x01,
 	STACKSHOT_SAVE_LOADINFO                    = 0x02,
 	STACKSHOT_GET_GLOBAL_MEM_STATS             = 0x04,
 	STACKSHOT_SAVE_KEXT_LOADINFO               = 0x08,
-	STACKSHOT_GET_MICROSTACKSHOT               = 0x10,
-	STACKSHOT_GLOBAL_MICROSTACKSHOT_ENABLE     = 0x20,
-	STACKSHOT_GLOBAL_MICROSTACKSHOT_DISABLE    = 0x40,
-	STACKSHOT_SET_MICROSTACKSHOT_MARK          = 0x80,
+	/*
+	 * 0x10, 0x20, 0x40 and 0x80 are reserved.
+	 *
+	 * See microstackshot_flags_t whose members used to be part of this
+	 * declaration.
+	 */
 	STACKSHOT_ACTIVE_KERNEL_THREADS_ONLY       = 0x100,
 	STACKSHOT_GET_BOOT_PROFILE                 = 0x200,
+	STACKSHOT_DO_COMPRESS                      = 0x400,
 	STACKSHOT_SAVE_IMP_DONATION_PIDS           = 0x2000,
 	STACKSHOT_SAVE_IN_KERNEL_BUFFER            = 0x4000,
 	STACKSHOT_RETRIEVE_EXISTING_BUFFER         = 0x8000,
@@ -257,12 +260,22 @@ enum {
 	STACKSHOT_INSTRS_CYCLES                    = 0x8000000,
 	STACKSHOT_ASID                             = 0x10000000,
 	STACKSHOT_PAGE_TABLES                      = 0x20000000,
-};
+	STACKSHOT_DISABLE_LATENCY_INFO             = 0x40000000,
+});
+
+__options_decl(microstackshot_flags_t, uint32_t, {
+	STACKSHOT_GET_MICROSTACKSHOT               = 0x10,
+	STACKSHOT_GLOBAL_MICROSTACKSHOT_ENABLE     = 0x20,
+	STACKSHOT_GLOBAL_MICROSTACKSHOT_DISABLE    = 0x40,
+	STACKSHOT_SET_MICROSTACKSHOT_MARK          = 0x80,
+});
 
 #define STACKSHOT_THREAD_SNAPSHOT_MAGIC     0xfeedface
 #define STACKSHOT_TASK_SNAPSHOT_MAGIC       0xdecafbad
 #define STACKSHOT_MEM_AND_IO_SNAPSHOT_MAGIC 0xbfcabcde
 #define STACKSHOT_MICRO_SNAPSHOT_MAGIC      0x31c54011
+
+#define STACKSHOT_PAGETABLES_MASK_ALL           ~0
 
 #define KF_INITIALIZED (0x1)
 #define KF_SERIAL_OVRD (0x2)
@@ -273,6 +286,7 @@ enum {
 #define KF_INTERRUPT_MASKED_DEBUG_OVRD (0x40)
 #define KF_TRAPTRACE_OVRD (0x80)
 #define KF_IOTRACE_OVRD (0x100)
+#define KF_INTERRUPT_MASKED_DEBUG_STACKSHOT_OVRD (0x200)
 
 boolean_t kern_feature_override(uint32_t fmask);
 
@@ -320,6 +334,8 @@ struct embedded_panic_header {
 #define EMBEDDED_PANIC_HEADER_FLAG_BUTTON_RESET_PANIC            0x80
 #define EMBEDDED_PANIC_HEADER_FLAG_COPROC_INITIATED_PANIC        0x100
 #define EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_FAILED               0x200
+#define EMBEDDED_PANIC_HEADER_FLAG_COMPRESS_FAILED               0x400
+#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_DATA_COMPRESSED     0x800
 
 #define EMBEDDED_PANIC_HEADER_CURRENT_VERSION 2
 #define EMBEDDED_PANIC_MAGIC 0x46554E4B /* FUNK */
@@ -353,6 +369,7 @@ struct macos_panic_header {
 #define MACOS_PANIC_HEADER_FLAG_COREDUMP_COMPLETE             0x100
 #define MACOS_PANIC_HEADER_FLAG_COREDUMP_FAILED               0x200
 #define MACOS_PANIC_HEADER_FLAG_STACKSHOT_KERNEL_ONLY         0x400
+#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_COMPRESS     0x800
 
 /*
  * Any change to the below structure should mirror the structure defined in MacEFIFirmware
@@ -390,13 +407,8 @@ struct efi_aurr_extended_panic_log {
 
 __BEGIN_DECLS
 
-#ifdef __DARLING__
-__printflike(1,2)
-extern void duct_panic(const char* string, ...);
-#else
 __abortlike __printflike(1, 2)
 extern void panic(const char *string, ...);
-#endif
 
 __END_DECLS
 
@@ -474,7 +486,7 @@ enum {
 	                                        * dump.
 	                                        */
 #define DB_NMI_BTN_ENA          0x8000  /* Enable button to directly trigger NMI */
-#define DB_PRT_KDEBUG           0x10000 /* kprintf KDEBUG traces */
+/* 0x10000 was DB_PRT_KDEBUG (kprintf kdebug events), feature removed */
 #define DB_DISABLE_LOCAL_CORE   0x20000 /* ignore local kernel core dump support */
 #define DB_DISABLE_GZIP_CORE    0x40000 /* don't gzip kernel core dumps */
 #define DB_DISABLE_CROSS_PANIC  0x80000 /* x86 only - don't trigger cross panics. Only
@@ -512,21 +524,7 @@ __BEGIN_DECLS
 #define LINE_NUMBER(x) __STRINGIFY(x)
 #define PANIC_LOCATION __FILE__ ":" LINE_NUMBER(__LINE__)
 
-// we only have to redefine these for Darling so that they use `duct_panic` instead of `panic`
-#ifdef __DARLING__
-#if CONFIG_EMBEDDED
-#define panic(ex, ...)  ({ \
-	        __asm__("" ::: "memory"); \
-	        (duct_panic)(# ex, ## __VA_ARGS__); \
-	})
-#else
-#define panic(ex, ...)  ({ \
-	        __asm__("" ::: "memory"); \
-	        (duct_panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__); \
-	})
-#endif
-#else
-#if CONFIG_EMBEDDED
+#if defined(__arm__) || defined(__arm64__)
 #define panic(ex, ...)  ({ \
 	        __asm__("" ::: "memory"); \
 	        (panic)(# ex, ## __VA_ARGS__); \
@@ -537,7 +535,6 @@ __BEGIN_DECLS
 	        (panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__); \
 	})
 #endif
-#endif
 
 __abortlike __printflike(4, 5)
 void panic_with_options(unsigned int reason, void *ctx,
@@ -545,7 +542,7 @@ void panic_with_options(unsigned int reason, void *ctx,
 void Debugger(const char * message);
 void populate_model_name(char *);
 
-#if !defined (__x86_64__)
+#if defined(__arm__) || defined(__arm64__)
 /* Note that producer_name and buf should never be de-allocated as we reference these during panic */
 void register_additional_panic_data_buffer(const char *producer_name, void *buf, int len);
 #endif
@@ -592,6 +589,7 @@ void panic_stackshot_reset_state(void);
  * @param size    the size of the buffer
  * @param flags   flags to be passed to the stackshot
  * @param delta_since_timestamp start time for delta period
+ * @param pagetable_mask if pagetable dumping is set in flags, the mask of page table levels to dump
  * @bytes_traced  a pointer to be filled with the length of the stackshot
  *
  */
@@ -599,8 +597,8 @@ void panic_stackshot_reset_state(void);
 extern "C" {
 #endif
 kern_return_t
-stack_snapshot_from_kernel(int pid, void *buf, uint32_t size, uint32_t flags,
-    uint64_t delta_since_timestamp, unsigned *bytes_traced);
+stack_snapshot_from_kernel(int pid, void *buf, uint32_t size, uint64_t flags,
+    uint64_t delta_since_timestamp, uint32_t pagetable_mask, unsigned *bytes_traced);
 
 /*
  * Returns whether on device corefiles are enabled based on the build
@@ -618,11 +616,11 @@ boolean_t panic_stackshot_to_disk_enabled(void);
 }
 #endif
 
-#if !CONFIG_EMBEDDED
+#if defined(__x86_64__)
 extern char debug_buf[];
 extern boolean_t coprocessor_paniclog_flush;
 extern boolean_t extended_debug_log_enabled;
-#endif /* !CONFIG_EMBEDDED */
+#endif /* defined(__x86_64__) */
 
 extern char     *debug_buf_base;
 
@@ -637,13 +635,18 @@ extern size_t   panic_disk_error_description_size;
 
 extern unsigned char    *kernel_uuid;
 extern unsigned int     debug_boot_arg;
-#if DEVELOPMENT || DEBUG
-extern boolean_t        debug_boot_arg_inited;
-#endif
 
 extern boolean_t kernelcache_uuid_valid;
 extern uuid_t kernelcache_uuid;
 extern uuid_string_t kernelcache_uuid_string;
+
+extern boolean_t pageablekc_uuid_valid;
+extern uuid_t pageablekc_uuid;
+extern uuid_string_t pageablekc_uuid_string;
+
+extern boolean_t auxkc_uuid_valid;
+extern uuid_t auxkc_uuid;
+extern uuid_string_t auxkc_uuid_string;
 
 #ifdef __cplusplus
 extern "C" {
@@ -664,7 +667,6 @@ extern unsigned int     active_debugger;
 extern unsigned int     kernel_debugger_entry_count;
 
 extern unsigned int     panicDebugging;
-extern unsigned int     kdebug_serial;
 
 extern const char       *debugger_panic_str;
 
@@ -673,8 +675,7 @@ extern unsigned int debug_buf_size;
 
 extern void debug_log_init(void);
 extern void debug_putc(char);
-
-extern void panic_init(void);
+extern boolean_t debug_is_current_cpu_in_panic_state(void);
 
 /*
  * Initialize the physical carveout requested with the `phys_carveout_mb`
@@ -686,7 +687,7 @@ extern void phys_carveout_init(void);
 extern uintptr_t phys_carveout_pa;
 extern size_t phys_carveout_size;
 
-
+extern boolean_t kernel_debugging_allowed(void);
 
 #if defined (__x86_64__)
 extern void extended_debug_log_init(void);
@@ -704,12 +705,12 @@ extern size_t panic_stackshot_len;
 
 void    SavePanicInfo(const char *message, void *panic_data, uint64_t panic_options);
 void    paniclog_flush(void);
-void    panic_display_system_configuration(boolean_t launchd_exit);
 void    panic_display_zprint(void);
 void    panic_display_kernel_aslr(void);
 void    panic_display_hibb(void);
 void    panic_display_model_name(void);
 void    panic_display_kernel_uuid(void);
+void    panic_display_process_name(void);
 #if CONFIG_ZLEAKS
 void    panic_display_ztrace(void);
 #endif /* CONFIG_ZLEAKS */
@@ -771,8 +772,7 @@ zone_leaks_scan(uintptr_t * instances, uint32_t count, uint32_t zoneSize, uint32
 }
 #endif
 
-extern boolean_t
-kdp_is_in_zone(void *addr, const char *zone_name);
+const char *sysctl_debug_get_preoslog(size_t *size);
 
 #endif  /* DEBUG || DEVELOPMENT */
 #endif  /* XNU_KERNEL_PRIVATE */

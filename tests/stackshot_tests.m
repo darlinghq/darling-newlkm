@@ -1,7 +1,9 @@
 #include <darwintest.h>
 #include <darwintest_utils.h>
+#include <darwintest_multiprocess.h>
 #include <kern/debug.h>
 #include <kern/kern_cdata.h>
+#include <kern/block_hint.h>
 #include <kdd.h>
 #include <libproc.h>
 #include <mach-o/dyld.h>
@@ -9,6 +11,11 @@
 #include <mach-o/dyld_priv.h>
 #include <sys/syscall.h>
 #include <sys/stackshot.h>
+#include <uuid/uuid.h>
+#include <servers/bootstrap.h>
+#include <pthread/workqueue_private.h>
+#include <dispatch/private.h>
+#import <zlib.h>
 
 T_GLOBAL_META(
 		T_META_NAMESPACE("xnu.stackshot"),
@@ -18,13 +25,17 @@ T_GLOBAL_META(
 
 static const char *current_process_name(void);
 static void verify_stackshot_sharedcache_layout(struct dyld_uuid_info_64 *uuids, uint32_t uuid_count);
-static void parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int child_pid);
+static void parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, NSDictionary *extra);
 static void parse_thread_group_stackshot(void **sbuf, size_t sslen);
 static uint64_t stackshot_timestamp(void *ssbuf, size_t sslen);
 static void initialize_thread(void);
 
+static uint64_t global_flags = 0;
+
 #define DEFAULT_STACKSHOT_BUFFER_SIZE (1024 * 1024)
 #define MAX_STACKSHOT_BUFFER_SIZE     (6 * 1024 * 1024)
+
+#define SRP_SERVICE_NAME "com.apple.xnu.test.stackshot.special_reply_port"
 
 /* bit flags for parse_stackshot */
 #define PARSE_STACKSHOT_DELTA                0x01
@@ -32,6 +43,24 @@ static void initialize_thread(void);
 #define PARSE_STACKSHOT_SHAREDCACHE_LAYOUT   0x04
 #define PARSE_STACKSHOT_DISPATCH_QUEUE_LABEL 0x08
 #define PARSE_STACKSHOT_TURNSTILEINFO        0x10
+#define PARSE_STACKSHOT_POSTEXEC             0x20
+#define PARSE_STACKSHOT_WAITINFO_CSEG        0x40
+#define PARSE_STACKSHOT_WAITINFO_SRP         0x80
+#define PARSE_STACKSHOT_TRANSLATED           0x100
+#define PARSE_STACKSHOT_SHAREDCACHE_FLAGS    0x200
+#define PARSE_STACKSHOT_EXEC_INPROGRESS      0x400
+
+/* keys for 'extra' dictionary for parse_stackshot */
+static const NSString* zombie_child_pid_key = @"zombie_child_pid"; // -> @(pid), required for PARSE_STACKSHOT_ZOMBIE
+static const NSString* postexec_child_unique_pid_key = @"postexec_child_unique_pid";  // -> @(unique_pid), required for PARSE_STACKSHOT_POSTEXEC
+static const NSString* cseg_expected_threadid_key = @"cseg_expected_threadid"; // -> @(tid), required for PARSE_STACKSHOT_WAITINFO_CSEG
+static const NSString* srp_expected_threadid_key = @"srp_expected_threadid"; // -> @(tid), this or ..._pid required for PARSE_STACKSHOT_WAITINFO_SRP
+static const NSString* srp_expected_pid_key = @"srp_expected_pid"; // -> @(pid), this or ..._threadid required for PARSE_STACKSHOT_WAITINFO_SRP
+static const NSString* translated_child_pid_key = @"translated_child_pid"; // -> @(pid), required for PARSE_STACKSHOT_TRANSLATED
+static const NSString* sharedcache_child_pid_key = @"sharedcache_child_pid"; // @(pid), required for PARSE_STACKSHOT_SHAREDCACHE_FLAGS
+static const NSString* sharedcache_child_sameaddr_key = @"sharedcache_child_sameaddr"; // @(0 or 1), required for PARSE_STACKSHOT_SHAREDCACHE_FLAGS
+static const NSString* exec_inprogress_pid_key = @"exec_inprogress_pid";
+static const NSString* exec_inprogress_found_key = @"exec_inprogress_found";  // callback when inprogress is found
 
 #define TEST_STACKSHOT_QUEUE_LABEL        "houston.we.had.a.problem"
 #define TEST_STACKSHOT_QUEUE_LABEL_LENGTH sizeof(TEST_STACKSHOT_QUEUE_LABEL)
@@ -48,7 +77,7 @@ T_DECL(microstackshots, "test the microstackshot syscall")
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 		int len = syscall(SYS_microstackshot, buf, size,
-				STACKSHOT_GET_MICROSTACKSHOT);
+				(uint32_t) STACKSHOT_GET_MICROSTACKSHOT);
 #pragma clang diagnostic pop
 		if (len == ENOSYS) {
 			T_SKIP("microstackshot syscall failed, likely not compiled with CONFIG_TELEMETRY");
@@ -75,7 +104,7 @@ T_DECL(microstackshots, "test the microstackshot syscall")
 
 struct scenario {
 	const char *name;
-	uint32_t flags;
+	uint64_t flags;
 	bool quiet;
 	bool should_fail;
 	bool maybe_unsupported;
@@ -94,17 +123,18 @@ quiet(struct scenario *scenario)
 }
 
 static void
-take_stackshot(struct scenario *scenario, void (^cb)(void *buf, size_t size))
+take_stackshot(struct scenario *scenario, bool compress_ok, void (^cb)(void *buf, size_t size))
 {
+start:
 	initialize_thread();
 
 	void *config = stackshot_config_create();
 	quiet(scenario);
 	T_ASSERT_NOTNULL(config, "created stackshot config");
 
-	int ret = stackshot_config_set_flags(config, scenario->flags);
+	int ret = stackshot_config_set_flags(config, scenario->flags | global_flags);
 	quiet(scenario);
-	T_ASSERT_POSIX_ZERO(ret, "set flags %#x on stackshot config", scenario->flags);
+	T_ASSERT_POSIX_ZERO(ret, "set flags %#llx on stackshot config", scenario->flags);
 
 	if (scenario->size_hint > 0) {
 		ret = stackshot_config_set_size_hint(config, scenario->size_hint);
@@ -186,9 +216,58 @@ retry: ;
 		fclose(f);
 	}
 	cb(buf, size);
+	if (compress_ok) {
+		if (global_flags == 0) {
+			T_LOG("Restarting test with compression");
+			global_flags |= STACKSHOT_DO_COMPRESS;
+			goto start;
+		} else {
+			global_flags = 0;
+		}
+	}
 
 	ret = stackshot_config_dealloc(config);
 	T_QUIET; T_EXPECT_POSIX_ZERO(ret, "deallocated stackshot config");
+}
+
+T_DECL(simple_compressed, "take a simple compressed stackshot")
+{
+	struct scenario scenario = {
+		.name = "kcdata_compressed",
+		.flags = (STACKSHOT_DO_COMPRESS | STACKSHOT_SAVE_LOADINFO | STACKSHOT_THREAD_WAITINFO | STACKSHOT_GET_GLOBAL_MEM_STATS |
+				STACKSHOT_SAVE_IMP_DONATION_PIDS | STACKSHOT_KCDATA_FORMAT),
+	};
+
+	T_LOG("taking compressed kcdata stackshot");
+	take_stackshot(&scenario, true, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(0, ssbuf, sslen, nil);
+	});
+}
+
+T_DECL(panic_compressed, "take a compressed stackshot with the same flags as a panic stackshot")
+{
+	uint64_t stackshot_flags = (STACKSHOT_SAVE_KEXT_LOADINFO |
+			STACKSHOT_SAVE_LOADINFO |
+			STACKSHOT_KCDATA_FORMAT |
+			STACKSHOT_ENABLE_BT_FAULTING |
+			STACKSHOT_ENABLE_UUID_FAULTING |
+			STACKSHOT_DO_COMPRESS |
+			STACKSHOT_NO_IO_STATS |
+			STACKSHOT_THREAD_WAITINFO |
+#if TARGET_OS_MAC
+			STACKSHOT_COLLECT_SHAREDCACHE_LAYOUT |
+#endif
+			STACKSHOT_DISABLE_LATENCY_INFO);
+
+	struct scenario scenario = {
+		.name = "kcdata_panic_compressed",
+		.flags = stackshot_flags,
+	};
+
+	T_LOG("taking compressed kcdata stackshot with panic flags");
+	take_stackshot(&scenario, true, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(0, ssbuf, sslen, nil);
+	});
 }
 
 T_DECL(kcdata, "test that kcdata stackshots can be taken and parsed")
@@ -200,8 +279,8 @@ T_DECL(kcdata, "test that kcdata stackshots can be taken and parsed")
 	};
 
 	T_LOG("taking kcdata stackshot");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
-		parse_stackshot(0, ssbuf, sslen, -1);
+	take_stackshot(&scenario, true, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(0, ssbuf, sslen, nil);
 	});
 }
 
@@ -215,8 +294,8 @@ T_DECL(kcdata_faulting, "test that kcdata stackshots while faulting can be taken
 	};
 
 	T_LOG("taking faulting stackshot");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
-		parse_stackshot(0, ssbuf, sslen, -1);
+	take_stackshot(&scenario, true, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(0, ssbuf, sslen, nil);
 	});
 }
 
@@ -228,7 +307,7 @@ T_DECL(bad_flags, "test a poorly-formed stackshot syscall")
 	};
 
 	T_LOG("attempting to take stackshot with kernel-only flag");
-	take_stackshot(&scenario, ^(__unused void *ssbuf, __unused size_t sslen) {
+	take_stackshot(&scenario, true, ^(__unused void *ssbuf, __unused size_t sslen) {
 		T_ASSERT_FAIL("stackshot data callback called");
 	});
 }
@@ -242,12 +321,12 @@ T_DECL(delta, "test delta stackshots")
 	};
 
 	T_LOG("taking full stackshot");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
 		uint64_t stackshot_time = stackshot_timestamp(ssbuf, sslen);
 
 		T_LOG("taking delta stackshot since time %" PRIu64, stackshot_time);
 
-		parse_stackshot(0, ssbuf, sslen, -1);
+		parse_stackshot(0, ssbuf, sslen, nil);
 
 		struct scenario delta_scenario = {
 			.flags = (STACKSHOT_SAVE_LOADINFO | STACKSHOT_GET_GLOBAL_MEM_STATS
@@ -256,8 +335,8 @@ T_DECL(delta, "test delta stackshots")
 			.since_timestamp = stackshot_time
 		};
 
-		take_stackshot(&delta_scenario, ^(void *dssbuf, size_t dsslen) {
-			parse_stackshot(PARSE_STACKSHOT_DELTA, dssbuf, dsslen, -1);
+		take_stackshot(&delta_scenario, false, ^(void *dssbuf, size_t dsslen) {
+			parse_stackshot(PARSE_STACKSHOT_DELTA, dssbuf, dsslen, nil);
 		});
 	});
 }
@@ -282,8 +361,8 @@ T_DECL(shared_cache_layout, "test stackshot inclusion of shared cache layout")
 	}
 
 	T_LOG("taking stackshot with STACKSHOT_COLLECT_SHAREDCACHE_LAYOUT set");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
-		parse_stackshot(PARSE_STACKSHOT_SHAREDCACHE_LAYOUT, ssbuf, sslen, -1);
+	take_stackshot(&scenario, true, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(PARSE_STACKSHOT_SHAREDCACHE_LAYOUT, ssbuf, sslen, nil);
 	});
 }
 
@@ -300,19 +379,18 @@ T_DECL(stress, "test that taking stackshots for 60 seconds doesn't crash the sys
 				STACKSHOT_SAVE_LOADINFO |
 				STACKSHOT_SAVE_KEXT_LOADINFO |
 				STACKSHOT_GET_GLOBAL_MEM_STATS |
-				// STACKSHOT_GET_BOOT_PROFILE |
 				STACKSHOT_SAVE_IMP_DONATION_PIDS |
 				STACKSHOT_COLLECT_SHAREDCACHE_LAYOUT |
 				STACKSHOT_THREAD_GROUP |
 				STACKSHOT_SAVE_JETSAM_COALITIONS |
 				STACKSHOT_ASID |
-				// STACKSHOT_PAGE_TABLES |
 				0),
 	};
 
 	start_time = clock_gettime_nsec_np(CLOCK_MONOTONIC);
 	while (clock_gettime_nsec_np(CLOCK_MONOTONIC) - start_time < max_diff_time) {
-		take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+		take_stackshot(&scenario, false, ^(void * __unused ssbuf,
+				size_t __unused sslen) {
 			printf(".");
 			fflush(stdout);
 		});
@@ -357,11 +435,105 @@ T_DECL(dispatch_queue_label, "test that kcdata stackshots contain libdispatch qu
 	dispatch_semaphore_wait(child_ready_sem, DISPATCH_TIME_FOREVER);
 
 	T_LOG("taking kcdata stackshot with libdispatch queue labels");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
-		parse_stackshot(PARSE_STACKSHOT_DISPATCH_QUEUE_LABEL, ssbuf, sslen, -1);
+	take_stackshot(&scenario, true, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(PARSE_STACKSHOT_DISPATCH_QUEUE_LABEL, ssbuf, sslen, nil);
 	});
 
 	dispatch_semaphore_signal(parent_done_sem);
+}
+
+#define CACHEADDR_ENV "STACKSHOT_TEST_DYLDADDR"
+T_HELPER_DECL(spawn_reslide_child, "child process to spawn with alternate slide")
+{
+	size_t shared_cache_len;
+	const void *addr, *prevaddr;
+	uintmax_t v;
+	char *endptr;
+
+	const char *cacheaddr_env = getenv(CACHEADDR_ENV);
+	T_QUIET; T_ASSERT_NOTNULL(cacheaddr_env, "getenv("CACHEADDR_ENV")");
+	errno = 0;
+	endptr = NULL;
+	v = strtoumax(cacheaddr_env, &endptr, 16);	/* read hex value */
+	T_WITH_ERRNO; T_QUIET; T_ASSERT_NE(v, 0l, "getenv(%s) = \"%s\" should be a non-zero hex number", CACHEADDR_ENV, cacheaddr_env);
+	T_QUIET; T_ASSERT_EQ(*endptr, 0, "getenv(%s) = \"%s\" endptr \"%s\" should be empty", CACHEADDR_ENV, cacheaddr_env, endptr);
+
+	prevaddr = (const void *)v;
+	addr = _dyld_get_shared_cache_range(&shared_cache_len);
+	T_QUIET; T_ASSERT_NOTNULL(addr, "shared cache address");
+
+	T_QUIET; T_ASSERT_POSIX_SUCCESS(kill(getppid(), (addr == prevaddr) ? SIGUSR2 : SIGUSR1), "signaled parent to take stackshot");
+	for (;;) {
+		(void) pause();		/* parent will kill -9 us */
+	}
+}
+
+T_DECL(shared_cache_flags, "tests stackshot's task_ss_flags for the shared cache")
+{
+	posix_spawnattr_t		attr;
+	char *env_addr;
+	char path[PATH_MAX];
+	__block bool child_same_addr = false;
+
+	uint32_t path_size = sizeof(path);
+	T_QUIET; T_ASSERT_POSIX_ZERO(_NSGetExecutablePath(path, &path_size), "_NSGetExecutablePath");
+	char *args[] = { path, "-n", "spawn_reslide_child", NULL };
+	pid_t pid;
+	size_t shared_cache_len;
+	const void *addr;
+
+	dispatch_source_t child_diffsig_src, child_samesig_src;
+	dispatch_semaphore_t child_ready_sem = dispatch_semaphore_create(0);
+	T_QUIET; T_ASSERT_NOTNULL(child_ready_sem, "shared_cache child semaphore");
+
+	dispatch_queue_t signal_processing_q = dispatch_queue_create("signal processing queue", NULL);
+	T_QUIET; T_ASSERT_NOTNULL(signal_processing_q, "signal processing queue");
+
+	signal(SIGUSR1, SIG_IGN);
+	signal(SIGUSR2, SIG_IGN);
+	child_samesig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, signal_processing_q);
+	T_QUIET; T_ASSERT_NOTNULL(child_samesig_src, "dispatch_source_create (child_samesig_src)");
+	child_diffsig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR2, 0, signal_processing_q);
+	T_QUIET; T_ASSERT_NOTNULL(child_diffsig_src, "dispatch_source_create (child_diffsig_src)");
+
+	/* child will signal us depending on if their addr is the same or different */
+	dispatch_source_set_event_handler(child_samesig_src, ^{ child_same_addr = false; dispatch_semaphore_signal(child_ready_sem); });
+	dispatch_source_set_event_handler(child_diffsig_src, ^{ child_same_addr = true; dispatch_semaphore_signal(child_ready_sem); });
+	dispatch_activate(child_samesig_src);
+	dispatch_activate(child_diffsig_src);
+
+	addr = _dyld_get_shared_cache_range(&shared_cache_len);
+	T_QUIET; T_ASSERT_NOTNULL(addr, "shared cache address");
+
+	T_QUIET; T_ASSERT_POSIX_SUCCESS(asprintf(&env_addr, "%p", addr), "asprintf of env_addr succeeded");
+	T_QUIET; T_ASSERT_POSIX_SUCCESS(setenv(CACHEADDR_ENV, env_addr, true), "setting "CACHEADDR_ENV" to %s", env_addr);
+
+	T_QUIET; T_ASSERT_POSIX_ZERO(posix_spawnattr_init(&attr), "posix_spawnattr_init");
+	T_QUIET; T_ASSERT_POSIX_ZERO(posix_spawnattr_setflags(&attr, _POSIX_SPAWN_RESLIDE), "posix_spawnattr_setflags");
+	int sp_ret = posix_spawn(&pid, path, NULL, &attr, args, environ);
+	T_ASSERT_POSIX_ZERO(sp_ret, "spawned process '%s' with PID %d", args[0], pid);
+
+	dispatch_semaphore_wait(child_ready_sem, DISPATCH_TIME_FOREVER);
+	T_LOG("received signal from child (%s), capturing stackshot", child_same_addr ? "same shared cache addr" : "different shared cache addr");
+
+	struct scenario scenario = {
+		.name = "shared_cache_flags",
+		.flags = (STACKSHOT_SAVE_LOADINFO | STACKSHOT_GET_GLOBAL_MEM_STATS
+				| STACKSHOT_COLLECT_SHAREDCACHE_LAYOUT
+				| STACKSHOT_SAVE_IMP_DONATION_PIDS | STACKSHOT_KCDATA_FORMAT),
+	};
+
+	take_stackshot(&scenario, false, ^( void *ssbuf, size_t sslen) {
+		int status;
+		/* First kill the child so we can reap it */
+		T_QUIET; T_ASSERT_POSIX_SUCCESS(kill(pid, SIGKILL), "killing spawned process");
+		T_QUIET; T_ASSERT_POSIX_SUCCESS(waitpid(pid, &status, 0), "waitpid on spawned child");
+		T_QUIET; T_ASSERT_EQ(!!WIFSIGNALED(status), 1, "waitpid status should be signalled");
+		T_QUIET; T_ASSERT_EQ(WTERMSIG(status), SIGKILL, "waitpid status should be SIGKILLed");
+
+		parse_stackshot(PARSE_STACKSHOT_SHAREDCACHE_FLAGS, ssbuf, sslen, 
+			@{sharedcache_child_pid_key: @(pid), sharedcache_child_sameaddr_key: @(child_same_addr ? 1 : 0)});
+	});
 }
 
 static void *stuck_sysctl_thread(void *arg) {
@@ -464,15 +636,152 @@ T_DECL(zombie, "tests a stackshot of a zombie task with a thread stuck in the ke
 				| STACKSHOT_SAVE_IMP_DONATION_PIDS | STACKSHOT_KCDATA_FORMAT),
 	};
 
-	take_stackshot(&scenario, ^( void *ssbuf, size_t sslen) {
+	take_stackshot(&scenario, false, ^( void *ssbuf, size_t sslen) {
 		/* First unwedge the child so we can reap it */
 		int val = 1, status;
 		T_ASSERT_POSIX_SUCCESS(sysctlbyname("kern.unwedge_thread", NULL, NULL, &val, sizeof(val)), "unwedge child");
 
 		T_QUIET; T_ASSERT_POSIX_SUCCESS(waitpid(pid, &status, 0), "waitpid on zombie child");
 
-		parse_stackshot(PARSE_STACKSHOT_ZOMBIE, ssbuf, sslen, pid);
+		parse_stackshot(PARSE_STACKSHOT_ZOMBIE, ssbuf, sslen, @{zombie_child_pid_key: @(pid)});
 	});
+}
+
+T_HELPER_DECL(exec_child_preexec, "child process pre-exec")
+{
+	dispatch_queue_t signal_processing_q = dispatch_queue_create("signal processing queue", NULL);
+	T_QUIET; T_ASSERT_NOTNULL(signal_processing_q, "signal processing queue");
+	
+	signal(SIGUSR1, SIG_IGN);
+	dispatch_source_t parent_sig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, signal_processing_q);
+	T_QUIET; T_ASSERT_NOTNULL(parent_sig_src, "dispatch_source_create (child_sig_src)");
+	dispatch_source_set_event_handler(parent_sig_src, ^{
+		
+		// Parent took a timestamp then signaled us: exec into the next process
+		
+		char path[PATH_MAX];
+		uint32_t path_size = sizeof(path);
+		T_QUIET; T_ASSERT_POSIX_ZERO(_NSGetExecutablePath(path, &path_size), "_NSGetExecutablePath");
+		char *args[] = { path, "-n", "exec_child_postexec", NULL };
+		
+		T_QUIET; T_ASSERT_POSIX_ZERO(execve(args[0], args, NULL), "execing into exec_child_postexec");
+	});
+	dispatch_activate(parent_sig_src);
+	
+	T_ASSERT_POSIX_SUCCESS(kill(getppid(), SIGUSR1), "signaled parent to take timestamp");
+	
+	sleep(100);
+	// Should never get here
+	T_FAIL("Received signal to exec from parent");
+}
+
+T_HELPER_DECL(exec_child_postexec, "child process post-exec to sample")
+{
+	T_ASSERT_POSIX_SUCCESS(kill(getppid(), SIGUSR1), "signaled parent to take stackshot");
+	sleep(100);
+	// Should never get here
+	T_FAIL("Killed by parent");
+}
+
+T_DECL(exec, "test getting full task snapshots for a task that execs")
+{
+	char path[PATH_MAX];
+	uint32_t path_size = sizeof(path);
+	T_QUIET; T_ASSERT_POSIX_ZERO(_NSGetExecutablePath(path, &path_size), "_NSGetExecutablePath");
+	char *args[] = { path, "-n", "exec_child_preexec", NULL };
+	
+	dispatch_source_t child_sig_src;
+	dispatch_semaphore_t child_ready_sem = dispatch_semaphore_create(0);
+	T_QUIET; T_ASSERT_NOTNULL(child_ready_sem, "exec child semaphore");
+	
+	dispatch_queue_t signal_processing_q = dispatch_queue_create("signal processing queue", NULL);
+	T_QUIET; T_ASSERT_NOTNULL(signal_processing_q, "signal processing queue");
+	
+	pid_t pid;
+	
+	T_LOG("spawning a child");
+	
+	signal(SIGUSR1, SIG_IGN);
+	child_sig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, signal_processing_q);
+	T_QUIET; T_ASSERT_NOTNULL(child_sig_src, "dispatch_source_create (child_sig_src)");
+	
+	dispatch_source_set_event_handler(child_sig_src, ^{ dispatch_semaphore_signal(child_ready_sem); });
+	dispatch_activate(child_sig_src);
+	
+	int sp_ret = posix_spawn(&pid, args[0], NULL, NULL, args, NULL);
+	T_QUIET; T_ASSERT_POSIX_ZERO(sp_ret, "spawned process '%s' with PID %d", args[0], pid);
+	
+	dispatch_semaphore_wait(child_ready_sem, DISPATCH_TIME_FOREVER);
+	
+	uint64_t start_time = mach_absolute_time();
+	
+	struct proc_uniqidentifierinfo proc_info_data = { };
+	int retval = proc_pidinfo(getpid(), PROC_PIDUNIQIDENTIFIERINFO, 0, &proc_info_data, sizeof(proc_info_data));
+	T_QUIET; T_EXPECT_POSIX_SUCCESS(retval, "proc_pidinfo PROC_PIDUNIQIDENTIFIERINFO");
+	T_QUIET; T_ASSERT_EQ_INT(retval, (int) sizeof(proc_info_data), "proc_pidinfo PROC_PIDUNIQIDENTIFIERINFO returned data");
+	uint64_t unique_pid = proc_info_data.p_uniqueid;
+	
+	T_LOG("received signal from pre-exec child, unique_pid is %llu, timestamp is %llu", unique_pid, start_time);
+	
+	T_ASSERT_POSIX_SUCCESS(kill(pid, SIGUSR1), "signaled pre-exec child to exec");
+	
+	dispatch_semaphore_wait(child_ready_sem, DISPATCH_TIME_FOREVER);
+	
+	T_LOG("received signal from post-exec child, capturing stackshot");
+	
+	struct scenario scenario = {
+		.name = "exec",
+		.flags = (STACKSHOT_SAVE_LOADINFO | STACKSHOT_GET_GLOBAL_MEM_STATS
+				  | STACKSHOT_SAVE_IMP_DONATION_PIDS | STACKSHOT_KCDATA_FORMAT
+				  | STACKSHOT_COLLECT_DELTA_SNAPSHOT),
+		.since_timestamp = start_time
+	};
+	
+	take_stackshot(&scenario, false, ^( void *ssbuf, size_t sslen) {
+		// Kill the child
+		int status;
+		T_ASSERT_POSIX_SUCCESS(kill(pid, SIGKILL), "kill post-exec child %d", pid);
+		T_ASSERT_POSIX_SUCCESS(waitpid(pid, &status, 0), "waitpid on post-exec child");
+		
+		parse_stackshot(PARSE_STACKSHOT_POSTEXEC | PARSE_STACKSHOT_DELTA, ssbuf, sslen, @{postexec_child_unique_pid_key: @(unique_pid)});
+	});
+}
+
+T_DECL(exec_inprogress, "test stackshots of processes in the middle of exec")
+{
+	pid_t pid;
+	/* a BASH quine which execs itself as long as the parent doesn't exit */
+        char *bash_prog = "[[ $PPID -ne 1 ]] && exec /bin/bash -c \"$0\" \"$0\"";
+	char *args[] = { "/bin/bash", "-c", bash_prog, bash_prog, NULL };
+
+	posix_spawnattr_t sattr;
+	T_ASSERT_POSIX_ZERO(posix_spawnattr_init(&sattr), "posix_spawnattr_init");
+	T_ASSERT_POSIX_ZERO(posix_spawn(&pid, args[0], NULL, &sattr, args, NULL), "spawn exec_inprogress_child");
+
+	struct scenario scenario = {
+		.name = "exec_inprogress",
+		.flags = (STACKSHOT_KCDATA_FORMAT),
+		.target_pid = pid,
+	};
+
+	int tries = 0;
+	int tries_limit = 30;
+	__block bool found = false;
+	__block uint64_t cid1 = 0, cid2 = 0;
+
+	for (tries = 0; !found && tries < tries_limit; tries++) {
+		take_stackshot(&scenario, false,
+		    ^( void *ssbuf, size_t sslen) {
+			parse_stackshot(PARSE_STACKSHOT_EXEC_INPROGRESS,
+			    ssbuf, sslen, @{
+				exec_inprogress_pid_key: @(pid),
+				exec_inprogress_found_key: ^(uint64_t id1, uint64_t id2) { found = true; cid1 = id1; cid2 = id2; }});
+		});
+	}
+	T_QUIET; T_ASSERT_POSIX_SUCCESS(kill(pid, SIGKILL), "killing exec loop");
+	T_ASSERT_TRUE(found, "able to find our execing process mid-exec in %d tries", tries);
+	T_ASSERT_NE(cid1, cid2, "container IDs for in-progress exec are unique");
+	T_PASS("found mid-exec process in %d tries", tries);
 }
 
 static uint32_t
@@ -510,8 +819,8 @@ T_DECL(turnstile_singlehop, "turnstile single hop test")
 	dispatch_queue_t dq1, dq2;
 	dispatch_semaphore_t sema_x;
 	dispatch_queue_attr_t dq1_attr, dq2_attr;
-	qos_class_t main_qos = 0;
-	int main_relpri = 0, main_relpri2 = 0, main_afterpri = 0;
+	__block qos_class_t main_qos = 0;
+	__block int main_relpri = 0, main_relpri2 = 0, main_afterpri = 0;
 	struct scenario scenario = {
 		.name = "turnstile_singlehop",
 		.flags = (STACKSHOT_THREAD_WAITINFO | STACKSHOT_KCDATA_FORMAT),
@@ -555,7 +864,7 @@ T_DECL(turnstile_singlehop, "turnstile single hop test")
 	T_LOG("Async2 completed");
 
 	while (1) {
-		main_afterpri = get_user_promotion_basepri();
+		main_afterpri = (int) get_user_promotion_basepri();
 		if (main_relpri != main_afterpri) {
 			T_LOG("Success with promotion pri is %d", main_afterpri);
 			break;
@@ -564,8 +873,8 @@ T_DECL(turnstile_singlehop, "turnstile single hop test")
 		usleep(100);
 	}
 
-	take_stackshot(&scenario, ^( void *ssbuf, size_t sslen) {
-		parse_stackshot(PARSE_STACKSHOT_TURNSTILEINFO, ssbuf, sslen, -1);
+	take_stackshot(&scenario, true, ^( void *ssbuf, size_t sslen) {
+		parse_stackshot(PARSE_STACKSHOT_TURNSTILEINFO, ssbuf, sslen, nil);
 	});
 }
 
@@ -643,8 +952,8 @@ T_DECL(instrs_cycles, "test a getting instructions and cycles in stackshot")
 	};
 
 	T_LOG("attempting to take stackshot with instructions and cycles");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
-		parse_stackshot(0, ssbuf, sslen, -1);
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
+		parse_stackshot(0, ssbuf, sslen, nil);
 		expect_instrs_cycles_in_stackshot(ssbuf, sslen);
 	});
 }
@@ -661,12 +970,12 @@ T_DECL(delta_instrs_cycles,
 	};
 
 	T_LOG("taking full stackshot");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
 		uint64_t stackshot_time = stackshot_timestamp(ssbuf, sslen);
 
 		T_LOG("taking delta stackshot since time %" PRIu64, stackshot_time);
 
-		parse_stackshot(0, ssbuf, sslen, -1);
+		parse_stackshot(0, ssbuf, sslen, nil);
 		expect_instrs_cycles_in_stackshot(ssbuf, sslen);
 
 		struct scenario delta_scenario = {
@@ -677,8 +986,8 @@ T_DECL(delta_instrs_cycles,
 			.since_timestamp = stackshot_time,
 		};
 
-		take_stackshot(&delta_scenario, ^(void *dssbuf, size_t dsslen) {
-			parse_stackshot(PARSE_STACKSHOT_DELTA, dssbuf, dsslen, -1);
+		take_stackshot(&delta_scenario, false, ^(void *dssbuf, size_t dsslen) {
+			parse_stackshot(PARSE_STACKSHOT_DELTA, dssbuf, dsslen, nil);
 			expect_instrs_cycles_in_stackshot(dssbuf, dsslen);
 		});
 	});
@@ -707,7 +1016,7 @@ T_DECL(thread_groups, "test getting thread groups in stackshot")
 	};
 
 	T_LOG("attempting to take stackshot with thread group flag");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
 		parse_thread_group_stackshot(ssbuf, sslen);
 	});
 }
@@ -798,7 +1107,7 @@ T_DECL(dump_page_tables, "test stackshot page table dumping support")
 	};
 
 	T_LOG("attempting to take stackshot with ASID and page table flags");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
 		parse_page_table_asid_stackshot(ssbuf, sslen);
 	});
 }
@@ -837,6 +1146,70 @@ static void stackshot_verify_current_proc_uuid_info(void **ssbuf, size_t sslen, 
 	}
 
 	T_FAIL("failed to find matching UUID in stackshot data");
+}
+
+T_DECL(translated, "tests translated bit is set correctly")
+{
+#if !(TARGET_OS_OSX && TARGET_CPU_ARM64)
+	T_SKIP("Only valid on Apple silicon Macs")
+#endif
+	// Get path of stackshot_translated_child helper binary
+	char path[PATH_MAX];
+	uint32_t path_size = sizeof(path);
+	T_QUIET; T_ASSERT_POSIX_ZERO(_NSGetExecutablePath(path, &path_size), "_NSGetExecutablePath");
+	char* binary_name = strrchr(path, '/');
+	if (binary_name) binary_name++;
+	T_QUIET; T_ASSERT_NOTNULL(binary_name, "Find basename in path '%s'", path);
+	strlcpy(binary_name, "stackshot_translated_child", path_size - (binary_name - path));
+	char *args[] = { path, NULL };
+	
+	dispatch_source_t child_sig_src;
+	dispatch_semaphore_t child_ready_sem = dispatch_semaphore_create(0);
+	T_QUIET; T_ASSERT_NOTNULL(child_ready_sem, "exec child semaphore");
+	
+	dispatch_queue_t signal_processing_q = dispatch_queue_create("signal processing queue", NULL);
+	T_QUIET; T_ASSERT_NOTNULL(signal_processing_q, "signal processing queue");
+		
+	signal(SIGUSR1, SIG_IGN);
+	child_sig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, signal_processing_q);
+	T_QUIET; T_ASSERT_NOTNULL(child_sig_src, "dispatch_source_create (child_sig_src)");
+	
+	dispatch_source_set_event_handler(child_sig_src, ^{ dispatch_semaphore_signal(child_ready_sem); });
+	dispatch_activate(child_sig_src);
+	
+	// Spawn child
+	pid_t pid;
+	T_LOG("spawning translated child");
+	T_QUIET; T_ASSERT_POSIX_ZERO(posix_spawn(&pid, args[0], NULL, NULL, args, NULL), "spawned process '%s' with PID %d", args[0], pid);
+	
+	// Wait for the the child to spawn up
+	dispatch_semaphore_wait(child_ready_sem, DISPATCH_TIME_FOREVER);
+
+	// Make sure the child is running and is translated
+	int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+	struct kinfo_proc process_info;
+	size_t bufsize = sizeof(process_info);
+	T_QUIET; T_ASSERT_POSIX_SUCCESS(sysctl(mib, (unsigned)(sizeof(mib)/sizeof(int)), &process_info, &bufsize, NULL, 0), "get translated child process info");
+	T_QUIET; T_ASSERT_GT(bufsize, (size_t)0, "process info is not empty");
+	T_QUIET; T_ASSERT_TRUE((process_info.kp_proc.p_flag & P_TRANSLATED), "KERN_PROC_PID reports child is translated");
+	
+	T_LOG("capturing stackshot");
+	
+	struct scenario scenario = {
+		.name = "translated",
+		.flags = (STACKSHOT_SAVE_LOADINFO | STACKSHOT_GET_GLOBAL_MEM_STATS
+				  | STACKSHOT_SAVE_IMP_DONATION_PIDS | STACKSHOT_KCDATA_FORMAT),
+	};
+	
+	take_stackshot(&scenario, true, ^( void *ssbuf, size_t sslen) {
+		parse_stackshot(PARSE_STACKSHOT_TRANSLATED, ssbuf, sslen, @{translated_child_pid_key: @(pid)});
+	});
+
+    // Kill the child
+    int status;
+    T_QUIET; T_ASSERT_POSIX_SUCCESS(kill(pid, SIGTERM), "kill translated child");
+    T_QUIET; T_ASSERT_POSIX_SUCCESS(waitpid(pid, &status, 0), "waitpid on translated child");
+
 }
 
 T_DECL(proc_uuid_info, "tests that the main binary UUID for a proc is always populated")
@@ -886,9 +1259,347 @@ T_DECL(proc_uuid_info, "tests that the main binary UUID for a proc is always pop
 	};
 
 	T_LOG("attempting to take stackshot for current PID");
-	take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
 		stackshot_verify_current_proc_uuid_info(ssbuf, sslen, expected_mach_header_offset, &proc_info_data);
 	});
+}
+
+T_DECL(cseg_waitinfo, "test that threads stuck in the compressor report correct waitinfo")
+{
+	struct scenario scenario = {
+		.name = "cseg_waitinfo",
+		.quiet = false,
+		.flags = (STACKSHOT_THREAD_WAITINFO | STACKSHOT_KCDATA_FORMAT),
+	};
+	__block uint64_t thread_id = 0;
+
+	dispatch_queue_t dq = dispatch_queue_create("com.apple.stackshot.cseg_waitinfo", NULL);
+	dispatch_semaphore_t child_ok = dispatch_semaphore_create(0);
+
+	dispatch_async(dq, ^{
+		pthread_threadid_np(NULL, &thread_id);
+		dispatch_semaphore_signal(child_ok);
+		int val = 1;
+		T_ASSERT_POSIX_SUCCESS(sysctlbyname("kern.cseg_wedge_thread", NULL, NULL, &val, sizeof(val)), "wedge child thread");
+	});
+
+	dispatch_semaphore_wait(child_ok, DISPATCH_TIME_FOREVER);
+	sleep(1);
+
+	T_LOG("taking stackshot");
+	take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
+		int val = 1;
+		T_ASSERT_POSIX_SUCCESS(sysctlbyname("kern.cseg_unwedge_thread", NULL, NULL, &val, sizeof(val)), "unwedge child thread");
+		parse_stackshot(PARSE_STACKSHOT_WAITINFO_CSEG, ssbuf, sslen, @{cseg_expected_threadid_key: @(thread_id)});
+	});
+}
+
+static void
+srp_send(
+	mach_port_t send_port,
+	mach_port_t reply_port,
+	mach_port_t msg_port)
+{
+	kern_return_t ret = 0;
+
+	struct test_msg {
+		mach_msg_header_t header;
+		mach_msg_body_t body;
+		mach_msg_port_descriptor_t port_descriptor;
+	};
+	struct test_msg send_msg = {
+		.header = {
+			.msgh_remote_port = send_port,
+			.msgh_local_port  = reply_port,
+			.msgh_bits        = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND,
+	    reply_port ? MACH_MSG_TYPE_MAKE_SEND_ONCE : 0,
+	    MACH_MSG_TYPE_MOVE_SEND,
+	    MACH_MSGH_BITS_COMPLEX),
+			.msgh_id          = 0x100,
+			.msgh_size        = sizeof(send_msg),
+		},
+		.body = {
+			.msgh_descriptor_count = 1,
+		},
+		.port_descriptor = {
+			.name        = msg_port,
+			.disposition = MACH_MSG_TYPE_MOVE_RECEIVE,
+			.type        = MACH_MSG_PORT_DESCRIPTOR,
+		},
+	};
+
+	if (msg_port == MACH_PORT_NULL) {
+		send_msg.body.msgh_descriptor_count = 0;
+	}
+
+	ret = mach_msg(&(send_msg.header),
+	    MACH_SEND_MSG |
+	    MACH_SEND_TIMEOUT |
+	    MACH_SEND_OVERRIDE |
+	    (reply_port ? MACH_SEND_SYNC_OVERRIDE : 0),
+	    send_msg.header.msgh_size,
+	    0,
+	    MACH_PORT_NULL,
+	    10000,
+	    0);
+
+	T_ASSERT_MACH_SUCCESS(ret, "client mach_msg");
+}
+
+T_HELPER_DECL(srp_client,
+    "Client used for the special_reply_port test")
+{
+	pid_t ppid = getppid();
+	dispatch_semaphore_t can_continue  = dispatch_semaphore_create(0);
+	dispatch_queue_t dq = dispatch_queue_create("client_signalqueue", NULL);
+	dispatch_source_t sig_src;
+
+	mach_msg_return_t mr;
+	mach_port_t service_port;
+	mach_port_t conn_port;
+	mach_port_t special_reply_port;
+	mach_port_options_t opts = {
+		.flags = MPO_INSERT_SEND_RIGHT,
+	};
+
+	signal(SIGUSR1, SIG_IGN);
+	sig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, dq);
+
+	dispatch_source_set_event_handler(sig_src, ^{
+			dispatch_semaphore_signal(can_continue);
+	});
+	dispatch_activate(sig_src);
+
+	/* lookup the mach service port for the parent */
+	kern_return_t kr = bootstrap_look_up(bootstrap_port,
+	    SRP_SERVICE_NAME, &service_port);
+	T_QUIET; T_ASSERT_MACH_SUCCESS(kr, "client bootstrap_look_up");
+
+	/* create the send-once right (special reply port) and message to send to the server */
+	kr = mach_port_construct(mach_task_self(), &opts, 0ull, &conn_port);
+	T_QUIET; T_ASSERT_MACH_SUCCESS(kr, "mach_port_construct");
+
+	special_reply_port = thread_get_special_reply_port();
+	T_QUIET; T_ASSERT_TRUE(MACH_PORT_VALID(special_reply_port), "get_thread_special_reply_port");
+
+	/* send the message with the special reply port */
+	srp_send(service_port, special_reply_port, conn_port);
+
+	/* signal the parent to continue */
+	kill(ppid, SIGUSR1);
+
+	struct {
+		mach_msg_header_t header;
+		mach_msg_body_t body;
+		mach_msg_port_descriptor_t port_descriptor;
+	} rcv_msg = {
+		.header =
+		{
+			.msgh_remote_port = MACH_PORT_NULL,
+			.msgh_local_port  = special_reply_port,
+			.msgh_size        = sizeof(rcv_msg),
+		},
+	};
+
+	/* wait on the reply from the parent (that we will never receive) */
+	mr = mach_msg(&(rcv_msg.header),
+			(MACH_RCV_MSG | MACH_RCV_SYNC_WAIT),
+			0,
+			rcv_msg.header.msgh_size,
+			special_reply_port,
+			MACH_MSG_TIMEOUT_NONE,
+			service_port);
+
+	/* not expected to execute as parent will SIGKILL client... */
+	T_LOG("client process exiting after sending message to parent (server)");
+}
+
+enum srp_test_type {
+	SRP_TEST_THREAD,	/* expect waiter on current thread */
+	SRP_TEST_PID,		/* expect waiter on current PID */
+	SRP_TEST_EITHER,	/* waiter could be on either */
+};
+
+static void
+check_srp_test(const char *name, enum srp_test_type ty)
+{
+	struct scenario scenario = {
+		.name = name,
+		.quiet = false,
+		.flags = (STACKSHOT_THREAD_WAITINFO | STACKSHOT_KCDATA_FORMAT),
+	};
+	uint64_t thread_id = 0;
+	pthread_threadid_np(NULL, &thread_id);
+	if (ty == SRP_TEST_THREAD) {
+		take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
+			parse_stackshot(PARSE_STACKSHOT_WAITINFO_SRP, ssbuf, sslen,
+					@{srp_expected_threadid_key: @(thread_id)});
+		});
+	} else if (ty == SRP_TEST_PID) {
+		take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
+			parse_stackshot(PARSE_STACKSHOT_WAITINFO_SRP, ssbuf, sslen,
+					@{srp_expected_pid_key: @(getpid())});
+		});
+	} else {
+		take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
+			parse_stackshot(PARSE_STACKSHOT_WAITINFO_SRP, ssbuf, sslen,
+					@{srp_expected_pid_key: @(getpid()), srp_expected_threadid_key: @(thread_id)});
+		});
+	}
+
+}
+
+
+/*
+ * Tests the stackshot wait info plumbing for synchronous IPC that doesn't use kevent on the server.
+ *
+ * (part 1): tests the scenario where a client sends a request that includes a special reply port
+ *           to a server that doesn't receive the message and doesn't copy the send-once right
+ *           into its address space as a result. for this case the special reply port is enqueued
+ *           in a port and we check which task has that receive right and use that info. (rdar://60440338)
+ * (part 2): tests the scenario where a client sends a request that includes a special reply port
+ *           to a server that receives the message and copies in the send-once right, but doesn't
+ *           reply to the client. for this case the special reply port is copied out and the kernel
+ *           stashes the info about which task copied out the send once right. (rdar://60440592)
+ * (part 3): tests the same as part 2, but uses kevents, which allow for
+ *           priority inheritance
+ */
+T_DECL(special_reply_port, "test that tasks using special reply ports have correct waitinfo")
+{
+	dispatch_semaphore_t can_continue  = dispatch_semaphore_create(0);
+	dispatch_queue_t dq = dispatch_queue_create("signalqueue", NULL);
+	dispatch_queue_t machdq = dispatch_queue_create("machqueue", NULL);
+	dispatch_source_t sig_src;
+	char path[PATH_MAX];
+	uint32_t path_size = sizeof(path);
+	T_ASSERT_POSIX_ZERO(_NSGetExecutablePath(path, &path_size), "_NSGetExecutablePath");
+	char *client_args[] = { path, "-n", "srp_client", NULL };
+	pid_t client_pid;
+	int sp_ret;
+	kern_return_t kr;
+	mach_port_t port;
+
+	/* setup the signal handler in the parent (server) */
+	T_LOG("setup sig handlers");
+	signal(SIGUSR1, SIG_IGN);
+	sig_src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, dq);
+
+	dispatch_source_set_event_handler(sig_src, ^{
+			dispatch_semaphore_signal(can_continue);
+	});
+	dispatch_activate(sig_src);
+
+	/* register with the mach service name so the client can lookup and send a message to the parent (server) */
+	T_LOG("Server about to check in");
+	kr = bootstrap_check_in(bootstrap_port, SRP_SERVICE_NAME, &port);
+	T_ASSERT_MACH_SUCCESS(kr, "server bootstrap_check_in");
+
+	T_LOG("Launching client");
+	sp_ret = posix_spawn(&client_pid, client_args[0], NULL, NULL, client_args, NULL);
+	T_QUIET; T_ASSERT_POSIX_ZERO(sp_ret, "spawned process '%s' with PID %d", client_args[0], client_pid);
+	T_LOG("Spawned client as PID %d", client_pid);
+
+	dispatch_semaphore_wait(can_continue, DISPATCH_TIME_FOREVER);
+	T_LOG("Ready to take stackshot, but waiting 1s for the coast to clear");
+
+	/*
+	 * can_continue indicates the client has signaled us, but we want to make
+	 * sure they've actually blocked sending their mach message.  It's cheesy, but
+	 * sleep() works for this.
+	 */
+	sleep(1);
+
+	/*
+	 * take the stackshot without calling receive to verify that the stackshot wait
+	 * info shows our (the server) thread for the scenario where the server has yet to
+	 * receive the message.
+	 */
+	T_LOG("Taking stackshot for part 1 coverage");
+	check_srp_test("srp", SRP_TEST_THREAD);
+
+	/*
+	 * receive the message from the client (which should copy the send once right into
+	 * our address space).
+	 */
+	struct {
+		mach_msg_header_t header;
+		mach_msg_body_t body;
+		mach_msg_port_descriptor_t port_descriptor;
+	} rcv_msg = {
+		.header =
+		{
+			.msgh_remote_port = MACH_PORT_NULL,
+			.msgh_local_port  = port,
+			.msgh_size        = sizeof(rcv_msg),
+		},
+	};
+
+	T_LOG("server: starting sync receive\n");
+
+	mach_msg_return_t mr;
+	mr = mach_msg(&(rcv_msg.header),
+			(MACH_RCV_MSG | MACH_RCV_TIMEOUT),
+			0,
+			4096,
+			port,
+			10000,
+			MACH_PORT_NULL);
+	T_QUIET; T_ASSERT_MACH_SUCCESS(mr, "mach_msg() recieve of message from client");
+
+	/*
+	 * take the stackshot to verify that the stackshot wait info shows our (the server) PID
+	 * for the scenario where the server has received the message and copied in the send-once right.
+	 */
+	T_LOG("Taking stackshot for part 2 coverage");
+	check_srp_test("srp", SRP_TEST_PID);
+
+	/* cleanup - kill the client */
+	T_ASSERT_POSIX_SUCCESS(kill(client_pid, SIGKILL), "killing client");
+	T_ASSERT_POSIX_SUCCESS(waitpid(client_pid, NULL, 0), "waiting for the client to exit");
+
+	// do it again, but using kevents
+	T_LOG("Launching client");
+	sp_ret = posix_spawn(&client_pid, client_args[0], NULL, NULL, client_args, NULL);
+	T_QUIET; T_ASSERT_POSIX_ZERO(sp_ret, "spawned process '%s' with PID %d", client_args[0], client_pid);
+	T_LOG("Spawned client as PID %d", client_pid);
+
+	dispatch_semaphore_wait(can_continue, DISPATCH_TIME_FOREVER);
+	T_LOG("Ready to take stackshot, but waiting 1s for the coast to clear");
+
+	/*
+	 * can_continue indicates the client has signaled us, but we want to make
+	 * sure they've actually blocked sending their mach message.  It's cheesy, but
+	 * sleep() works for this.
+	 */
+	sleep(1);
+
+	dispatch_mach_t dispatch_mach = dispatch_mach_create(SRP_SERVICE_NAME, machdq, 
+	    ^(dispatch_mach_reason_t reason,
+	      dispatch_mach_msg_t message,
+	      mach_error_t error __unused) {
+		switch (reason) {
+		case DISPATCH_MACH_MESSAGE_RECEIVED: {
+			size_t size = 0;
+			mach_msg_header_t *msg __unused = dispatch_mach_msg_get_msg(message, &size);
+			T_LOG("server: recieved %ld byte message", size);
+			check_srp_test("turnstile_port_thread", SRP_TEST_THREAD);
+			T_LOG("server: letting client go");
+			// drop the message on the ground, we'll kill the client later
+			dispatch_semaphore_signal(can_continue);
+			break;
+		}
+		default:
+			break;
+		}
+	});
+
+	dispatch_mach_connect(dispatch_mach, port, MACH_PORT_NULL, NULL);
+
+	dispatch_semaphore_wait(can_continue, DISPATCH_TIME_FOREVER);
+
+	/* cleanup - kill the client */
+	T_ASSERT_POSIX_SUCCESS(kill(client_pid, SIGKILL), "killing client");
+	T_ASSERT_POSIX_SUCCESS(waitpid(client_pid, NULL, 0), "waiting for the client to exit");
 }
 
 #pragma mark performance tests
@@ -916,7 +1627,7 @@ stackshot_perf(unsigned int options)
 	while (!dt_stat_stable(duration) || !dt_stat_stable(size)) {
 		__block uint64_t last_time = 0;
 		__block uint32_t size_hint = 0;
-		take_stackshot(&scenario, ^(void *ssbuf, size_t sslen) {
+		take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
 			dt_stat_add(size, (double)sslen);
 			last_time = stackshot_timestamp(ssbuf, sslen);
 			size_hint = (uint32_t)sslen;
@@ -932,6 +1643,97 @@ stackshot_perf(unsigned int options)
 
 	dt_stat_finalize(duration);
 	dt_stat_finalize(size);
+}
+
+static void
+stackshot_flag_perf_noclobber(uint64_t flag, char *flagname)
+{
+	struct scenario scenario = {
+		.quiet = true,
+		.flags = (flag | STACKSHOT_KCDATA_FORMAT),
+	};
+
+	dt_stat_t duration = dt_stat_create("nanoseconds per thread", "%s_duration", flagname);
+	dt_stat_t size = dt_stat_create("bytes per thread", "%s_size", flagname);
+	T_LOG("Testing \"%s\" = 0x%" PRIx64, flagname, flag);
+
+	while (!dt_stat_stable(duration) || !dt_stat_stable(size)) {
+		take_stackshot(&scenario, false, ^(void *ssbuf, size_t sslen) {
+			kcdata_iter_t iter = kcdata_iter(ssbuf, sslen);
+			unsigned long no_threads = 0;
+			mach_timebase_info_data_t timebase = {0, 0};
+			uint64_t stackshot_duration = 0;
+			int found = 0;
+			T_QUIET; T_ASSERT_EQ(kcdata_iter_type(iter), KCDATA_BUFFER_BEGIN_STACKSHOT, "stackshot buffer");
+
+			KCDATA_ITER_FOREACH(iter) {
+				switch(kcdata_iter_type(iter)) {
+					case STACKSHOT_KCTYPE_THREAD_SNAPSHOT: {
+						found |= 1;
+						no_threads ++;
+						break;
+					}
+					case STACKSHOT_KCTYPE_STACKSHOT_DURATION: {
+						struct stackshot_duration *ssd = kcdata_iter_payload(iter);
+						stackshot_duration = ssd->stackshot_duration;
+						found |= 2;
+						break;
+					}
+					case KCDATA_TYPE_TIMEBASE: {
+						found |= 4;
+						mach_timebase_info_data_t *tb = kcdata_iter_payload(iter);
+						memcpy(&timebase, tb, sizeof(timebase));
+						break;
+					}
+				}
+			}
+
+			T_QUIET; T_ASSERT_EQ(found, 0x7, "found everything needed");
+
+			uint64_t ns = (stackshot_duration * timebase.numer) / timebase.denom;
+			uint64_t per_thread_ns = ns / no_threads;
+			uint64_t per_thread_size = sslen / no_threads;
+
+			dt_stat_add(duration, per_thread_ns);
+			dt_stat_add(size, per_thread_size);
+		});
+	}
+
+	dt_stat_finalize(duration);
+	dt_stat_finalize(size);
+}
+
+static void
+stackshot_flag_perf(uint64_t flag, char *flagname)
+{
+	/*
+	 * STACKSHOT_NO_IO_STATS disables data collection, so set it for
+	 * more accurate perfdata collection.
+	 */
+	flag |= STACKSHOT_NO_IO_STATS;
+
+	stackshot_flag_perf_noclobber(flag, flagname);
+}
+
+
+T_DECL(flag_perf, "test stackshot performance with different flags set", T_META_TAG_PERF)
+{
+	stackshot_flag_perf_noclobber(STACKSHOT_NO_IO_STATS, "baseline");
+	stackshot_flag_perf_noclobber(0, "io_stats");
+
+	stackshot_flag_perf(STACKSHOT_THREAD_WAITINFO, "thread_waitinfo");
+	stackshot_flag_perf(STACKSHOT_GET_DQ, "get_dq");
+	stackshot_flag_perf(STACKSHOT_SAVE_LOADINFO, "save_loadinfo");
+	stackshot_flag_perf(STACKSHOT_GET_GLOBAL_MEM_STATS, "get_global_mem_stats");
+	stackshot_flag_perf(STACKSHOT_SAVE_KEXT_LOADINFO, "save_kext_loadinfo");
+	stackshot_flag_perf(STACKSHOT_SAVE_IMP_DONATION_PIDS, "save_imp_donation_pids");
+	stackshot_flag_perf(STACKSHOT_ENABLE_BT_FAULTING, "enable_bt_faulting");
+	stackshot_flag_perf(STACKSHOT_COLLECT_SHAREDCACHE_LAYOUT, "collect_sharedcache_layout");
+	stackshot_flag_perf(STACKSHOT_ENABLE_UUID_FAULTING, "enable_uuid_faulting");
+	stackshot_flag_perf(STACKSHOT_THREAD_GROUP, "thread_group");
+	stackshot_flag_perf(STACKSHOT_SAVE_JETSAM_COALITIONS, "save_jetsam_coalitions");
+	stackshot_flag_perf(STACKSHOT_INSTRS_CYCLES, "instrs_cycles");
+	stackshot_flag_perf(STACKSHOT_ASID, "asid");
 }
 
 T_DECL(perf_no_size_hint, "test stackshot performance with no size hint",
@@ -1082,16 +1884,55 @@ verify_stackshot_sharedcache_layout(struct dyld_uuid_info_64 *uuids, uint32_t uu
 }
 
 static void
-parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int child_pid)
+check_shared_cache_uuid(uuid_t imageUUID)
+{
+	static uuid_t shared_cache_uuid;
+	static dispatch_once_t read_shared_cache_uuid;
+
+	dispatch_once(&read_shared_cache_uuid, ^{
+		T_QUIET;
+		T_ASSERT_TRUE(_dyld_get_shared_cache_uuid(shared_cache_uuid), "retrieve current shared cache UUID");
+	});
+	T_QUIET; T_ASSERT_EQ(uuid_compare(shared_cache_uuid, imageUUID), 0,
+			"dyld returned UUID doesn't match kernel returned UUID for system shared cache");
+}
+
+/*
+ * extra dictionary contains data relevant for the given flags:
+ * PARSE_STACKSHOT_ZOMBIE:   zombie_child_pid_key -> @(pid)
+ * PARSE_STACKSHOT_POSTEXEC: postexec_child_unique_pid_key -> @(unique_pid)
+ */
+static void
+parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, NSDictionary *extra)
 {
 	bool delta = (stackshot_parsing_flags & PARSE_STACKSHOT_DELTA);
+	bool expect_sharedcache_child = (stackshot_parsing_flags & PARSE_STACKSHOT_SHAREDCACHE_FLAGS);
 	bool expect_zombie_child = (stackshot_parsing_flags & PARSE_STACKSHOT_ZOMBIE);
+	bool expect_postexec_child = (stackshot_parsing_flags & PARSE_STACKSHOT_POSTEXEC);
+	bool expect_cseg_waitinfo = (stackshot_parsing_flags & PARSE_STACKSHOT_WAITINFO_CSEG);
+	bool expect_translated_child = (stackshot_parsing_flags & PARSE_STACKSHOT_TRANSLATED);
 	bool expect_shared_cache_layout = false;
 	bool expect_shared_cache_uuid = !delta;
 	bool expect_dispatch_queue_label = (stackshot_parsing_flags & PARSE_STACKSHOT_DISPATCH_QUEUE_LABEL);
 	bool expect_turnstile_lock = (stackshot_parsing_flags & PARSE_STACKSHOT_TURNSTILEINFO);
-	bool found_zombie_child = false, found_shared_cache_layout = false, found_shared_cache_uuid = false;
+	bool expect_srp_waitinfo = (stackshot_parsing_flags & PARSE_STACKSHOT_WAITINFO_SRP);
+	bool expect_exec_inprogress = (stackshot_parsing_flags & PARSE_STACKSHOT_EXEC_INPROGRESS);
+	bool found_zombie_child = false, found_postexec_child = false, found_shared_cache_layout = false, found_shared_cache_uuid = false;
+	bool found_translated_child = false;
 	bool found_dispatch_queue_label = false, found_turnstile_lock = false;
+	bool found_cseg_waitinfo = false, found_srp_waitinfo = false;
+	bool found_sharedcache_child = false, found_sharedcache_badflags = false, found_sharedcache_self = false;
+	uint64_t srp_expected_threadid = 0;
+	pid_t zombie_child_pid = -1, srp_expected_pid = -1, sharedcache_child_pid = -1;
+	pid_t translated_child_pid = -1;
+	bool sharedcache_child_sameaddr = false;
+	uint64_t postexec_child_unique_pid = 0, cseg_expected_threadid = 0;
+	uint64_t sharedcache_child_flags = 0, sharedcache_self_flags = 0;
+	char *inflatedBufferBase = NULL;
+	pid_t exec_inprogress_pid = -1;
+	void (^exec_inprogress_cb)(uint64_t, uint64_t) = NULL;
+	int exec_inprogress_found = 0;
+	uint64_t exec_inprogress_containerid = 0;
 
 	if (expect_shared_cache_uuid) {
 		uuid_t shared_cache_uuid;
@@ -1115,20 +1956,148 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 		}
 	}
 
+	if (expect_sharedcache_child) {
+		NSNumber* pid_num = extra[sharedcache_child_pid_key];
+		NSNumber* sameaddr_num = extra[sharedcache_child_sameaddr_key];
+		T_QUIET; T_ASSERT_NOTNULL(pid_num, "sharedcache child pid provided");
+		T_QUIET; T_ASSERT_NOTNULL(sameaddr_num, "sharedcache child addrsame provided");
+		sharedcache_child_pid = [pid_num intValue];
+		T_QUIET; T_ASSERT_GT(sharedcache_child_pid, 0, "sharedcache child pid greater than zero");
+		sharedcache_child_sameaddr = [sameaddr_num intValue];
+		T_QUIET; T_ASSERT_GE([sameaddr_num intValue], 0, "sharedcache child sameaddr is boolean (0 or 1)");
+		T_QUIET; T_ASSERT_LE([sameaddr_num intValue], 1, "sharedcache child sameaddr is boolean (0 or 1)");
+	}
 	if (expect_zombie_child) {
-		T_QUIET; T_ASSERT_GT(child_pid, 0, "child pid greater than zero");
+		NSNumber* pid_num = extra[zombie_child_pid_key];
+		T_QUIET; T_ASSERT_NOTNULL(pid_num, "zombie child pid provided");
+		zombie_child_pid = [pid_num intValue];
+		T_QUIET; T_ASSERT_GT(zombie_child_pid, 0, "zombie child pid greater than zero");
+	}
+
+	if (expect_postexec_child) {
+		NSNumber* unique_pid_num = extra[postexec_child_unique_pid_key];
+		T_QUIET; T_ASSERT_NOTNULL(unique_pid_num, "postexec child unique pid provided");
+		postexec_child_unique_pid = [unique_pid_num unsignedLongLongValue];
+		T_QUIET; T_ASSERT_GT(postexec_child_unique_pid, 0ull, "postexec child unique pid greater than zero");
+	}
+
+	if (expect_cseg_waitinfo) {
+		NSNumber* tid_num = extra[cseg_expected_threadid_key];
+		T_QUIET; T_ASSERT_NOTNULL(tid_num, "cseg's expected thread id provided");
+		cseg_expected_threadid = tid_num.unsignedLongValue;
+		T_QUIET; T_ASSERT_GT(cseg_expected_threadid, UINT64_C(0), "compressor segment thread is present");
+	}
+
+	if (expect_srp_waitinfo) {
+		NSNumber* threadid_num = extra[srp_expected_threadid_key];
+		NSNumber* pid_num = extra[srp_expected_pid_key];
+		T_QUIET; T_ASSERT_TRUE(threadid_num != nil || pid_num != nil, "expected SRP threadid or pid");
+		if (threadid_num != nil) {
+			srp_expected_threadid = [threadid_num unsignedLongLongValue];
+			T_QUIET; T_ASSERT_GT(srp_expected_threadid, 0ull, "srp_expected_threadid greater than zero");
+		}
+		if (pid_num != nil) {
+			srp_expected_pid = [pid_num intValue];
+			T_QUIET; T_ASSERT_GT(srp_expected_pid, 0, "srp_expected_pid greater than zero");
+		}
+		T_LOG("looking for SRP pid: %d threadid: %llu", srp_expected_pid, srp_expected_threadid);
+	}
+
+	if (expect_translated_child) {
+		NSNumber* pid_num = extra[translated_child_pid_key];
+		T_QUIET; T_ASSERT_NOTNULL(pid_num, "translated child pid provided");
+		translated_child_pid = [pid_num intValue];
+		T_QUIET; T_ASSERT_GT(translated_child_pid, 0, "translated child pid greater than zero");
+	}
+	if (expect_exec_inprogress) {
+		NSNumber* pid_num = extra[exec_inprogress_pid_key];
+		T_QUIET; T_ASSERT_NOTNULL(pid_num, "exec inprogress pid provided");
+		exec_inprogress_pid = [pid_num intValue];
+		T_QUIET; T_ASSERT_GT(exec_inprogress_pid, 0, "exec inprogress pid greater than zero");
+
+		exec_inprogress_cb = extra[exec_inprogress_found_key];
+		T_QUIET; T_ASSERT_NOTNULL(exec_inprogress_cb, "exec inprogress found callback provided");
 	}
 
 	kcdata_iter_t iter = kcdata_iter(ssbuf, sslen);
 	if (delta) {
 		T_ASSERT_EQ(kcdata_iter_type(iter), KCDATA_BUFFER_BEGIN_DELTA_STACKSHOT,
 				"buffer provided is a delta stackshot");
+
+			iter = kcdata_iter_next(iter);
 	} else {
-		T_ASSERT_EQ(kcdata_iter_type(iter), KCDATA_BUFFER_BEGIN_STACKSHOT,
-				"buffer provided is a stackshot");
+		if (kcdata_iter_type(iter) != KCDATA_BUFFER_BEGIN_COMPRESSED) {
+			T_ASSERT_EQ(kcdata_iter_type(iter), KCDATA_BUFFER_BEGIN_STACKSHOT,
+					"buffer provided is a stackshot");
+
+			iter = kcdata_iter_next(iter);
+		} else {
+			/* we are dealing with a compressed buffer */
+			iter = kcdata_iter_next(iter);
+			uint64_t compression_type = 0, totalout = 0, totalin = 0;
+
+			uint64_t *data;
+			char *desc;
+			for (int i = 0; i < 3; i ++) {
+				kcdata_iter_get_data_with_desc(iter, &desc, (void **)&data, NULL);
+				if (strcmp(desc, "kcd_c_type") == 0) {
+					compression_type = *data;
+				} else if (strcmp(desc, "kcd_c_totalout") == 0){
+					totalout = *data;
+				} else if (strcmp(desc, "kcd_c_totalin") == 0){
+					totalin = *data;
+				}
+
+				iter = kcdata_iter_next(iter);
+			}
+
+			T_ASSERT_EQ(compression_type, UINT64_C(1), "zlib compression is used");
+			T_ASSERT_GT(totalout, UINT64_C(0), "successfully gathered how long the compressed buffer is");
+			T_ASSERT_GT(totalin, UINT64_C(0), "successfully gathered how long the uncompressed buffer will be at least");
+
+			/* progress to the next kcdata item */
+			T_ASSERT_EQ(kcdata_iter_type(iter), KCDATA_BUFFER_BEGIN_STACKSHOT, "compressed stackshot found");
+
+			char *bufferBase = kcdata_iter_payload(iter);
+
+			/*
+			 * zlib is used, allocate a buffer based on the metadata, plus
+			 * extra scratch space (+12.5%) in case totalin was inconsistent
+			 */
+			size_t inflatedBufferSize = totalin + (totalin >> 3);
+			inflatedBufferBase = malloc(inflatedBufferSize);
+			T_QUIET; T_WITH_ERRNO; T_ASSERT_NOTNULL(inflatedBufferBase, "allocated temporary output buffer");
+
+			z_stream zs;
+			memset(&zs, 0, sizeof(zs));
+			T_QUIET; T_ASSERT_EQ(inflateInit(&zs), Z_OK, "inflateInit OK");
+			zs.next_in = (unsigned char *)bufferBase;
+			T_QUIET; T_ASSERT_LE(totalout, (uint64_t)UINT_MAX, "stackshot is not too large");
+			zs.avail_in = (uInt)totalout;
+			zs.next_out = (unsigned char *)inflatedBufferBase;
+			T_QUIET; T_ASSERT_LE(inflatedBufferSize, (size_t)UINT_MAX, "output region is not too large");
+			zs.avail_out = (uInt)inflatedBufferSize;
+			T_ASSERT_EQ(inflate(&zs, Z_FINISH), Z_STREAM_END, "inflated buffer");
+			inflateEnd(&zs);
+
+			T_ASSERT_EQ((uint64_t)zs.total_out, totalin, "expected number of bytes inflated");
+			
+			/* copy the data after the compressed area */
+			T_QUIET; T_ASSERT_GE((void *)bufferBase, ssbuf,
+					"base of compressed stackshot is after the returned stackshot buffer");
+			size_t header_size = (size_t)(bufferBase - (char *)ssbuf);
+			size_t data_after_compressed_size = sslen - totalout - header_size;
+			T_QUIET; T_ASSERT_LE(data_after_compressed_size,
+					inflatedBufferSize - zs.total_out,
+					"footer fits in the buffer");
+			memcpy(inflatedBufferBase + zs.total_out,
+					bufferBase + totalout,
+					data_after_compressed_size);
+
+			iter = kcdata_iter(inflatedBufferBase, inflatedBufferSize);
+		}
 	}
 
-	iter = kcdata_iter_next(iter);
 	KCDATA_ITER_FOREACH(iter) {
 		NSError *error = nil;
 
@@ -1162,10 +2131,16 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 			if (kcdata_iter_container_type(iter) != STACKSHOT_KCCONTAINER_TASK) {
 				break;
 			}
+			uint64_t containerid = kcdata_iter_container_id(iter);
 
 			NSDictionary *container = parseKCDataContainer(&iter, &error);
 			T_QUIET; T_ASSERT_NOTNULL(container, "parsed container from stackshot");
 			T_QUIET; T_ASSERT_NULL(error, "error unset after parsing container");
+
+			NSDictionary* task_snapshot = container[@"task_snapshots"][@"task_snapshot"];
+			NSDictionary* task_delta_snapshot = container[@"task_snapshots"][@"task_delta_snapshot"];
+			
+			T_QUIET; T_ASSERT_TRUE(!!task_snapshot != !!task_delta_snapshot, "Either task_snapshot xor task_delta_snapshot provided");
 
 			if (expect_dispatch_queue_label && !found_dispatch_queue_label) {
 				for (id thread_key in container[@"task_snapshots"][@"thread_snapshots"]) {
@@ -1178,32 +2153,209 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 					}
 				}
 			}
-
-			int pid = [container[@"task_snapshots"][@"task_snapshot"][@"ts_pid"] intValue];
-			if (expect_zombie_child && (pid == child_pid)) {
-					found_zombie_child = true;
-
-					uint64_t task_flags = [container[@"task_snapshots"][@"task_snapshot"][@"ts_ss_flags"] unsignedLongLongValue];
-					T_ASSERT_TRUE((task_flags & kTerminatedSnapshot) == kTerminatedSnapshot, "child zombie marked as terminated");
-
-					continue;
-			} else if (pid != getpid()) {
+			
+			if (expect_postexec_child && !found_postexec_child) {
+				if (task_snapshot) {
+					uint64_t unique_pid = [task_snapshot[@"ts_unique_pid"] unsignedLongLongValue];
+					if (unique_pid == postexec_child_unique_pid) {
+						found_postexec_child = true;
+						
+						T_PASS("post-exec child %llu has a task snapshot", postexec_child_unique_pid);
+						
+						break;
+					}
+				}
+				
+				if (task_delta_snapshot) {
+					uint64_t unique_pid = [task_delta_snapshot[@"tds_unique_pid"] unsignedLongLongValue];
+					if (unique_pid == postexec_child_unique_pid) {
+						found_postexec_child = true;
+						
+						T_FAIL("post-exec child %llu shouldn't have a delta task snapshot", postexec_child_unique_pid);
+						
+						break;
+					}
+				}
+			}
+			
+			if (!task_snapshot) {
 				break;
 			}
 
+			int pid = [task_snapshot[@"ts_pid"] intValue];
+
+			if (pid && expect_shared_cache_uuid && !found_shared_cache_uuid) {
+				id ptr = container[@"task_snapshots"][@"shared_cache_dyld_load_info"];
+				if (ptr) {
+					id uuid = ptr[@"imageUUID"];
+
+					uint8_t uuid_p[16];
+					for (unsigned int i = 0; i < 16; i ++) {
+						NSNumber *uuidByte = uuid[i];
+						uuid_p[i] = (uint8_t)uuidByte.charValue;
+					}
+
+					check_shared_cache_uuid(uuid_p);
+
+					uint64_t baseAddress = (uint64_t)((NSNumber *)ptr[@"imageSlidBaseAddress"]).longLongValue;
+					uint64_t firstMapping = (uint64_t)((NSNumber *)ptr[@"sharedCacheSlidFirstMapping"]).longLongValue;
+
+					T_ASSERT_LE(baseAddress, firstMapping,
+						"in per-task shared_cache_dyld_load_info, "
+						"baseAddress <= firstMapping");
+					T_ASSERT_GE(baseAddress + (1ull << 29), firstMapping,
+						"in per-task shared_cache_dyld_load_info, "
+						"baseAddress + 512meg >= firstMapping");
+
+					size_t shared_cache_len;
+					const void *addr = _dyld_get_shared_cache_range(&shared_cache_len);
+					T_ASSERT_EQ((uint64_t)addr, firstMapping,
+							"SlidFirstMapping should match shared_cache_range");
+
+					/* 
+					 * check_shared_cache_uuid() will assert on failure, so if
+					 * we get here, then we have found the shared cache UUID
+					 * and it's correct
+					 */
+					found_shared_cache_uuid = true;
+				}
+			}
+			if (expect_sharedcache_child) {
+				uint64_t task_flags = [task_snapshot[@"ts_ss_flags"] unsignedLongLongValue];
+				uint64_t sharedregion_flags = (task_flags & (kTaskSharedRegionNone | kTaskSharedRegionSystem | kTaskSharedRegionOther));
+				id sharedregion_info = container[@"task_snapshots"][@"shared_cache_dyld_load_info"];
+				if (!found_sharedcache_badflags) {
+					T_QUIET; T_ASSERT_NE(sharedregion_flags, 0ll, "one of the kTaskSharedRegion flags should be set on all tasks");
+					bool multiple = (sharedregion_flags & (sharedregion_flags - 1)) != 0;
+					T_QUIET; T_ASSERT_FALSE(multiple, "only one kTaskSharedRegion flag should be set on each task");
+					found_sharedcache_badflags = (sharedregion_flags == 0 || multiple);
+				}
+				if (pid == 0) {
+					T_ASSERT_EQ(sharedregion_flags, (uint64_t)kTaskSharedRegionNone, "Kernel proc (pid 0) should have no shared region");
+				} else if (pid == sharedcache_child_pid) {
+					found_sharedcache_child = true;
+					sharedcache_child_flags = sharedregion_flags;
+				} else if (pid == getpid()) {
+					found_sharedcache_self = true;
+					sharedcache_self_flags = sharedregion_flags;
+				}
+				if (sharedregion_flags == kTaskSharedRegionOther && !(task_flags & kTaskSharedRegionInfoUnavailable)) {
+					T_QUIET; T_ASSERT_NOTNULL(sharedregion_info, "kTaskSharedRegionOther should have a shared_cache_dyld_load_info struct");
+				} else {
+					T_QUIET; T_ASSERT_NULL(sharedregion_info, "expect no shared_cache_dyld_load_info struct");
+				}
+			}
+			if (expect_zombie_child && (pid == zombie_child_pid)) {
+				found_zombie_child = true;
+				
+				uint64_t task_flags = [task_snapshot[@"ts_ss_flags"] unsignedLongLongValue];
+				T_ASSERT_TRUE((task_flags & kTerminatedSnapshot) == kTerminatedSnapshot, "child zombie marked as terminated");
+				
+				continue;
+			}
+			
+			if (expect_translated_child && (pid == translated_child_pid)) {
+				found_translated_child = true;
+				
+				uint64_t task_flags = [task_snapshot[@"ts_ss_flags"] unsignedLongLongValue];
+				T_EXPECT_BITS_SET(task_flags, kTaskIsTranslated, "child marked as translated");
+				
+				continue;
+			}
+			if (expect_exec_inprogress && (pid == exec_inprogress_pid || pid == -exec_inprogress_pid)) {
+				exec_inprogress_found++;
+				T_LOG("found exec task with pid %d, instance %d", pid, exec_inprogress_found);
+				T_QUIET; T_ASSERT_LE(exec_inprogress_found, 2, "no more than two with the expected pid");
+				if (exec_inprogress_found == 2) {
+					T_LOG("found 2 tasks with pid %d", exec_inprogress_pid);
+					exec_inprogress_cb(containerid, exec_inprogress_containerid);
+				} else {
+					exec_inprogress_containerid = containerid;
+				}
+			}
+			if (expect_cseg_waitinfo) {
+				NSArray *winfos = container[@"task_snapshots"][@"thread_waitinfo"];
+
+				for (id i in winfos) {
+					NSNumber *waitType = i[@"wait_type"];
+					NSNumber *owner = i[@"owner"];
+					if (waitType.intValue == kThreadWaitCompressor &&
+							owner.unsignedLongValue == cseg_expected_threadid) {
+						found_cseg_waitinfo = true;
+						break;
+					}
+				}
+			}
+
+			if (expect_srp_waitinfo) {
+				NSArray *tinfos = container[@"task_snapshots"][@"thread_turnstileinfo"];
+				NSArray *winfos = container[@"task_snapshots"][@"thread_waitinfo"];
+				for (id i in tinfos) {
+					if (!found_srp_waitinfo) {
+						bool found_thread = false;
+						bool found_pid = false;
+						if (([i[@"turnstile_flags"] intValue] & STACKSHOT_TURNSTILE_STATUS_THREAD) &&
+						    [i[@"turnstile_context"] unsignedLongLongValue] == srp_expected_threadid &&
+						    srp_expected_threadid != 0) {
+							found_thread = true;
+						}
+						if (([i[@"turnstile_flags"] intValue] & STACKSHOT_TURNSTILE_STATUS_BLOCKED_ON_TASK) &&
+						    [i[@"turnstile_context"] intValue] == srp_expected_pid &&
+						    srp_expected_pid != -1) {
+							found_pid = true;
+						}
+						if (found_pid || found_thread) {
+							T_LOG("found SRP %s %lld waiter: %d", (found_thread ? "thread" : "pid"),
+							    [i[@"turnstile_context"] unsignedLongLongValue], [i[@"waiter"] intValue]);
+							/* we found something that is blocking the correct threadid */
+							for (id j in winfos) {
+								if ([j[@"waiter"] intValue] == [i[@"waiter"] intValue] &&
+								    [j[@"wait_type"] intValue] == kThreadWaitPortReceive) {
+									found_srp_waitinfo = true;
+									break;
+								}
+							}
+
+							if (found_srp_waitinfo) {
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			if (pid != getpid()) {
+				break;
+			}
+			
 			T_EXPECT_EQ_STR(current_process_name(),
-					[container[@"task_snapshots"][@"task_snapshot"][@"ts_p_comm"] UTF8String],
+					[task_snapshot[@"ts_p_comm"] UTF8String],
 					"current process name matches in stackshot");
 
-			uint64_t task_flags = [container[@"task_snapshots"][@"task_snapshot"][@"ts_ss_flags"] unsignedLongLongValue];
-			T_ASSERT_FALSE((task_flags & kTerminatedSnapshot) == kTerminatedSnapshot, "current process not marked as terminated");
+			uint64_t task_flags = [task_snapshot[@"ts_ss_flags"] unsignedLongLongValue];
+			T_ASSERT_BITS_NOTSET(task_flags, kTerminatedSnapshot, "current process not marked as terminated");
+			T_ASSERT_BITS_NOTSET(task_flags, kTaskIsTranslated, "current process not marked as translated");
 
 			T_QUIET;
-			T_EXPECT_LE(pid, [container[@"task_snapshots"][@"task_snapshot"][@"ts_unique_pid"] intValue],
+			T_EXPECT_LE(pid, [task_snapshot[@"ts_unique_pid"] intValue],
 					"unique pid is greater than pid");
 
+			NSDictionary* task_cpu_architecture = container[@"task_snapshots"][@"task_cpu_architecture"];
+			T_QUIET; T_ASSERT_NOTNULL(task_cpu_architecture[@"cputype"], "have cputype");
+			T_QUIET; T_ASSERT_NOTNULL(task_cpu_architecture[@"cpusubtype"], "have cputype");
+			int cputype = [task_cpu_architecture[@"cputype"] intValue];
+			int cpusubtype = [task_cpu_architecture[@"cpusubtype"] intValue];
+
+			struct proc_archinfo archinfo;
+			int retval = proc_pidinfo(pid, PROC_PIDARCHINFO, 0, &archinfo, sizeof(archinfo));
+			T_QUIET; T_WITH_ERRNO; T_ASSERT_GT(retval, 0, "proc_pidinfo(PROC_PIDARCHINFO) returned a value > 0");
+			T_QUIET; T_ASSERT_EQ(retval, (int)sizeof(struct proc_archinfo), "proc_pidinfo call for PROC_PIDARCHINFO returned expected size");
+			T_QUIET; T_EXPECT_EQ(cputype, archinfo.p_cputype, "cpu type is correct");
+			T_QUIET; T_EXPECT_EQ(cpusubtype, archinfo.p_cpusubtype, "cpu subtype is correct");
+
 			bool found_main_thread = false;
-			uint64_t main_thread_id = -1;
+			uint64_t main_thread_id = -1ULL;
+			bool found_null_kernel_frame = false;
 			for (id thread_key in container[@"task_snapshots"][@"thread_snapshots"]) {
 				NSMutableDictionary *thread = container[@"task_snapshots"][@"thread_snapshots"][thread_key];
 				NSDictionary *thread_snap = thread[@"thread_snapshot"];
@@ -1218,7 +2370,7 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 				NSString *pth_name = thread[@"pth_name"];
 				if (pth_name != nil && [pth_name isEqualToString:@TEST_THREAD_NAME]) {
 					found_main_thread = true;
-					main_thread_id = [thread_snap[@"ths_thread_id"] intValue];
+					main_thread_id = [thread_snap[@"ths_thread_id"] unsignedLongLongValue];
 
 					T_QUIET; T_EXPECT_GT([thread_snap[@"ths_total_syscalls"] intValue], 0,
 							"total syscalls of current thread is valid");
@@ -1229,14 +2381,23 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 							[cpu_times[@"user_time"] intValue],
 							"runnable time of current thread is valid");
 				}
+				if (!found_null_kernel_frame) {
+					for (NSNumber *frame in thread[@"kernel_frames"]) {
+						if (frame.unsignedLongValue == 0) {
+							found_null_kernel_frame = true;
+							break;
+						}
+					}
+				}
 			}
 			T_EXPECT_TRUE(found_main_thread, "found main thread for current task in stackshot");
+			T_EXPECT_FALSE(found_null_kernel_frame, "should not see any NULL kernel frames");
 
 			if (expect_turnstile_lock && !found_turnstile_lock) {
 				NSArray *tsinfos = container[@"task_snapshots"][@"thread_turnstileinfo"];
 
 				for (id i in tsinfos) {
-					if ([i[@"turnstile_context"] intValue] == main_thread_id) {
+					if ([i[@"turnstile_context"] unsignedLongLongValue] == main_thread_id) {
 						found_turnstile_lock = true;
 						break;
 					}
@@ -1245,19 +2406,59 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 			break;
 		}
 		case STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO: {
-			struct dyld_uuid_info_64_v2 *shared_cache_info = kcdata_iter_payload(iter);
-			uuid_t shared_cache_uuid;
-			T_QUIET; T_ASSERT_TRUE(_dyld_get_shared_cache_uuid(shared_cache_uuid), "retrieve current shared cache UUID");
-			T_QUIET; T_ASSERT_EQ(memcmp(shared_cache_info->imageUUID, shared_cache_uuid, sizeof(shared_cache_uuid)), 0,
-					"dyld returned UUID doesn't match kernel returned UUID for system shared cache");
+			struct dyld_shared_cache_loadinfo *payload = kcdata_iter_payload(iter);
+			T_ASSERT_EQ((size_t)kcdata_iter_size(iter), sizeof(*payload), "valid dyld_shared_cache_loadinfo struct");
+
+			check_shared_cache_uuid(payload->sharedCacheUUID);
+
+			T_ASSERT_LE(payload->sharedCacheUnreliableSlidBaseAddress,
+				payload->sharedCacheSlidFirstMapping,
+				"SlidBaseAddress <= SlidFirstMapping");
+			T_ASSERT_GE(payload->sharedCacheUnreliableSlidBaseAddress + (1ull << 29),
+				payload->sharedCacheSlidFirstMapping,
+				"SlidFirstMapping should be within 512megs of SlidBaseAddress");
+
+			size_t shared_cache_len;
+			const void *addr = _dyld_get_shared_cache_range(&shared_cache_len);
+			T_ASSERT_EQ((uint64_t)addr, payload->sharedCacheSlidFirstMapping,
+			    "SlidFirstMapping should match shared_cache_range");
+
+			/* 
+			 * check_shared_cache_uuid() asserts on failure, so we must have
+			 * found the shared cache UUID to be correct.
+			 */
 			found_shared_cache_uuid = true;
 			break;
 		}
 		}
 	}
 
+	if (expect_sharedcache_child) {
+		T_QUIET; T_ASSERT_TRUE(found_sharedcache_child, "found sharedcache child in kcdata");
+		T_QUIET; T_ASSERT_TRUE(found_sharedcache_self, "found self in kcdata");
+		if (found_sharedcache_child && found_sharedcache_self) {
+			T_QUIET; T_ASSERT_NE(sharedcache_child_flags, (uint64_t)kTaskSharedRegionNone, "sharedcache child should have shared region");
+			T_QUIET; T_ASSERT_NE(sharedcache_self_flags, (uint64_t)kTaskSharedRegionNone, "sharedcache: self should have shared region");
+			if (sharedcache_self_flags == kTaskSharedRegionSystem && !sharedcache_child_sameaddr) {
+				/* If we're in the system shared region, and the child has a different address, child must have an Other shared region */
+				T_ASSERT_EQ(sharedcache_child_flags, (uint64_t)kTaskSharedRegionOther, 
+				    "sharedcache child should have Other shared region");
+			}
+		}
+	}
+	if (expect_exec_inprogress) {
+		T_QUIET; T_ASSERT_GT(exec_inprogress_found, 0, "found at least 1 task for execing process");
+	}
 	if (expect_zombie_child) {
 		T_QUIET; T_ASSERT_TRUE(found_zombie_child, "found zombie child in kcdata");
+	}
+
+	if (expect_postexec_child) {
+		T_QUIET; T_ASSERT_TRUE(found_postexec_child, "found post-exec child in kcdata");
+	}
+
+	if (expect_translated_child) {
+		T_QUIET; T_ASSERT_TRUE(found_translated_child, "found translated child in kcdata");
 	}
 
 	if (expect_shared_cache_layout) {
@@ -1276,7 +2477,17 @@ parse_stackshot(uint64_t stackshot_parsing_flags, void *ssbuf, size_t sslen, int
 		T_QUIET; T_ASSERT_TRUE(found_turnstile_lock, "found expected deadlock");
 	}
 
+	if (expect_cseg_waitinfo) {
+		T_QUIET; T_ASSERT_TRUE(found_cseg_waitinfo, "found c_seg waitinfo");
+	}
+
+	if (expect_srp_waitinfo) {
+		T_QUIET; T_ASSERT_TRUE(found_srp_waitinfo, "found special reply port waitinfo");
+	}
+
 	T_ASSERT_FALSE(KCDATA_ITER_FOREACH_FAILED(iter), "successfully iterated kcdata");
+
+	free(inflatedBufferBase);
 }
 
 static const char *

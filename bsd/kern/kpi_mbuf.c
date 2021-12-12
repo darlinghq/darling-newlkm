@@ -34,7 +34,6 @@
 #include <sys/socket.h>
 #include <kern/debug.h>
 #include <libkern/OSAtomic.h>
-#include <kern/kalloc.h>
 #include <string.h>
 #include <net/dlil.h>
 #include <netinet/in.h>
@@ -53,7 +52,7 @@ static const mbuf_flags_t mbuf_cflags_mask = (MBUF_EXT);
 #define MAX_MBUF_TX_COMPL_FUNC 32
 mbuf_tx_compl_func
     mbuf_tx_compl_table[MAX_MBUF_TX_COMPL_FUNC];
-extern lck_rw_t *mbuf_tx_compl_tbl_lock;
+extern lck_rw_t mbuf_tx_compl_tbl_lock;
 u_int32_t mbuf_tx_compl_index = 0;
 
 #if (DEVELOPMENT || DEBUG)
@@ -814,14 +813,12 @@ mbuf_outbound_finalize(struct mbuf *m, u_int32_t pf, size_t o)
 		break;
 
 	case PF_INET6:
-#if INET6
 		/*
 		 * Checksum offload should not have been enabled when
 		 * extension headers exist; indicate that the callee
 		 * should skip such case by setting optlen to -1.
 		 */
 		(void) in6_finalize_cksum(m, o, -1, -1, m->m_pkthdr.csum_flags);
-#endif /* INET6 */
 		break;
 
 	default:
@@ -983,7 +980,6 @@ mbuf_inet_cksum(mbuf_t mbuf, int protocol, u_int32_t offset, u_int32_t length,
 	return 0;
 }
 
-#if INET6
 errno_t
 mbuf_inet6_cksum(mbuf_t mbuf, int protocol, u_int32_t offset, u_int32_t length,
     u_int16_t *csum)
@@ -996,45 +992,6 @@ mbuf_inet6_cksum(mbuf_t mbuf, int protocol, u_int32_t offset, u_int32_t length,
 	*csum = inet6_cksum(mbuf, protocol, offset, length);
 	return 0;
 }
-#else /* INET6 */
-errno_t
-mbuf_inet6_cksum(__unused mbuf_t mbuf, __unused int protocol,
-    __unused u_int32_t offset, __unused u_int32_t length,
-    __unused u_int16_t *csum)
-{
-	panic("mbuf_inet6_cksum() doesn't exist on this platform\n");
-	return 0;
-}
-
-u_int16_t
-inet6_cksum(__unused struct mbuf *m, __unused unsigned int nxt,
-    __unused unsigned int off, __unused unsigned int len)
-{
-	panic("inet6_cksum() doesn't exist on this platform\n");
-	return 0;
-}
-
-void nd6_lookup_ipv6(void);
-void
-nd6_lookup_ipv6(void)
-{
-	panic("nd6_lookup_ipv6() doesn't exist on this platform\n");
-}
-
-int
-in6addr_local(__unused struct in6_addr *a)
-{
-	panic("in6addr_local() doesn't exist on this platform\n");
-	return 0;
-}
-
-void nd6_storelladdr(void);
-void
-nd6_storelladdr(void)
-{
-	panic("nd6_storelladdr() doesn't exist on this platform\n");
-}
-#endif /* INET6 */
 
 /*
  * Mbuf tag KPIs
@@ -1825,11 +1782,11 @@ get_tx_compl_callback_index(mbuf_tx_compl_func callback)
 {
 	u_int32_t i;
 
-	lck_rw_lock_shared(mbuf_tx_compl_tbl_lock);
+	lck_rw_lock_shared(&mbuf_tx_compl_tbl_lock);
 
 	i = get_tx_compl_callback_index_locked(callback);
 
-	lck_rw_unlock_shared(mbuf_tx_compl_tbl_lock);
+	lck_rw_unlock_shared(&mbuf_tx_compl_tbl_lock);
 
 	return i;
 }
@@ -1843,9 +1800,9 @@ m_get_tx_compl_callback(u_int32_t idx)
 		ASSERT(0);
 		return NULL;
 	}
-	lck_rw_lock_shared(mbuf_tx_compl_tbl_lock);
+	lck_rw_lock_shared(&mbuf_tx_compl_tbl_lock);
 	cb = mbuf_tx_compl_table[idx];
-	lck_rw_unlock_shared(mbuf_tx_compl_tbl_lock);
+	lck_rw_unlock_shared(&mbuf_tx_compl_tbl_lock);
 	return cb;
 }
 
@@ -1859,7 +1816,7 @@ mbuf_register_tx_compl_callback(mbuf_tx_compl_func callback)
 		return EINVAL;
 	}
 
-	lck_rw_lock_exclusive(mbuf_tx_compl_tbl_lock);
+	lck_rw_lock_exclusive(&mbuf_tx_compl_tbl_lock);
 
 	i = get_tx_compl_callback_index_locked(callback);
 	if (i != -1) {
@@ -1877,7 +1834,7 @@ mbuf_register_tx_compl_callback(mbuf_tx_compl_func callback)
 		}
 	}
 unlock:
-	lck_rw_unlock_exclusive(mbuf_tx_compl_tbl_lock);
+	lck_rw_unlock_exclusive(&mbuf_tx_compl_tbl_lock);
 
 	return error;
 }
@@ -1892,7 +1849,7 @@ mbuf_unregister_tx_compl_callback(mbuf_tx_compl_func callback)
 		return EINVAL;
 	}
 
-	lck_rw_lock_exclusive(mbuf_tx_compl_tbl_lock);
+	lck_rw_lock_exclusive(&mbuf_tx_compl_tbl_lock);
 
 	/* assume the worst */
 	error = ENOENT;
@@ -1904,7 +1861,7 @@ mbuf_unregister_tx_compl_callback(mbuf_tx_compl_func callback)
 		}
 	}
 unlock:
-	lck_rw_unlock_exclusive(mbuf_tx_compl_tbl_lock);
+	lck_rw_unlock_exclusive(&mbuf_tx_compl_tbl_lock);
 
 	return error;
 }
@@ -1993,9 +1950,9 @@ m_do_tx_compl_callback(struct mbuf *m, struct ifnet *ifp)
 			continue;
 		}
 
-		lck_rw_lock_shared(mbuf_tx_compl_tbl_lock);
+		lck_rw_lock_shared(&mbuf_tx_compl_tbl_lock);
 		callback = mbuf_tx_compl_table[i];
-		lck_rw_unlock_shared(mbuf_tx_compl_tbl_lock);
+		lck_rw_unlock_shared(&mbuf_tx_compl_tbl_lock);
 
 		if (callback != NULL) {
 			callback(m->m_pkthdr.pkt_compl_context,

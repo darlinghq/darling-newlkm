@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2006-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -86,26 +86,24 @@
  * caches when memory runs low.
  */
 #define MCACHE_LIST_LOCK() {                            \
-	lck_mtx_lock(mcache_llock);                     \
+	lck_mtx_lock(&mcache_llock);                     \
 	mcache_llock_owner = current_thread();          \
 }
 
 #define MCACHE_LIST_UNLOCK() {                          \
 	mcache_llock_owner = NULL;                      \
-	lck_mtx_unlock(mcache_llock);                   \
+	lck_mtx_unlock(&mcache_llock);                   \
 }
 
 #define MCACHE_LOCK(l)          lck_mtx_lock(l)
 #define MCACHE_UNLOCK(l)        lck_mtx_unlock(l)
 #define MCACHE_LOCK_TRY(l)      lck_mtx_try_lock(l)
 
-static int ncpu;
+static unsigned int ncpu;
 static unsigned int cache_line_size;
-static lck_mtx_t *mcache_llock;
 static struct thread *mcache_llock_owner;
-static lck_attr_t *mcache_llock_attr;
-static lck_grp_t *mcache_llock_grp;
-static lck_grp_attr_t *mcache_llock_grp_attr;
+static LCK_GRP_DECLARE(mcache_llock_grp, "mcache.list");
+static LCK_MTX_DECLARE(mcache_llock, &mcache_llock_grp);
 static struct zone *mcache_zone;
 static const uint32_t mcache_reap_interval = 15;
 static const uint32_t mcache_reap_interval_leeway = 2;
@@ -122,9 +120,6 @@ static unsigned int mcache_flags = 0;
 
 int mca_trn_max = MCA_TRN_MAX;
 
-#define DUMP_MCA_BUF_SIZE       512
-static char *mca_dump_buf;
-
 static mcache_bkttype_t mcache_bkttype[] = {
 	{ 1, 4096, 32768, NULL },
 	{ 3, 2048, 16384, NULL },
@@ -140,7 +135,7 @@ static mcache_bkttype_t mcache_bkttype[] = {
 
 static mcache_t *mcache_create_common(const char *, size_t, size_t,
     mcache_allocfn_t, mcache_freefn_t, mcache_auditfn_t, mcache_logfn_t,
-    mcache_notifyfn_t, void *, u_int32_t, int, int);
+    mcache_notifyfn_t, void *, u_int32_t, int);
 static unsigned int mcache_slab_alloc(void *, mcache_obj_t ***,
     unsigned int, int);
 static void mcache_slab_free(void *, mcache_obj_t *, boolean_t);
@@ -186,14 +181,8 @@ mcache_init(void)
 
 	VERIFY(mca_trn_max >= 2);
 
-	ncpu = ml_get_max_cpus();
+	ncpu = ml_wait_max_cpus();
 	(void) mcache_cache_line_size();        /* prime it */
-
-	mcache_llock_grp_attr = lck_grp_attr_alloc_init();
-	mcache_llock_grp = lck_grp_alloc_init("mcache.list",
-	    mcache_llock_grp_attr);
-	mcache_llock_attr = lck_attr_alloc_init();
-	mcache_llock = lck_mtx_alloc_init(mcache_llock_grp, mcache_llock_attr);
 
 	mcache_reap_tcall = thread_call_allocate(mcache_reap_timeout, NULL);
 	mcache_update_tcall = thread_call_allocate(mcache_update, NULL);
@@ -203,14 +192,7 @@ mcache_init(void)
 		__builtin_unreachable();
 	}
 
-	mcache_zone = zinit(MCACHE_ALLOC_SIZE, 256 * MCACHE_ALLOC_SIZE,
-	    PAGE_SIZE, "mcache");
-	if (mcache_zone == NULL) {
-		panic("mcache_init: failed to allocate mcache zone\n");
-		/* NOTREACHED */
-		__builtin_unreachable();
-	}
-	zone_change(mcache_zone, Z_CALLERACCT, FALSE);
+	mcache_zone = zone_create("mcache", MCACHE_ALLOC_SIZE, ZC_DESTRUCTIBLE);
 
 	LIST_INIT(&mcache_head);
 
@@ -253,7 +235,7 @@ mcache_cache_line_size(void)
 	if (cache_line_size == 0) {
 		ml_cpu_info_t cpu_info;
 		ml_cpu_get_info(&cpu_info);
-		cache_line_size = cpu_info.cache_line_size;
+		cache_line_size = (unsigned int)cpu_info.cache_line_size;
 	}
 	return cache_line_size;
 }
@@ -265,11 +247,10 @@ mcache_cache_line_size(void)
  */
 __private_extern__ mcache_t *
 mcache_create(const char *name, size_t bufsize, size_t align,
-    u_int32_t flags, int wait)
+    u_int32_t flags, int wait __unused)
 {
 	return mcache_create_common(name, bufsize, align, mcache_slab_alloc,
-	           mcache_slab_free, mcache_slab_audit, NULL, NULL, NULL, flags, 1,
-	           wait);
+	           mcache_slab_free, mcache_slab_audit, NULL, NULL, NULL, flags, 1);
 }
 
 /*
@@ -281,10 +262,10 @@ __private_extern__ mcache_t *
 mcache_create_ext(const char *name, size_t bufsize,
     mcache_allocfn_t allocfn, mcache_freefn_t freefn, mcache_auditfn_t auditfn,
     mcache_logfn_t logfn, mcache_notifyfn_t notifyfn, void *arg,
-    u_int32_t flags, int wait)
+    u_int32_t flags, int wait __unused)
 {
 	return mcache_create_common(name, bufsize, 0, allocfn,
-	           freefn, auditfn, logfn, notifyfn, arg, flags, 0, wait);
+	           freefn, auditfn, logfn, notifyfn, arg, flags, 0);
 }
 
 /*
@@ -294,31 +275,19 @@ static mcache_t *
 mcache_create_common(const char *name, size_t bufsize, size_t align,
     mcache_allocfn_t allocfn, mcache_freefn_t freefn, mcache_auditfn_t auditfn,
     mcache_logfn_t logfn, mcache_notifyfn_t notifyfn, void *arg,
-    u_int32_t flags, int need_zone, int wait)
+    u_int32_t flags, int need_zone)
 {
 	mcache_bkttype_t *btp;
 	mcache_t *cp = NULL;
 	size_t chunksize;
 	void *buf, **pbuf;
-	int c;
+	unsigned int c;
 	char lck_name[64];
 
-	/* If auditing is on and print buffer is NULL, allocate it now */
-	if ((flags & MCF_DEBUG) && mca_dump_buf == NULL) {
-		int malloc_wait = (wait & MCR_NOSLEEP) ? M_NOWAIT : M_WAITOK;
-		MALLOC(mca_dump_buf, char *, DUMP_MCA_BUF_SIZE, M_TEMP,
-		    malloc_wait | M_ZERO);
-		if (mca_dump_buf == NULL) {
-			return NULL;
-		}
-	}
-
-	buf = zalloc(mcache_zone);
+	buf = zalloc_flags(mcache_zone, Z_WAITOK | Z_ZERO);
 	if (buf == NULL) {
 		goto fail;
 	}
-
-	bzero(buf, MCACHE_ALLOC_SIZE);
 
 	/*
 	 * In case we didn't get a cache-aligned memory, round it up
@@ -365,10 +334,7 @@ mcache_create_common(const char *name, size_t bufsize, size_t align,
 	(void) snprintf(cp->mc_name, sizeof(cp->mc_name), "mcache.%s", name);
 
 	(void) snprintf(lck_name, sizeof(lck_name), "%s.cpu", cp->mc_name);
-	cp->mc_cpu_lock_grp_attr = lck_grp_attr_alloc_init();
-	cp->mc_cpu_lock_grp = lck_grp_alloc_init(lck_name,
-	    cp->mc_cpu_lock_grp_attr);
-	cp->mc_cpu_lock_attr = lck_attr_alloc_init();
+	cp->mc_cpu_lock_grp = lck_grp_alloc_init(lck_name, LCK_GRP_ATTR_NULL);
 
 	/*
 	 * Allocation chunk size is the object's size plus any extra size
@@ -382,11 +348,7 @@ mcache_create_common(const char *name, size_t bufsize, size_t align,
 		VERIFY(align != 0 && (align % MCACHE_ALIGN) == 0);
 		chunksize += sizeof(uint64_t) + align;
 		chunksize = P2ROUNDUP(chunksize, align);
-		if ((cp->mc_slab_zone = zinit(chunksize, 64 * 1024 * ncpu,
-		    PAGE_SIZE, cp->mc_name)) == NULL) {
-			goto fail;
-		}
-		zone_change(cp->mc_slab_zone, Z_EXPAND, TRUE);
+		cp->mc_slab_zone = zone_create(cp->mc_name, chunksize, ZC_DESTRUCTIBLE);
 	}
 	cp->mc_chunksize = chunksize;
 
@@ -394,20 +356,14 @@ mcache_create_common(const char *name, size_t bufsize, size_t align,
 	 * Initialize the bucket layer.
 	 */
 	(void) snprintf(lck_name, sizeof(lck_name), "%s.bkt", cp->mc_name);
-	cp->mc_bkt_lock_grp_attr = lck_grp_attr_alloc_init();
 	cp->mc_bkt_lock_grp = lck_grp_alloc_init(lck_name,
-	    cp->mc_bkt_lock_grp_attr);
-	cp->mc_bkt_lock_attr = lck_attr_alloc_init();
-	lck_mtx_init(&cp->mc_bkt_lock, cp->mc_bkt_lock_grp,
-	    cp->mc_bkt_lock_attr);
+	    LCK_GRP_ATTR_NULL);
+	lck_mtx_init(&cp->mc_bkt_lock, cp->mc_bkt_lock_grp, LCK_ATTR_NULL);
 
 	(void) snprintf(lck_name, sizeof(lck_name), "%s.sync", cp->mc_name);
-	cp->mc_sync_lock_grp_attr = lck_grp_attr_alloc_init();
 	cp->mc_sync_lock_grp = lck_grp_alloc_init(lck_name,
-	    cp->mc_sync_lock_grp_attr);
-	cp->mc_sync_lock_attr = lck_attr_alloc_init();
-	lck_mtx_init(&cp->mc_sync_lock, cp->mc_sync_lock_grp,
-	    cp->mc_sync_lock_attr);
+	    LCK_GRP_ATTR_NULL);
+	lck_mtx_init(&cp->mc_sync_lock, cp->mc_sync_lock_grp, LCK_ATTR_NULL);
 
 	for (btp = mcache_bkttype; chunksize <= btp->bt_minbuf; btp++) {
 		continue;
@@ -423,8 +379,7 @@ mcache_create_common(const char *name, size_t bufsize, size_t align,
 		mcache_cpu_t *ccp = &cp->mc_cpu[c];
 
 		VERIFY(IS_P2ALIGNED(ccp, CPU_CACHE_LINE_SIZE));
-		lck_mtx_init(&ccp->cc_lock, cp->mc_cpu_lock_grp,
-		    cp->mc_cpu_lock_attr);
+		lck_mtx_init(&ccp->cc_lock, cp->mc_cpu_lock_grp, LCK_ATTR_NULL);
 		ccp->cc_objs = -1;
 		ccp->cc_pobjs = -1;
 	}
@@ -907,17 +862,9 @@ mcache_destroy(mcache_t *cp)
 	cp->mc_slab_free = NULL;
 	cp->mc_slab_audit = NULL;
 
-	lck_attr_free(cp->mc_bkt_lock_attr);
 	lck_grp_free(cp->mc_bkt_lock_grp);
-	lck_grp_attr_free(cp->mc_bkt_lock_grp_attr);
-
-	lck_attr_free(cp->mc_cpu_lock_attr);
 	lck_grp_free(cp->mc_cpu_lock_grp);
-	lck_grp_attr_free(cp->mc_cpu_lock_grp_attr);
-
-	lck_attr_free(cp->mc_sync_lock_attr);
 	lck_grp_free(cp->mc_sync_lock_grp);
-	lck_grp_attr_free(cp->mc_sync_lock_grp_attr);
 
 	/*
 	 * TODO: We need to destroy the zone here, but cannot do it
@@ -1146,7 +1093,7 @@ static void
 mcache_cache_bkt_enable(mcache_t *cp)
 {
 	mcache_cpu_t *ccp;
-	int cpu;
+	unsigned int cpu;
 
 	if (cp->mc_flags & MCF_NOCPUCACHE) {
 		return;
@@ -1168,7 +1115,8 @@ mcache_bkt_purge(mcache_t *cp)
 {
 	mcache_cpu_t *ccp;
 	mcache_bkt_t *bp, *pbp;
-	int cpu, objs, pobjs;
+	int objs, pobjs;
+	unsigned int cpu;
 
 	for (cpu = 0; cpu < ncpu; cpu++) {
 		ccp = &cp->mc_cpu[cpu];
@@ -1368,7 +1316,7 @@ mcache_cache_update(mcache_t *cp)
 	int need_bkt_resize = 0;
 	int need_bkt_reenable = 0;
 
-	lck_mtx_assert(mcache_llock, LCK_MTX_ASSERT_OWNED);
+	lck_mtx_assert(&mcache_llock, LCK_MTX_ASSERT_OWNED);
 
 	mcache_bkt_ws_update(cp);
 
@@ -1508,7 +1456,7 @@ mcache_buffer_log(mcache_audit_t *mca, void *addr, mcache_t *cp,
 	transaction->mca_thread = current_thread();
 
 	bzero(stack, sizeof(stack));
-	transaction->mca_depth = OSBacktrace(stack, MCACHE_STACK_DEPTH + 1) - 1;
+	transaction->mca_depth = (uint16_t)OSBacktrace(stack, MCACHE_STACK_DEPTH + 1) - 1;
 	bcopy(&stack[1], transaction->mca_stack,
 	    sizeof(transaction->mca_stack));
 
@@ -1526,7 +1474,13 @@ mcache_buffer_log(mcache_audit_t *mca, void *addr, mcache_t *cp,
 	    (mca->mca_next_trn + 1) % mca_trn_max;
 }
 
-__private_extern__ void
+/*
+ * N.B.: mcache_set_pattern(), mcache_verify_pattern() and
+ * mcache_verify_set_pattern() are marked as noinline to prevent the
+ * compiler from aliasing pointers when they are inlined inside the callers
+ * (e.g. mcache_audit_free_verify_set()) which would be undefined behavior.
+ */
+__private_extern__ OS_NOINLINE void
 mcache_set_pattern(u_int64_t pattern, void *buf_arg, size_t size)
 {
 	u_int64_t *buf_end = (u_int64_t *)((void *)((char *)buf_arg + size));
@@ -1540,7 +1494,7 @@ mcache_set_pattern(u_int64_t pattern, void *buf_arg, size_t size)
 	}
 }
 
-__private_extern__ void *
+__private_extern__ OS_NOINLINE void *
 mcache_verify_pattern(u_int64_t pattern, void *buf_arg, size_t size)
 {
 	u_int64_t *buf_end = (u_int64_t *)((void *)((char *)buf_arg + size));
@@ -1557,7 +1511,7 @@ mcache_verify_pattern(u_int64_t pattern, void *buf_arg, size_t size)
 	return NULL;
 }
 
-__private_extern__ void *
+OS_NOINLINE static void *
 mcache_verify_set_pattern(u_int64_t old, u_int64_t new, void *buf_arg,
     size_t size)
 {
@@ -1649,13 +1603,9 @@ mcache_audit_free_verify_set(mcache_audit_t *mca, void *base, size_t offset,
 #define MCA_TRN_PREV ((mca->mca_next_trn + mca_trn_max - 1) % mca_trn_max)
 
 __private_extern__ char *
-mcache_dump_mca(mcache_audit_t *mca)
+mcache_dump_mca(char buf[static DUMP_MCA_BUF_SIZE], mcache_audit_t *mca)
 {
-	if (mca_dump_buf == NULL) {
-		return NULL;
-	}
-
-	snprintf(mca_dump_buf, DUMP_MCA_BUF_SIZE,
+	snprintf(buf, DUMP_MCA_BUF_SIZE,
 	    "mca %p: addr %p, cache %p (%s) nxttrn %d\n"
 	    DUMP_TRN_FMT()
 	    DUMP_TRN_FMT(),
@@ -1667,13 +1617,15 @@ mcache_dump_mca(mcache_audit_t *mca)
 	    DUMP_TRN_FIELDS("last", MCA_TRN_LAST),
 	    DUMP_TRN_FIELDS("previous", MCA_TRN_PREV));
 
-	return mca_dump_buf;
+	return buf;
 }
 
 __private_extern__ void
 mcache_audit_panic(mcache_audit_t *mca, void *addr, size_t offset,
     int64_t expected, int64_t got)
 {
+	char buf[DUMP_MCA_BUF_SIZE];
+
 	if (mca == NULL) {
 		panic("mcache_audit: buffer %p modified after free at "
 		    "offset 0x%lx (0x%llx instead of 0x%llx)\n", addr,
@@ -1684,7 +1636,7 @@ mcache_audit_panic(mcache_audit_t *mca, void *addr, size_t offset,
 
 	panic("mcache_audit: buffer %p modified after free at offset 0x%lx "
 	    "(0x%llx instead of 0x%llx)\n%s\n",
-	    addr, offset, got, expected, mcache_dump_mca(mca));
+	    addr, offset, got, expected, mcache_dump_mca(buf, mca));
 	/* NOTREACHED */
 	__builtin_unreachable();
 }

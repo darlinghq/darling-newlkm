@@ -75,17 +75,12 @@ __private_extern__
 kern_return_t           memory_manager_default_check(void);
 
 __private_extern__
-void                    memory_manager_default_init(void);
-
-__private_extern__
-void                    memory_object_control_bootstrap(void);
-__private_extern__
 memory_object_control_t memory_object_control_allocate(
 	vm_object_t             object);
 
 __private_extern__
 void                    memory_object_control_collapse(
-	memory_object_control_t control,
+	memory_object_control_t *control,
 	vm_object_t             object);
 
 __private_extern__
@@ -100,7 +95,7 @@ mach_port_t             convert_mo_control_to_port(
 	memory_object_control_t control);
 
 extern void memory_object_control_disable(
-	memory_object_control_t control);
+	memory_object_control_t *control);
 
 extern
 memory_object_control_t convert_port_to_mo_control(

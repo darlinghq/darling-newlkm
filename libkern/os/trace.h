@@ -24,9 +24,6 @@
 #ifndef __OS_TRACE_H__
 #define __OS_TRACE_H__
 
-#ifdef DARLING
-#include <os/trace_base.h>
-#endif
 #include <Availability.h>
 #include <os/base.h>
 #include <sys/types.h>
@@ -45,9 +42,7 @@ typedef void *xpc_object_t;
 
 __BEGIN_DECLS
 
-#ifndef DARLING
 extern void *__dso_handle;
-#endif
 
 OS_ALWAYS_INLINE
 static inline void

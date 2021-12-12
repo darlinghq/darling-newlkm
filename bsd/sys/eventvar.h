@@ -166,10 +166,6 @@ struct kqueue {
 		uint32_t            kq_count;     /* number of queued events */
 		struct proc        *kq_p;         /* process containing kqueue */
 		struct knote_locks  kq_knlocks;   /* list of knote locks held */
-#ifdef __DARLING__
-		void               *dkq_fs_group; /* fsnotify group allocated for this kqueue */
-		struct file        *dkq_fp;       /* Linux file pointer associated with this kqueue */
-#endif
 	}; /* make sure struct padding is put before kq_queue */
 	struct kqtailq      kq_queue[0];      /* variable array of queues */
 };

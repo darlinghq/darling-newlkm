@@ -72,7 +72,7 @@ L_start_cpu_0:
 	orr		r5, r5, #(TTBR_SETUP & 0xFF00)		// Setup PTWs memory attribute
 	mcr		p15, 0, r5, c2, c0, 0				// write kernel to translation table base 0
 	mcr		p15, 0, r5, c2, c0, 1				// also to translation table base 1
-	mov		r5, #TTBCR_N_1GB_TTB0				// identify the split between 0 and 1
+	mov		r5, #TTBCR_N_SETUP					// identify the split between 0 and 1
 	mcr		p15, 0, r5, c2, c0, 2				// and set up the translation control reg
 	ldr		r2, [r1, CPU_NUMBER_GS]				// Get cpu number
 	mcr		p15, 0, r2, c13, c0, 3				// Write TPIDRURO
@@ -151,7 +151,7 @@ LEXT(_start)
 	orr		r5, r5, #(TTBR_SETUP & 0xFF00)		// Setup PTWs memory attribute
 	mcr		p15, 0, r5, c2, c0, 0				// write kernel to translation table base 0
 	mcr		p15, 0, r5, c2, c0, 1				// also to translation table base 1
-	mov		r5, #TTBCR_N_1GB_TTB0				// identify the split between 0 and 1
+	mov		r5, #TTBCR_N_SETUP					// identify the split between 0 and 1
 	mcr		p15, 0, r5, c2, c0, 2				// and set up the translation control reg
 		
 	// Mark the entries invalid in the 4 page trampoline translation table

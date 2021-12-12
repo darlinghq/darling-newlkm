@@ -65,7 +65,9 @@
  * FreeBSD-Id: nfs_srvcache.c,v 1.15 1997/10/12 20:25:46 phk Exp $
  */
 
-#if NFSSERVER
+#include <nfs/nfs_conf.h>
+#if CONFIG_NFS_SERVER
+
 /*
  * Reference: Chet Juszczak, "Improving the Performance and Correctness
  *		of an NFS Server", in Proc. Winter 1989 USENIX Conference,
@@ -98,8 +100,8 @@ LIST_HEAD(nfsrv_reqcache_hash, nfsrvcache) * nfsrv_reqcache_hashtbl;
 TAILQ_HEAD(nfsrv_reqcache_lru, nfsrvcache) nfsrv_reqcache_lruhead;
 u_long nfsrv_reqcache_hash;
 
-lck_grp_t *nfsrv_reqcache_lck_grp;
-lck_mtx_t *nfsrv_reqcache_mutex;
+static LCK_GRP_DECLARE(nfsrv_reqcache_lck_grp, "nfsrv_reqcache");
+LCK_MTX_DECLARE(nfsrv_reqcache_mutex, &nfsrv_reqcache_lck_grp);
 
 /*
  * Static array that defines which nfs rpc's are nonidempotent
@@ -162,11 +164,11 @@ nfsrv_initcache(void)
 		return;
 	}
 
-	lck_mtx_lock(nfsrv_reqcache_mutex);
+	lck_mtx_lock(&nfsrv_reqcache_mutex);
 	/* init nfs server request cache hash table */
 	nfsrv_reqcache_hashtbl = hashinit(nfsrv_reqcache_size, M_NFSD, &nfsrv_reqcache_hash);
 	TAILQ_INIT(&nfsrv_reqcache_lruhead);
-	lck_mtx_unlock(nfsrv_reqcache_mutex);
+	lck_mtx_unlock(&nfsrv_reqcache_mutex);
 }
 
 /*
@@ -237,7 +239,7 @@ nfsrv_getcache(
 	if (!nd->nd_nam2) {
 		return RC_DOIT;
 	}
-	lck_mtx_lock(nfsrv_reqcache_mutex);
+	lck_mtx_lock(&nfsrv_reqcache_mutex);
 loop:
 	for (rp = NFSRCHASH(nd->nd_retxid)->lh_first; rp != 0;
 	    rp = rp->rc_hash.le_next) {
@@ -245,7 +247,7 @@ loop:
 		    netaddr_match(rp->rc_family, &rp->rc_haddr, nd->nd_nam)) {
 			if ((rp->rc_flag & RC_LOCKED) != 0) {
 				rp->rc_flag |= RC_WANTED;
-				msleep(rp, nfsrv_reqcache_mutex, PZERO - 1, "nfsrc", NULL);
+				msleep(rp, &nfsrv_reqcache_mutex, PZERO - 1, "nfsrc", NULL);
 				goto loop;
 			}
 			rp->rc_flag |= RC_LOCKED;
@@ -291,7 +293,7 @@ loop:
 				rp->rc_flag &= ~RC_WANTED;
 				wakeup(rp);
 			}
-			lck_mtx_unlock(nfsrv_reqcache_mutex);
+			lck_mtx_unlock(&nfsrv_reqcache_mutex);
 			return ret;
 		}
 	}
@@ -313,12 +315,12 @@ loop:
 		if (!rp) {
 			/* no entry to reuse? */
 			/* OK, we just won't be able to cache this request */
-			lck_mtx_unlock(nfsrv_reqcache_mutex);
+			lck_mtx_unlock(&nfsrv_reqcache_mutex);
 			return RC_DOIT;
 		}
 		while ((rp->rc_flag & RC_LOCKED) != 0) {
 			rp->rc_flag |= RC_WANTED;
-			msleep(rp, nfsrv_reqcache_mutex, PZERO - 1, "nfsrc", NULL);
+			msleep(rp, &nfsrv_reqcache_mutex, PZERO - 1, "nfsrc", NULL);
 			rp = nfsrv_reqcache_lruhead.tqh_first;
 		}
 		rp->rc_flag |= RC_LOCKED;
@@ -363,7 +365,7 @@ loop:
 		rp->rc_flag &= ~RC_WANTED;
 		wakeup(rp);
 	}
-	lck_mtx_unlock(nfsrv_reqcache_mutex);
+	lck_mtx_unlock(&nfsrv_reqcache_mutex);
 	return RC_DOIT;
 }
 
@@ -382,7 +384,7 @@ nfsrv_updatecache(
 	if (!nd->nd_nam2) {
 		return;
 	}
-	lck_mtx_lock(nfsrv_reqcache_mutex);
+	lck_mtx_lock(&nfsrv_reqcache_mutex);
 loop:
 	for (rp = NFSRCHASH(nd->nd_retxid)->lh_first; rp != 0;
 	    rp = rp->rc_hash.le_next) {
@@ -390,7 +392,7 @@ loop:
 		    netaddr_match(rp->rc_family, &rp->rc_haddr, nd->nd_nam)) {
 			if ((rp->rc_flag & RC_LOCKED) != 0) {
 				rp->rc_flag |= RC_WANTED;
-				msleep(rp, nfsrv_reqcache_mutex, PZERO - 1, "nfsrc", NULL);
+				msleep(rp, &nfsrv_reqcache_mutex, PZERO - 1, "nfsrc", NULL);
 				goto loop;
 			}
 			rp->rc_flag |= RC_LOCKED;
@@ -428,11 +430,11 @@ loop:
 				rp->rc_flag &= ~RC_WANTED;
 				wakeup(rp);
 			}
-			lck_mtx_unlock(nfsrv_reqcache_mutex);
+			lck_mtx_unlock(&nfsrv_reqcache_mutex);
 			return;
 		}
 	}
-	lck_mtx_unlock(nfsrv_reqcache_mutex);
+	lck_mtx_unlock(&nfsrv_reqcache_mutex);
 }
 
 /*
@@ -443,7 +445,7 @@ nfsrv_cleancache(void)
 {
 	struct nfsrvcache *rp, *nextrp;
 
-	lck_mtx_lock(nfsrv_reqcache_mutex);
+	lck_mtx_lock(&nfsrv_reqcache_mutex);
 	for (rp = nfsrv_reqcache_lruhead.tqh_first; rp != 0; rp = nextrp) {
 		nextrp = rp->rc_lru.tqe_next;
 		LIST_REMOVE(rp, rc_hash);
@@ -452,7 +454,7 @@ nfsrv_cleancache(void)
 	}
 	nfsrv_reqcache_count = 0;
 	FREE(nfsrv_reqcache_hashtbl, M_TEMP);
-	lck_mtx_unlock(nfsrv_reqcache_mutex);
+	lck_mtx_unlock(&nfsrv_reqcache_mutex);
 }
 
-#endif /* NFSSERVER */
+#endif /* CONFIG_NFS_SERVER */

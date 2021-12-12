@@ -27,22 +27,13 @@
  *
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <pthread/priority_private.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 #ifndef QOS_MIN_RELATIVE_PRIORITY // from <sys/qos.h> in userspace
 #define QOS_MIN_RELATIVE_PRIORITY -15
 #endif
 
-pthread_priority_t
+pthread_priority_compact_t
 _pthread_priority_normalize(pthread_priority_t pp)
 {
 	if (pp & _PTHREAD_PRIORITY_EVENT_MANAGER_FLAG) {
@@ -61,7 +52,7 @@ _pthread_priority_normalize(pthread_priority_t pp)
 	return _pthread_unspecified_priority();
 }
 
-pthread_priority_t
+pthread_priority_compact_t
 _pthread_priority_normalize_for_ipc(pthread_priority_t pp)
 {
 	if (_pthread_priority_has_qos(pp)) {
@@ -75,7 +66,7 @@ _pthread_priority_normalize_for_ipc(pthread_priority_t pp)
 	return _pthread_unspecified_priority();
 }
 
-pthread_priority_t
+pthread_priority_compact_t
 _pthread_priority_combine(pthread_priority_t base_pp, thread_qos_t qos)
 {
 	if (base_pp & _PTHREAD_PRIORITY_EVENT_MANAGER_FLAG) {
@@ -84,10 +75,10 @@ _pthread_priority_combine(pthread_priority_t base_pp, thread_qos_t qos)
 
 	if (base_pp & _PTHREAD_PRIORITY_FALLBACK_FLAG) {
 		if (!qos) {
-			return base_pp;
+			return (pthread_priority_compact_t)base_pp;
 		}
 	} else if (qos < _pthread_priority_thread_qos(base_pp)) {
-		return base_pp;
+		return (pthread_priority_compact_t)base_pp;
 	}
 
 	return _pthread_priority_make_from_thread_qos(qos, 0,

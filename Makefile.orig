@@ -1,5 +1,5 @@
 #
-# Copyright (C) 1999-2016 Apple Inc. All rights reserved.
+# Copyright (C) 1999-2020 Apple Inc. All rights reserved.
 #
 ifndef VERSDIR
 export VERSDIR := $(shell /bin/pwd)
@@ -31,17 +31,22 @@ export MakeInc_def=${VERSDIR}/makedefs/MakeInc.def
 export MakeInc_rule=${VERSDIR}/makedefs/MakeInc.rule
 export MakeInc_dir=${VERSDIR}/makedefs/MakeInc.dir
 
+
 #
 # Dispatch non-xnu build aliases to their own build
 # systems. All xnu variants start with MakeInc_top.
 #
 
-ifeq ($(findstring Libsyscall,$(RC_ProjectName)),Libsyscall)
+ifneq ($(findstring Libsyscall,$(RC_ProjectName)),)
 
 include $(MakeInc_cmd)
 
-ifneq ($(findstring Libsyscall_,$(RC_ProjectName)),)
-TARGET=-target $(RC_ProjectName)
+ifeq ($(RC_ProjectName),Libsyscall_headers_Sim)
+TARGET=-target Libsyscall_headers_Sim
+endif
+
+ifeq ($(RC_ProjectName),Libsyscall_driverkit)
+TARGET=-target Libsyscall_driverkit
 endif
 
 default: install
@@ -68,21 +73,7 @@ clean:
 installsrc:
 	pax -rw . $(SRCROOT)
 
-else ifeq ($(RC_ProjectName),libkxld)
-
-include $(MakeInc_cmd)
-
-default: install
-
-installhdrs install clean:
-	 $(MAKE) -C libkern/kxld $@ USE_APPLE_PB_SUPPORT=all
-
-installsrc:
-	$(_v)$(MKDIR) $(SRCROOT)
-	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
-	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
-
-else ifeq ($(RC_ProjectName),libkxld_host)
+else ifneq ($(findstring libkxld_host,$(RC_ProjectName)),)
 
 include $(MakeInc_cmd)
 
@@ -96,7 +87,21 @@ installsrc:
 	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
 	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
 
-else ifeq ($(RC_ProjectName),libkmod)
+else ifneq ($(findstring libkxld,$(RC_ProjectName)),)
+
+include $(MakeInc_cmd)
+
+default: install
+
+installhdrs install clean:
+	 $(MAKE) -C libkern/kxld $@ USE_APPLE_PB_SUPPORT=all
+
+installsrc:
+	$(_v)$(MKDIR) $(SRCROOT)
+	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
+	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
+
+else ifneq ($(findstring libkmod,$(RC_ProjectName)),)
 
 default: install
 
@@ -115,7 +120,7 @@ clean:
 installsrc:
 	pax -rw . $(SRCROOT)
 
-else ifeq ($(RC_ProjectName),xnu_tests)
+else ifneq ($(findstring xnu_tests,$(RC_ProjectName)),)
 
 export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
 export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
@@ -126,6 +131,23 @@ default: install
 installhdrs:
 
 install: xnu_tests
+
+clean:
+
+installsrc:
+	pax -rw . $(SRCROOT)
+
+else ifeq ($(RC_ProjectName),xnu_tests_driverkit)
+
+export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
+MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+
+default: install
+
+installhdrs:
+
+install: xnu_tests_driverkit
 
 clean:
 
@@ -154,29 +176,29 @@ export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
 export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
 MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
 
-TOP_TARGETS =								\
-	clean								\
-	installsrc							\
-	exporthdrs							\
-	all all_desktop all_embedded					\
-	all_release_embedded all_development_embedded			\
-	installhdrs installhdrs_desktop installhdrs_embedded		\
-	installhdrs_release_embedded installhdrs_development_embedded	\
-	install install_desktop install_embedded			\
-	install_release_embedded install_development_embedded		\
-	installopensource						\
-	cscope tags TAGS checkstyle restyle check_uncrustify uncrustify				\
+TOP_TARGETS = \
+	clean \
+	installsrc \
+	exporthdrs \
+	all all_desktop all_embedded \
+	all_release_embedded all_development_embedded \
+	installhdrs installhdrs_desktop installhdrs_embedded \
+	installhdrs_release_embedded installhdrs_development_embedded \
+	install install_desktop install_embedded \
+	install_release_embedded install_development_embedded \
+	install_kernels \
+	cscope tags TAGS \
 	help
 
 DEFAULT_TARGET = all
 
 # Targets for internal build system debugging
-TOP_TARGETS +=						\
-	print_exports print_exports_first_build_config	\
-	setup						\
-	build						\
-	config						\
-	install_textfiles				\
+TOP_TARGETS += \
+	print_exports print_exports_first_build_config \
+	setup \
+	build \
+	config \
+	install_textfiles \
 	install_config
 
 ifeq ($(BUILD_JSON_COMPILATION_DATABASE),1)
@@ -235,6 +257,10 @@ COMP_SUBDIRS_ARM64 = $(ALL_SUBDIRS)
 
 INSTTEXTFILES_SUBDIRS =	\
 	bsd
+INSTTEXTFILES_SUBDIRS_X86_64 = $(INSTTEXTFILES_SUBDIRS)
+INSTTEXTFILES_SUBDIRS_X86_64H = $(INSTTEXTFILES_SUBDIRS)
+INSTTEXTFILES_SUBDIRS_ARM = $(INSTTEXTFILES_SUBDIRS)
+INSTTEXTFILES_SUBDIRS_ARM64 = $(INSTTEXTFILES_SUBDIRS)
 
 include $(MakeInc_kernel)
 include $(MakeInc_rule)
@@ -286,3 +312,47 @@ xnu_tests:
 		SRCROOT=$(SRCROOT)/tools/tests
 	$(MAKE) -C $(SRCROOT)/tests	$(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
 		SRCROOT=$(SRCROOT)/tests
+
+xnu_tests_driverkit:
+	$(MAKE) -C $(SRCROOT)/tests/driverkit $(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
+		SRCROOT=$(SRCROOT)/tests/driverkit
+
+
+include $(MakeInc_cmd)
+
+#
+# The "analyze" target defined below invokes Clang Static Analyzer
+# with a predefined set of checks and options for the project.
+#
+
+# By default, analysis results are available in BUILD/StaticAnalyzer.
+# Set this variable in your make invocation to use a different directory.
+# Note that these results are only deleted when the build directory
+# is cleaned. They aren't deleted every time the analyzer is re-run,
+# but they are deleted after "make clean".
+STATIC_ANALYZER_OUTPUT_DIR ?= $(SRCROOT)/BUILD/StaticAnalyzer
+
+# By default, the default make target is analyzed. You can analyze
+# other targets by setting this variable in your make invocation.
+STATIC_ANALYZER_TARGET ?=
+
+# You can pass additional flags to scan-build by setting this variable
+# in your make invocation. For example, you can enable additional checks.
+STATIC_ANALYZER_EXTRA_FLAGS ?=
+
+analyze:
+# This is where the reports are going to be available.
+# Old reports are deleted on make clean only.
+	$(_v)$(MKDIR) $(STATIC_ANALYZER_OUTPUT_DIR)
+
+# Recursively build the requested target under scan-build.
+# Exclude checks that weren't deemed to be security critical,
+# like null pointer dereferences.
+	$(_v)$(XCRUN) $(SCAN_BUILD) -o $(STATIC_ANALYZER_OUTPUT_DIR) \
+		-disable-checker deadcode.DeadStores \
+		-disable-checker core.NullDereference \
+		-disable-checker core.DivideZero \
+		$(STATIC_ANALYZER_EXTRA_FLAGS) \
+		$(MAKE) $(STATIC_ANALYZER_TARGET) QUIET=1 2>&1 | $(GREP) "^scan-build:"
+
+.PHONY: analyze

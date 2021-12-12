@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2015-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -61,16 +61,12 @@
 //#define KEEP_WAITQ_LINK_STATS
 //#define KEEP_WAITQ_PREPOST_STATS
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <kern/ast.h>
 #include <kern/backtrace.h>
 #include <kern/kern_types.h>
 #include <kern/ltable.h>
 #include <kern/mach_param.h>
+#include <kern/percpu.h>
 #include <kern/queue.h>
 #include <kern/sched_prim.h>
 #include <kern/simple_lock.h>
@@ -86,10 +82,6 @@
 #include <vm/vm_kern.h>
 
 #include <sys/kdebug.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 #if defined(KEEP_WAITQ_LINK_STATS) || defined(KEEP_WAITQ_PREPOST_STATS)
 #  if !CONFIG_LTABLE_STATS
@@ -131,9 +123,16 @@ static kern_return_t waitq_select_thread_locked(struct waitq *waitq,
     event64_t event,
     thread_t thread, spl_t *spl);
 
-#define WAITQ_SET_MAX (task_max * 3)
-static zone_t waitq_set_zone;
+ZONE_DECLARE(waitq_set_zone, "waitq sets",
+    sizeof(struct waitq_set), ZC_NOENCRYPT);
 
+/* waitq prepost cache */
+#define WQP_CACHE_MAX   50
+struct wqp_cache {
+	uint64_t        head;
+	unsigned int    avail;
+};
+static struct wqp_cache PERCPU_DATA(wqp_cache);
 
 #define P2ROUNDUP(x, align) (-(-((uint32_t)(x)) & -(align)))
 #define ROUNDDOWN(x, y)  (((x)/(y))*(y))
@@ -143,7 +142,7 @@ static zone_t waitq_set_zone;
 static __inline__ void waitq_grab_backtrace(uintptr_t bt[NWAITQ_BTFRAMES], int skip);
 #endif
 
-lck_grp_t waitq_lck_grp;
+LCK_GRP_DECLARE(waitq_lck_grp, "waitq");
 
 #if __arm64__
 
@@ -738,7 +737,6 @@ wqp_init(void)
 static void
 wq_prepost_refill_cpu_cache(uint32_t nalloc)
 {
-#ifndef __DARLING__
 	struct lt_elem *new_head, *old_head;
 	struct wqp_cache *cache;
 
@@ -754,7 +752,7 @@ wq_prepost_refill_cpu_cache(uint32_t nalloc)
 	}
 
 	disable_preemption();
-	cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
+	cache = PERCPU_GET(wqp_cache);
 
 	/* check once more before putting these elements on the list */
 	if (cache->avail >= WQP_CACHE_MAX) {
@@ -776,7 +774,6 @@ wq_prepost_refill_cpu_cache(uint32_t nalloc)
 out:
 	enable_preemption();
 	return;
-#endif
 }
 
 static void
@@ -787,22 +784,20 @@ wq_prepost_ensure_free_space(void)
 	struct wqp_cache *cache;
 
 	if (g_min_free_cache == 0) {
-		g_min_free_cache = (WQP_CACHE_MAX * ml_get_max_cpus());
+		g_min_free_cache = (WQP_CACHE_MAX * ml_wait_max_cpus());
 	}
 
-#ifndef __DARLING__
 	/*
 	 * Ensure that we always have a pool of per-CPU prepost elements
 	 */
 	disable_preemption();
-	cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
+	cache = PERCPU_GET(wqp_cache);
 	free_elem = cache->avail;
 	enable_preemption();
 
 	if (free_elem < (WQP_CACHE_MAX / 3)) {
 		wq_prepost_refill_cpu_cache(WQP_CACHE_MAX - free_elem);
 	}
-#endif
 
 	/*
 	 * Now ensure that we have a sufficient amount of free table space
@@ -836,13 +831,12 @@ wq_prepost_alloc(int type, int nelem)
 		return NULL;
 	}
 
-#ifndef __DARLING__
 	/*
 	 * First try to grab the elements from the per-CPU cache if we are
 	 * allocating RESERVED elements
 	 */
 	disable_preemption();
-	cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
+	cache = PERCPU_GET(wqp_cache);
 	if (nelem <= (int)cache->avail) {
 		struct lt_elem *first, *next = NULL;
 		int nalloc = nelem;
@@ -874,7 +868,6 @@ wq_prepost_alloc(int type, int nelem)
 		goto out;
 	}
 	enable_preemption();
-#endif
 
 do_alloc:
 	/* fall-back to standard table allocation */
@@ -1058,13 +1051,12 @@ wq_prepost_release_rlist(struct wq_prepost *wqp)
 
 	elem = &wqp->wqte;
 
-#ifndef __DARLING__
 	/*
 	 * These are reserved elements: release them back to the per-cpu pool
 	 * if our cache is running low.
 	 */
 	disable_preemption();
-	cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
+	cache = PERCPU_GET(wqp_cache);
 	if (cache->avail < WQP_CACHE_MAX) {
 		struct lt_elem *tmp = NULL;
 		if (cache->head != LT_IDX_MAX) {
@@ -1077,7 +1069,6 @@ wq_prepost_release_rlist(struct wq_prepost *wqp)
 		return;
 	}
 	enable_preemption();
-#endif
 
 	/* release these elements back to the main table */
 	nelem = lt_elem_list_release(&g_prepost_table, elem, LT_RESERVED);
@@ -1138,14 +1129,14 @@ restart:
 			/* the caller wants to remove the only prepost here */
 			assert(wqp_id == wqset->wqset_prepost_id);
 			wqset->wqset_prepost_id = 0;
-		/* fall through */
+			OS_FALLTHROUGH;
 		case WQ_ITERATE_CONTINUE:
 			wq_prepost_put(wqp);
 			ret = WQ_ITERATE_SUCCESS;
 			break;
 		case WQ_ITERATE_RESTART:
 			wq_prepost_put(wqp);
-		/* fall through */
+			OS_FALLTHROUGH;
 		case WQ_ITERATE_DROPPED:
 			goto restart;
 		default:
@@ -1213,7 +1204,7 @@ restart:
 			goto next_prepost;
 		case WQ_ITERATE_RESTART:
 			wq_prepost_put(wqp);
-		/* fall-through */
+			OS_FALLTHROUGH;
 		case WQ_ITERATE_DROPPED:
 			/* the callback dropped the ref to wqp: just restart */
 			goto restart;
@@ -1899,8 +1890,7 @@ waitq_thread_remove(struct waitq *wq,
 		    VM_KERNEL_UNSLIDE_OR_PERM(waitq_to_turnstile(wq)),
 		    thread_tid(thread),
 		    0, 0, 0);
-		priority_queue_remove(&wq->waitq_prio_queue, &thread->wait_prioq_links,
-		    PRIORITY_QUEUE_SCHED_PRI_MAX_HEAP_COMPARE);
+		priority_queue_remove(&wq->waitq_prio_queue, &thread->wait_prioq_links);
 	} else {
 		remqueue(&(thread->wait_links));
 	}
@@ -1917,8 +1907,6 @@ waitq_bootstrap(void)
 		g_min_free_table_elem = tmp32;
 	}
 	wqdbg("Minimum free table elements: %d", tmp32);
-
-	lck_grp_init(&waitq_lck_grp, "waitq", LCK_GRP_ATTR_NULL);
 
 	/*
 	 * Determine the amount of memory we're willing to reserve for
@@ -1970,12 +1958,6 @@ waitq_bootstrap(void)
 		waitq_init(&global_waitqs[i], SYNC_POLICY_FIFO | SYNC_POLICY_DISABLE_IRQ);
 	}
 
-	waitq_set_zone = zinit(sizeof(struct waitq_set),
-	    WAITQ_SET_MAX * sizeof(struct waitq_set),
-	    sizeof(struct waitq_set),
-	    "waitq sets");
-	zone_change(waitq_set_zone, Z_NOENCRYPT, TRUE);
-
 	/* initialize the global waitq link table */
 	wql_init();
 
@@ -2003,7 +1985,6 @@ waitq_bootstrap(void)
 #define hwLockTimeOut LockTimeOut
 #endif
 
-#ifndef __DARLING__
 void
 waitq_lock(struct waitq *wq)
 {
@@ -2039,7 +2020,7 @@ waitq_unlock(struct waitq *wq)
 #endif
 	waitq_lock_unlock(wq);
 }
-#endif
+
 
 /**
  * clear the thread-related waitq state
@@ -2168,13 +2149,13 @@ waitq_select_walk_cb(struct waitq *waitq, void *ctx,
 			 */
 
 			disable_preemption();
-			os_atomic_inc(hook, relaxed);
+			os_atomic_add(hook, (uint16_t)1, relaxed);
 			waitq_set_unlock(wqset);
 
 			waitq_set__CALLING_PREPOST_HOOK__(hook);
 
 			/* Note: after this decrement, the wqset may be deallocated */
-			os_atomic_dec(hook, relaxed);
+			os_atomic_add(hook, (uint16_t)-1, relaxed);
 			enable_preemption();
 			return ret;
 		}
@@ -2315,8 +2296,7 @@ waitq_prioq_iterate_locked(struct waitq *safeq, struct waitq *waitq,
 
 		if (remove_op) {
 			thread = priority_queue_remove_max(&safeq->waitq_prio_queue,
-			    struct thread, wait_prioq_links,
-			    PRIORITY_QUEUE_SCHED_PRI_MAX_HEAP_COMPARE);
+			    struct thread, wait_prioq_links);
 		} else {
 			/* For the peek operation, the only valid value for max_threads is 1 */
 			assert(max_threads == 1);
@@ -2410,28 +2390,6 @@ do_waitq_select_n_locked(struct waitq_select_args *args)
 	spl_t spl = 0;
 
 	assert(max_threads != 0);
-
-	#ifdef __DARLING__
-		// Special hack follows
-		//
-		// Explanation:
-		// In darling/evpsetfd.c, we implement a pollable driver that provides notifications on port set events.
-		// Linux polling mechanisms require the use of Linux wait_queue. There is no other way of providing
-		// an event to wait on besides passing a wait_queue to poll_wait(). The kernel then manages (de)registering
-		// with the wait_queue behind the scenes.
-		//
-		// XNU has its own wait queue (waitq) mechanism (this file). do_waitq_select_n_locked() ends up picking up threads
-		// to notify and wake up. This is incompatible with Linux wait_queue. Even if we knew which thread is currently
-		// waiting on a Linux wait_queue event to occur, the way file_operations.poll callback is invoked, we cannot know
-		// when such polling _ends_ (which would result in removing such thread from XNU waitq structures).
-		//
-		// If args.event is NO_EVENT64, we abuse this function to not only select thread_t objects for waking up,
-		// but also do a wake_up call on the Linux wait_queue object we added into waitq_set.
-		if (args->event == NO_EVENT64)
-		{
-			wake_up_interruptible(&waitq->linux_wq);
-		}
-	#endif
 
 	if (!waitq_irq_safe(waitq)) {
 		/* JMM - add flag to waitq to avoid global lookup if no waiters */
@@ -3136,7 +3094,7 @@ waitq_wakeup64_all_locked(struct waitq *waitq,
 		assert_thread_magic(thread);
 		remqueue(&thread->wait_links);
 		maybe_adjust_thread_pri(thread, priority, waitq);
-		ret = thread_go(thread, result);
+		ret = thread_go(thread, result, WQ_OPTION_NONE);
 		assert(ret == KERN_SUCCESS);
 		thread_unlock(thread);
 	}
@@ -3164,7 +3122,8 @@ waitq_wakeup64_one_locked(struct waitq *waitq,
     wait_result_t result,
     uint64_t *reserved_preposts,
     int priority,
-    waitq_lock_state_t lock_state)
+    waitq_lock_state_t lock_state,
+    waitq_options_t option)
 {
 	thread_t thread;
 	spl_t th_spl;
@@ -3187,7 +3146,7 @@ waitq_wakeup64_one_locked(struct waitq *waitq,
 
 	if (thread != THREAD_NULL) {
 		maybe_adjust_thread_pri(thread, priority, waitq);
-		kern_return_t ret = thread_go(thread, result);
+		kern_return_t ret = thread_go(thread, result, option);
 		assert(ret == KERN_SUCCESS);
 		thread_unlock(thread);
 		splx(th_spl);
@@ -3238,7 +3197,7 @@ waitq_wakeup64_identify_locked(struct waitq     *waitq,
 
 	if (thread != THREAD_NULL) {
 		kern_return_t __assert_only ret;
-		ret = thread_go(thread, result);
+		ret = thread_go(thread, result, WQ_OPTION_NONE);
 		assert(ret == KERN_SUCCESS);
 	}
 
@@ -3292,7 +3251,7 @@ waitq_wakeup64_thread_locked(struct waitq *waitq,
 		return KERN_NOT_WAITING;
 	}
 
-	ret = thread_go(thread, result);
+	ret = thread_go(thread, result, WQ_OPTION_NONE);
 	assert(ret == KERN_SUCCESS);
 	thread_unlock(thread);
 	splx(th_spl);
@@ -3338,8 +3297,7 @@ waitq_init(struct waitq *waitq, int policy)
 	waitq_lock_init(waitq);
 	if (waitq_is_turnstile_queue(waitq)) {
 		/* For turnstile, initialize it as a priority queue */
-		priority_queue_init(&waitq->waitq_prio_queue,
-		    PRIORITY_QUEUE_BUILTIN_MAX_HEAP);
+		priority_queue_init(&waitq->waitq_prio_queue);
 		assert(waitq->waitq_fifo == 0);
 	} else if (policy & SYNC_POLICY_TURNSTILE_PROXY) {
 		waitq->waitq_ts = TURNSTILE_NULL;
@@ -3347,10 +3305,6 @@ waitq_init(struct waitq *waitq, int policy)
 	} else {
 		queue_init(&waitq->waitq_queue);
 	}
-
-#ifdef __DARLING__
-	init_waitqueue_head(&waitq->linux_wq);
-#endif
 
 	waitq->waitq_isvalid = 1;
 	return KERN_SUCCESS;
@@ -4989,14 +4943,12 @@ waitq_alloc_prepost_reservation(int nalloc, struct waitq *waitq,
 	 * linkage!
 	 */
 	if (waitq) {
-#ifndef __DARLING__
 		disable_preemption();
-		cache = &PROCESSOR_DATA(current_processor(), wqp_cache);
+		cache = PERCPU_GET(wqp_cache);
 		if (nalloc <= (int)cache->avail) {
 			goto do_alloc;
 		}
 		enable_preemption();
-#endif
 
 		/* unlock the waitq to perform the allocation */
 		*did_unlock = 1;
@@ -5592,7 +5544,7 @@ waitq_wakeup64_one(struct waitq *waitq, event64_t wake_event,
 
 	/* waitq is locked upon return */
 	kr = waitq_wakeup64_one_locked(waitq, wake_event, result,
-	    &reserved_preposts, priority, WAITQ_UNLOCK);
+	    &reserved_preposts, priority, WAITQ_UNLOCK, WQ_OPTION_NONE);
 
 	if (waitq_irq_safe(waitq)) {
 		splx(spl);
@@ -5684,7 +5636,7 @@ waitq_wakeup64_thread(struct waitq *waitq,
 	waitq_unlock(waitq);
 
 	if (ret == KERN_SUCCESS) {
-		ret = thread_go(thread, result);
+		ret = thread_go(thread, result, WQ_OPTION_NONE);
 		assert(ret == KERN_SUCCESS);
 		thread_unlock(thread);
 		splx(th_spl);

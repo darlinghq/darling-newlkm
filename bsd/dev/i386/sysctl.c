@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -40,6 +40,11 @@
 #include <libkern/libkern.h>
 #include <i386/lapic.h>
 #include <i386/mp.h>
+#include <kern/kalloc.h>
+
+#if DEBUG || DEVELOPMENT
+#include <kern/hvg_hypercall.h>
+#endif
 
 
 static int
@@ -177,7 +182,7 @@ cpu_leaf7_features SYSCTL_HANDLER_ARGS
 	if (leaf7_extfeatures != 0) {
 		strlcat(buf, " ", sizeof(buf));
 		cpuid_get_leaf7_extfeature_names(leaf7_extfeatures, buf + strlen(buf),
-		    sizeof(buf) - strlen(buf));
+		    (unsigned int)(sizeof(buf) - strlen(buf)));
 	}
 
 	return SYSCTL_OUT(req, buf, strlen(buf) + 1);
@@ -247,19 +252,26 @@ cpu_flex_ratio_max SYSCTL_HANDLER_ARGS
 static int
 cpu_ucode_update SYSCTL_HANDLER_ARGS
 {
-	__unused struct sysctl_oid *unused_oidp = oidp;
-	__unused void *unused_arg1 = arg1;
-	__unused int unused_arg2 = arg2;
+#pragma unused(oidp, arg1, arg2)
 	uint64_t addr;
 	int error;
+
+	/* Can't update microcode from within a VM. */
+
+	if (cpuid_features() & CPUID_FEATURE_VMM) {
+		return ENODEV;
+	}
+
+	if (req->newptr == USER_ADDR_NULL) {
+		return EINVAL;
+	}
 
 	error = SYSCTL_IN(req, &addr, sizeof(addr));
 	if (error) {
 		return error;
 	}
 
-	int ret = ucode_interface(addr);
-	return ret;
+	return ucode_interface(addr);
 }
 
 extern uint64_t panic_restart_timeout;
@@ -271,12 +283,16 @@ panic_set_restart_timeout(__unused struct sysctl_oid *oidp, __unused void *arg1,
 
 	if (panic_restart_timeout) {
 		absolutetime_to_nanoseconds(panic_restart_timeout, &nstime);
-		old_value = nstime / NSEC_PER_SEC;
+		old_value = (int)MIN(nstime / NSEC_PER_SEC, INT_MAX);
 	}
 
-	error = sysctl_io_number(req, old_value, sizeof(int), &new_value, &changed);
+	error = sysctl_io_number(req, old_value, sizeof(old_value), &new_value, &changed);
 	if (error == 0 && changed) {
-		nanoseconds_to_absolutetime(((uint64_t)new_value) * NSEC_PER_SEC, &panic_restart_timeout);
+		if (new_value >= 0) {
+			nanoseconds_to_absolutetime(((uint64_t)new_value) * NSEC_PER_SEC, &panic_restart_timeout);
+		} else {
+			error = EDOM;
+		}
 	}
 	return error;
 }
@@ -304,6 +320,26 @@ misc_interrupt_latency_max(__unused struct sysctl_oid *oidp, __unused void *arg1
 }
 
 #if DEVELOPMENT || DEBUG
+/*
+ * Populates a string with each CPU's tsc synch delta.
+ */
+static int
+x86_cpu_tsc_deltas(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int err;
+	uint32_t ncpus = ml_wait_max_cpus();
+	uint32_t buflen = (2 /* hex digits */ * sizeof(uint64_t) + 3 /* for "0x" + " " */) * ncpus + 1;
+	char *buf = kalloc(buflen);
+
+	cpu_data_tsc_sync_deltas_string(buf, buflen, 0, ncpus - 1);
+
+	err = sysctl_io_string(req, buf, buflen, 0, 0);
+
+	kfree(buf, buflen);
+
+	return err;
+}
+
 /*
  * Triggers a machine-check exception - for a suitably configured kernel only.
  */
@@ -813,6 +849,11 @@ SYSCTL_QUAD(_machdep_tsc, OID_AUTO, at_boot,
     CTLFLAG_RD | CTLFLAG_LOCKED, &tsc_at_boot, "");
 SYSCTL_QUAD(_machdep_tsc, OID_AUTO, rebase_abs_time,
     CTLFLAG_RD | CTLFLAG_LOCKED, &tsc_rebase_abs_time, "");
+#if DEVELOPMENT || DEBUG
+SYSCTL_PROC(_machdep_tsc, OID_AUTO, synch_deltas,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
+    0, 0, x86_cpu_tsc_deltas, "A", "TSC synch deltas");
+#endif
 
 SYSCTL_NODE(_machdep_tsc, OID_AUTO, nanotime,
     CTLFLAG_RD | CTLFLAG_LOCKED, NULL, "TSC to ns conversion");
@@ -839,6 +880,10 @@ SYSCTL_NODE(_machdep, OID_AUTO, misc, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
 extern uint32_t mp_interrupt_watchdog_events;
 SYSCTL_UINT(_machdep_misc, OID_AUTO, interrupt_watchdog_events,
     CTLFLAG_RW | CTLFLAG_LOCKED, &mp_interrupt_watchdog_events, 0, "");
+
+extern int insnstream_force_cacheline_mismatch;
+SYSCTL_INT(_machdep_misc, OID_AUTO, insnstream_force_clmismatch,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &insnstream_force_cacheline_mismatch, 0, "");
 #endif
 
 
@@ -851,6 +896,11 @@ SYSCTL_PROC(_machdep_misc, OID_AUTO, interrupt_latency_max,
     CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED,
     0, 0,
     misc_interrupt_latency_max, "A", "Maximum Interrupt latency");
+
+extern boolean_t is_x2apic;
+SYSCTL_INT(_machdep, OID_AUTO, x2apic_enabled,
+    CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
+    &is_x2apic, 0, "");
 
 #if DEVELOPMENT || DEBUG
 SYSCTL_PROC(_machdep_misc, OID_AUTO, machine_check_panic,
@@ -960,7 +1010,7 @@ misc_nmis(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int ar
 {
 	int new = 0, old = 0, changed = 0, error;
 
-	old = NMI_count;
+	old = (int)MIN(NMI_count, INT_MAX);
 
 	error = sysctl_io_number(req, old, sizeof(int), &new, &changed);
 	if (error == 0 && changed) {
@@ -1007,6 +1057,30 @@ extern uint64_t x86_isr_fp_simd_use;
 SYSCTL_QUAD(_machdep, OID_AUTO, x86_fp_simd_isr_uses,
     CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
     &x86_isr_fp_simd_use, "");
+
+static int
+sysctl_kern_insn_copy_optout_task SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	uint32_t soflags = 0;
+	uint32_t old_value = curtask_get_insn_copy_optout() ? 1 : 0;
+
+	int error = SYSCTL_IN(req, &soflags, sizeof(soflags));
+	if (error) {
+		return error;
+	}
+
+	if (soflags) {
+		curtask_set_insn_copy_optout();
+	}
+
+	return SYSCTL_OUT(req, &old_value, sizeof(old_value));
+}
+SYSCTL_PROC(_machdep, OID_AUTO, insn_copy_optout_task,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_MASKED | CTLFLAG_ANYBODY,
+    0, 0, sysctl_kern_insn_copy_optout_task, "I", "");
+
+
 #if DEVELOPMENT || DEBUG
 
 extern int plctrace_enabled;
@@ -1056,5 +1130,88 @@ extern int traptrace_enabled;
 SYSCTL_INT(_machdep_misc, OID_AUTO, traptrace_enabled,
     CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
     &traptrace_enabled, 0, "Enabled/disable trap trace");
+
+
+/*
+ * Trigger a guest kernel core dump (internal only)
+ * Usage: sysctl kern.trigger_kernel_coredump = 1
+ * (option selector must be 1, other values reserved)
+ */
+
+static int
+sysctl_trigger_kernel_coredump(struct sysctl_oid *oidp __unused, void *arg1, int arg2, struct sysctl_req *req)
+{
+	int error = 0;
+	hvg_hcall_return_t hv_ret;
+	char buf[2]; // 1 digit for dump option + 1 '\0'
+
+	if (req->newptr) {
+		// Write request
+		if (req->newlen > 1) {
+			return EINVAL;
+		}
+		error = SYSCTL_IN(req, buf, req->newlen);
+		buf[req->newlen] = '\0';
+		if (!error) {
+			if (strcmp(buf, "1") != 0) {
+				return EINVAL;
+			}
+			/* Issue hypercall to trigger a dump */
+			hv_ret = hvg_hcall_trigger_dump(arg1, HVG_HCALL_DUMP_OPTION_REGULAR);
+
+			/* Translate hypercall error code to syscall error code */
+			switch (hv_ret) {
+			case HVG_HCALL_SUCCESS:
+				error = SYSCTL_OUT(req, arg1, 41);
+				break;
+			case HVG_HCALL_ACCESS_DENIED:
+				error = EPERM;
+				break;
+			case HVG_HCALL_INVALID_CODE:
+			case HVG_HCALL_INVALID_PARAMETER:
+				error = EINVAL;
+				break;
+			case HVG_HCALL_IO_FAILED:
+				error = EIO;
+				break;
+			case HVG_HCALL_FEAT_DISABLED:
+			case HVG_HCALL_UNSUPPORTED:
+				error = ENOTSUP;
+				break;
+			default:
+				error = ENODEV;
+			}
+		}
+	} else {
+		// Read request
+		error = SYSCTL_OUT(req, arg1, arg2);
+	}
+	return error;
+}
+
+
+static hvg_hcall_vmcore_file_t sysctl_vmcore;
+
+void
+hvg_bsd_init(void)
+{
+	if (!cpuid_vmm_present()) {
+		return;
+	}
+
+	if ((cpuid_vmm_get_applepv_features() & CPUID_LEAF_FEATURE_COREDUMP) != 0) {
+		/* Register an OID in the sysctl MIB tree for kern.trigger_kernel_coredump */
+		struct sysctl_oid *hcall_trigger_dump_oid = zalloc_permanent(sizeof(struct sysctl_oid), ZALIGN(struct sysctl_oid));
+		struct sysctl_oid oid = SYSCTL_STRUCT_INIT(_kern,
+		    OID_AUTO,
+		    trigger_kernel_coredump,
+		    CTLTYPE_STRING | CTLFLAG_RW,
+		    &sysctl_vmcore, sizeof(sysctl_vmcore),
+		    sysctl_trigger_kernel_coredump,
+		    "A", "Request that the hypervisor take a live kernel dump");
+		*hcall_trigger_dump_oid = oid;
+		sysctl_register_oid(hcall_trigger_dump_oid);
+	}
+}
 
 #endif /* DEVELOPMENT || DEBUG */

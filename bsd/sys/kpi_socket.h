@@ -88,7 +88,7 @@ typedef void (*sock_upcall)(socket_t so, void *cookie, int waitf);
  *       @param cookie The cookie passed in when the socket was created.
  *       @param event Indicates the event as defined by SO_FILT_HINT_*
  */
-typedef void (*sock_evupcall)(socket_t so, void *cookie, u_int32_t event);
+typedef void (*sock_evupcall)(socket_t so, void *cookie, long event);
 #endif /* KERNEL_PRIVATE */
 
 /*!
@@ -418,7 +418,6 @@ __NKE_API_DEPRECATED;
 extern void sock_close(socket_t so)
 __NKE_API_DEPRECATED;
 
-#ifdef KERNEL_PRIVATE
 /*
  *       @function sock_retain
  *       @discussion Prevents the socket from closing
@@ -429,7 +428,8 @@ __NKE_API_DEPRECATED;
  *               that socket. It is used in conjunction with
  *               sock_release(socket_t so).
  */
-extern void sock_retain(socket_t so);
+extern void sock_retain(socket_t so)
+__NKE_API_DEPRECATED;
 
 /*
  *       @function sock_release
@@ -439,8 +439,8 @@ extern void sock_retain(socket_t so);
  *               on a socket acquired with sock_retain. When the last retain
  *               count is reached, this will call sock_close to close the socket.
  */
-extern void sock_release(socket_t so);
-#endif /* KERNEL_PRIVATE */
+extern void sock_release(socket_t so)
+__NKE_API_DEPRECATED;
 
 /*!
  *       @function sock_setpriv
@@ -606,10 +606,10 @@ extern void sock_setupcalls_locked(socket_t sock,
  *               indicating the registered event(s).
  */
 extern errno_t sock_catchevents(socket_t sock, sock_evupcall event_callback,
-    void *event_context, u_int32_t event_mask);
+    void *event_context, long event_mask);
 
 extern void sock_catchevents_locked(socket_t sock, sock_evupcall ecallback,
-    void *econtext, u_int32_t emask);
+    void *econtext, long emask);
 
 
 /*
@@ -623,4 +623,5 @@ extern int sock_iskernel(socket_t);
 #endif /* KERNEL_PRIVATE */
 
 __END_DECLS
+#undef __NKE_API_DEPRECATED
 #endif /* __KPI_SOCKET__ */

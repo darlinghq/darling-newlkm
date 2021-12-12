@@ -50,6 +50,8 @@ extern "C" {
 /*
  * DTrace Implementation Locks
  */
+extern lck_attr_t dtrace_lck_attr;
+extern lck_grp_t dtrace_lck_grp;
 extern lck_mtx_t dtrace_procwaitfor_lock;
 
 /*
@@ -915,6 +917,7 @@ typedef struct dtrace_vstate {
 #define	DTRACE_MSTATE_USTACKDEPTH	0x00000200
 #define	DTRACE_MSTATE_UCALLER		0x00000400
 #define	DTRACE_MSTATE_MACHTIMESTAMP	0x00000800
+#define	DTRACE_MSTATE_MACHCTIMESTAMP	0x00001000
 
 typedef struct dtrace_mstate {
 	uintptr_t dtms_scratch_base;		/* base of scratch space */
@@ -926,6 +929,7 @@ typedef struct dtrace_mstate {
 	uint64_t dtms_timestamp;		/* cached timestamp */
 	hrtime_t dtms_walltimestamp;		/* cached wall timestamp */
 	uint64_t dtms_machtimestamp;		/* cached mach absolute timestamp */
+	uint64_t dtms_machctimestamp;		/* cached mach continuous timestamp */
 	int dtms_stackdepth;			/* cached stackdepth */
 	int dtms_ustackdepth;			/* cached ustackdepth */
 	struct dtrace_probe *dtms_probe;	/* current probe */
@@ -1377,6 +1381,7 @@ extern uint64_t dtrace_load64(uintptr_t);
 extern int dtrace_canload(uint64_t, size_t, dtrace_mstate_t*, dtrace_vstate_t*);
 
 extern uint64_t dtrace_getreg(struct regs *, uint_t);
+extern uint64_t dtrace_getvmreg(uint_t);
 extern int dtrace_getstackdepth(int);
 extern void dtrace_getupcstack(uint64_t *, int);
 extern void dtrace_getufpstack(uint64_t *, uint64_t *, int);
@@ -1392,7 +1397,6 @@ extern void dtrace_probe_error(dtrace_state_t *, dtrace_epid_t, int, int,
 extern int dtrace_assfail(const char *, const char *, int);
 extern int dtrace_attached(void);
 extern hrtime_t dtrace_gethrestime(void);
-extern void dtrace_isa_init(void);
 
 extern void dtrace_flush_caches(void);
 
@@ -1401,6 +1405,9 @@ extern void dtrace_copystr(uintptr_t, uintptr_t, size_t, volatile uint16_t *);
 
 extern void* dtrace_ptrauth_strip(void*, uint64_t);
 extern int dtrace_is_valid_ptrauth_key(uint64_t);
+
+extern uint64_t dtrace_physmem_read(uint64_t, size_t);
+extern void dtrace_physmem_write(uint64_t, uint64_t, size_t);
 
 /*
  * DTrace state handling

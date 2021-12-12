@@ -27,6 +27,7 @@
  */
 
 #include <machine/asm.h>
+#include <arm64/exception_asm.h>
 #include <arm64/machine_machdep.h>
 #include <arm64/proc_reg.h>
 #include <arm/pmap.h>
@@ -36,29 +37,87 @@
 
 
 #if defined(HAS_APPLE_PAC)
-/*
- * void
- * ml_set_kernelkey_enabled(boolean_t enable)
- *
- * Toggle pointer auth kernel domain key diversification. Assembly to prevent compiler reordering.
- *
- */
 
+
+.macro LOAD_CPU_JOP_KEY	dst, tmp
+	mrs		\tmp, TPIDR_EL1
+	ldr		\tmp, [\tmp, ACT_CPUDATAP]
+	ldr		\dst, [\tmp, CPU_JOP_KEY]
+.endmacro
+
+/*
+ * uint64_t ml_enable_user_jop_key(uint64_t user_jop_key)
+ */
 	.align 2
-	.globl EXT(ml_set_kernelkey_enabled)
-LEXT(ml_set_kernelkey_enabled)
-	mrs		x1, ARM64_REG_APCTL_EL1
-	orr		x2, x1, #APCTL_EL1_KernKeyEn
-	and 	x1, x1, #~APCTL_EL1_KernKeyEn
-	cmp		w0, #0
-	csel	x1, x1, x2, eq
-	msr		ARM64_REG_APCTL_EL1, x1
-	isb
+	.globl EXT(ml_enable_user_jop_key)
+LEXT(ml_enable_user_jop_key)
+#if HAS_PARAVIRTUALIZED_PAC
+	mov 	x2, x0
+	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
+	mov		x1, #1
+	hvc		#0
+	LOAD_CPU_JOP_KEY x0, x1
 	ret
+#endif /* HAS_PARAVIRTUALIZED_PAC */
+
+/*
+ * void ml_disable_user_jop_key(uint64_t user_jop_key, uint64_t saved_jop_state)
+ */
+	.align 2
+	.globl EXT(ml_disable_user_jop_key)
+LEXT(ml_disable_user_jop_key)
+#if HAS_PARAVIRTUALIZED_PAC
+	mov 	x2, x1
+	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
+	mov		x1, #0
+	hvc		#0
+	ret
+#endif /* HAS_PARAVIRTUALIZED_PAC */
 
 #endif /* defined(HAS_APPLE_PAC) */
 
+#if HAS_BP_RET
 
+/*
+ * void set_bp_ret(void)
+ * Helper function to enable branch predictor state retention
+ * across ACC sleep
+ */
+
+	.align 2
+	.globl EXT(set_bp_ret)
+LEXT(set_bp_ret)
+	// Load bpret boot-arg
+	adrp		x14, EXT(bp_ret)@page
+	add		x14, x14, EXT(bp_ret)@pageoff
+	ldr		w14, [x14]
+
+	mrs		x13, CPU_CFG
+	and		x13, x13, (~(ARM64_REG_ACC_CFG_bpSlp_mask << ARM64_REG_ACC_CFG_bpSlp_shift))
+	and		x14, x14, #(ARM64_REG_ACC_CFG_bpSlp_mask)
+	orr		x13, x13, x14, lsl #(ARM64_REG_ACC_CFG_bpSlp_shift)
+	msr		CPU_CFG, x13
+
+	ret
+#endif // HAS_BP_RET
+
+#if HAS_NEX_PG
+	.align 2
+	.globl EXT(set_nex_pg)
+LEXT(set_nex_pg)
+	mrs		x14, MPIDR_EL1
+	// Skip if this isn't a p-core; NEX powergating isn't available for e-cores
+	and		x14, x14, #(MPIDR_PNE)
+	cbz		x14, Lnex_pg_done
+
+	// Set the SEG-recommended value of 12 additional reset cycles
+	HID_INSERT_BITS	HID13, ARM64_REG_HID13_RstCyc_mask, ARM64_REG_HID13_RstCyc_val, x13
+	HID_SET_BITS HID14, ARM64_REG_HID14_NexPwgEn, x13
+
+Lnex_pg_done:
+	ret
+
+#endif // HAS_NEX_PG
 
 /*	uint32_t get_fpscr(void):
  *		Returns (FPSR | FPCR).
@@ -168,12 +227,23 @@ LEXT(set_mmu_ttb_alternate)
 	bl		EXT(pinst_set_ttbr1)
 	mov		lr, x1
 #else
+#if defined(HAS_VMSA_LOCK)
+#if DEBUG || DEVELOPMENT
+	mrs		x1, VMSA_LOCK_EL1
+	and		x1, x1, #(VMSA_LOCK_TTBR1_EL1)
+	cbnz		x1, L_set_locked_reg_panic
+#endif /* DEBUG || DEVELOPMENT */
+#endif /* defined(HAS_VMSA_LOCK) */
 	msr		TTBR1_EL1, x0
 #endif /* defined(KERNEL_INTEGRITY_KTRR) */
 	isb		sy
 	ret
 
+#if XNU_MONITOR
+	.section __PPLTEXT,__text,regular,pure_instructions
+#else
 	.text
+#endif
 	.align 2
 	.globl EXT(set_mmu_ttb)
 LEXT(set_mmu_ttb)
@@ -185,6 +255,16 @@ LEXT(set_mmu_ttb)
 	msr		TTBR0_EL1, x0
 	isb		sy
 	ret
+
+
+#if XNU_MONITOR
+	.text
+	.align 2
+	.globl EXT(ml_get_ppl_cpu_data)
+LEXT(ml_get_ppl_cpu_data)
+	LOAD_PMAP_CPU_DATA x0, x1, x2
+	ret
+#endif
 
 /*
  * 	set AUX control register
@@ -211,6 +291,23 @@ LEXT(set_vbar_el1)
 #endif
 #endif /* __ARM_KERNEL_PROTECT__ */
 
+#if defined(HAS_VMSA_LOCK)
+	.text
+	.align 2
+	.globl EXT(vmsa_lock)
+LEXT(vmsa_lock)
+	isb sy
+	mov x1, #(VMSA_LOCK_SCTLR_M_BIT)
+#if __ARM_MIXED_PAGE_SIZE__
+	mov x0, #(VMSA_LOCK_TTBR1_EL1 | VMSA_LOCK_VBAR_EL1)
+#else
+	mov x0, #(VMSA_LOCK_TTBR1_EL1 | VMSA_LOCK_TCR_EL1 | VMSA_LOCK_VBAR_EL1)
+#endif
+	orr x0, x0, x1
+	msr VMSA_LOCK_EL1, x0
+	isb sy
+	ret
+#endif /* defined(HAS_VMSA_LOCK) */
 
 /*
  *	set translation control register
@@ -220,20 +317,32 @@ LEXT(set_vbar_el1)
 	.globl EXT(set_tcr)
 LEXT(set_tcr)
 #if defined(APPLE_ARM64_ARCH_FAMILY)
+#if DEBUG || DEVELOPMENT
 	// Assert that T0Z is always equal to T1Z
 	eor		x1, x0, x0, lsr #(TCR_T1SZ_SHIFT - TCR_T0SZ_SHIFT)
 	and		x1, x1, #(TCR_TSZ_MASK << TCR_T0SZ_SHIFT)
 	cbnz	x1, L_set_tcr_panic
+#endif /* DEBUG || DEVELOPMENT */
+#endif /* defined(APPLE_ARM64_ARCH_FAMILY) */
 #if defined(KERNEL_INTEGRITY_KTRR)
 	mov		x1, lr
 	bl		EXT(pinst_set_tcr)
 	mov		lr, x1
 #else
+#if defined(HAS_VMSA_LOCK)
+#if DEBUG || DEVELOPMENT
+	// assert TCR unlocked
+	mrs 		x1, VMSA_LOCK_EL1
+	and		x1, x1, #(VMSA_LOCK_TCR_EL1)
+	cbnz		x1, L_set_locked_reg_panic
+#endif /* DEBUG || DEVELOPMENT */
+#endif /* defined(HAS_VMSA_LOCK) */
 	msr		TCR_EL1, x0
 #endif /* defined(KERNEL_INTRITY_KTRR) */
 	isb		sy
 	ret
 
+#if DEBUG || DEVELOPMENT
 L_set_tcr_panic:
 	PUSH_FRAME
 	sub		sp, sp, #16
@@ -255,17 +364,7 @@ L_set_tcr_panic_str:
 
 L_set_locked_reg_panic_str:
 	.asciz	"attempt to set locked register: (%llx)\n"
-#else
-#if defined(KERNEL_INTEGRITY_KTRR)
-	mov		x1, lr
-	bl		EXT(pinst_set_tcr)
-	mov		lr, x1
-#else
-	msr		TCR_EL1, x0
-#endif
-	isb		sy
-	ret
-#endif // defined(APPLE_ARM64_ARCH_FAMILY)
+#endif /* DEBUG || DEVELOPMENT */
 
 /*
  *	MMU kernel virtual to physical address translation
@@ -277,6 +376,7 @@ LEXT(mmu_kvtop)
 	mrs		x2, DAIF									// Load current DAIF
 	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF)		// Disable IRQ
 	at		s1e1r, x0									// Translation Stage 1 EL1
+	isb		sy
 	mrs		x1, PAR_EL1									// Read result
 	msr		DAIF, x2									// Restore interrupt state
 	tbnz	x1, #0, L_mmu_kvtop_invalid					// Test Translation not valid
@@ -299,6 +399,7 @@ LEXT(mmu_uvtop)
 	mrs		x2, DAIF									// Load current DAIF
 	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF)		// Disable IRQ
 	at		s1e0r, x0									// Translation Stage 1 EL0
+	isb		sy
 	mrs		x1, PAR_EL1									// Read result
 	msr		DAIF, x2									// Restore interrupt state
 	tbnz	x1, #0, L_mmu_uvtop_invalid					// Test Translation not valid
@@ -332,25 +433,32 @@ L_mmu_kvtop_wpreflight_invalid:
 /*
  * SET_RECOVERY_HANDLER
  *
- *	Sets up a page fault recovery handler
+ *	Sets up a page fault recovery handler.  This macro clobbers x16 and x17.
  *
- *	arg0 - persisted thread pointer
- *	arg1 - persisted recovery handler
- *	arg2 - scratch reg
- *	arg3 - recovery label
+ *	label - recovery label
+ *	tpidr - persisted thread pointer
+ *	old_handler - persisted recovery handler
+ *	label_in_adr_range - whether \label is within 1 MB of PC
  */
-.macro SET_RECOVERY_HANDLER
-	mrs		$0, TPIDR_EL1					// Load thread pointer
-	adrp	$2, $3@page						// Load the recovery handler address
-	add		$2, $2, $3@pageoff
+.macro SET_RECOVERY_HANDLER	label, tpidr=x16, old_handler=x10, label_in_adr_range=0
+	// Note: x16 and x17 are designated for use as temporaries in
+	// interruptible PAC routines.  DO NOT CHANGE THESE REGISTER ASSIGNMENTS.
+.if \label_in_adr_range==1						// Load the recovery handler address
+	adr		x17, \label
+.else
+	adrp	x17, \label@page
+	add		x17, x17, \label@pageoff
+.endif
 #if defined(HAS_APPLE_PAC)
-	add		$1, $0, TH_RECOVER
-	movk	$1, #PAC_DISCRIMINATOR_RECOVER, lsl 48
-	pacia	$2, $1							// Sign with IAKey + blended discriminator
+	mrs		x16, TPIDR_EL1
+	add		x16, x16, TH_RECOVER
+	movk	x16, #PAC_DISCRIMINATOR_RECOVER, lsl 48
+	pacia	x17, x16							// Sign with IAKey + blended discriminator
 #endif
 
-	ldr		$1, [$0, TH_RECOVER]			// Save previous recovery handler
-	str		$2, [$0, TH_RECOVER]			// Set new signed recovery handler
+	mrs		\tpidr, TPIDR_EL1					// Load thread pointer
+	ldr		\old_handler, [\tpidr, TH_RECOVER]	// Save previous recovery handler
+	str		x17, [\tpidr, TH_RECOVER]			// Set new signed recovery handler
 .endmacro
 
 /*
@@ -358,18 +466,18 @@ L_mmu_kvtop_wpreflight_invalid:
  *
  *	Clears page fault handler set by SET_RECOVERY_HANDLER
  *
- *	arg0 - thread pointer saved by SET_RECOVERY_HANDLER
- *	arg1 - old recovery handler saved by SET_RECOVERY_HANDLER
+ *	tpidr - thread pointer saved by SET_RECOVERY_HANDLER
+ *	old_handler - old recovery handler saved by SET_RECOVERY_HANDLER
  */
-.macro CLEAR_RECOVERY_HANDLER
-	str		$1, [$0, TH_RECOVER]		// Restore the previous recovery handler
+.macro CLEAR_RECOVERY_HANDLER	tpidr=x16, old_handler=x10
+	str		\old_handler, [\tpidr, TH_RECOVER]	// Restore the previous recovery handler
 .endmacro
 
 
 	.text
 	.align 2
 copyio_error:
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	mov		x0, #EFAULT					// Return an EFAULT error
 	POP_FRAME
 	ARM64_STACK_EPILOG
@@ -383,7 +491,7 @@ copyio_error:
 LEXT(_bcopyin)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	/* If len is less than 16 bytes, just do a bytewise copy */
 	cmp		x2, #16
 	b.lt	2f
@@ -403,7 +511,7 @@ LEXT(_bcopyin)
 	strb	w3, [x1], #1
 	b.hi	2b
 3:
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	mov		x0, #0
 	POP_FRAME
 	ARM64_STACK_EPILOG
@@ -417,11 +525,11 @@ LEXT(_bcopyin)
 LEXT(_copyin_atomic32)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	ldr		w8, [x0]
 	str		w8, [x1]
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -434,7 +542,7 @@ LEXT(_copyin_atomic32)
 LEXT(_copyin_atomic32_wait_if_equals)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	ldxr		w8, [x0]
 	cmp		w8, w1
 	mov		x0, ESTALE
@@ -443,7 +551,7 @@ LEXT(_copyin_atomic32_wait_if_equals)
 	wfe
 1:
 	clrex
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -456,11 +564,11 @@ LEXT(_copyin_atomic32_wait_if_equals)
 LEXT(_copyin_atomic64)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	ldr		x8, [x0]
 	str		x8, [x1]
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -474,10 +582,10 @@ LEXT(_copyin_atomic64)
 LEXT(_copyout_atomic32)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	str		w0, [x1]
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -490,10 +598,10 @@ LEXT(_copyout_atomic32)
 LEXT(_copyout_atomic64)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	str		x0, [x1]
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -507,7 +615,7 @@ LEXT(_copyout_atomic64)
 LEXT(_bcopyout)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	/* If len is less than 16 bytes, just do a bytewise copy */
 	cmp		x2, #16
 	b.lt	2f
@@ -527,7 +635,7 @@ LEXT(_bcopyout)
 	strb	w3, [x1], #1
 	b.hi	2b
 3:
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	mov		x0, #0
 	POP_FRAME
 	ARM64_STACK_EPILOG
@@ -545,17 +653,7 @@ LEXT(_bcopyout)
 LEXT(_bcopyinstr)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	adr		x4, Lcopyinstr_error		// Get address for recover
-	mrs		x10, TPIDR_EL1				// Get thread pointer
-	ldr		x11, [x10, TH_RECOVER]		// Save previous recover
-
-#if defined(HAS_APPLE_PAC)
-	add		x5, x10, TH_RECOVER		// Sign new pointer with IAKey + blended discriminator
-	movk	x5, #PAC_DISCRIMINATOR_RECOVER, lsl 48
-	pacia	x4, x5
-#endif
-	str		x4, [x10, TH_RECOVER]		// Store new recover
-
+	SET_RECOVERY_HANDLER Lcopyinstr_error, label_in_adr_range=1
 	mov		x4, #0						// x4 - total bytes copied
 Lcopyinstr_loop:
 	ldrb	w5, [x0], #1					// Load a byte from the user source
@@ -573,7 +671,7 @@ Lcopyinstr_done:
 Lcopyinstr_error:
 	mov		x0, #EFAULT					// Return EFAULT on error
 Lcopyinstr_exit:
-	str		x11, [x10, TH_RECOVER]		// Restore old recover
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -589,9 +687,9 @@ Lcopyinstr_exit:
  *	x3 : temp
  *	x5 : temp (kernel virtual base)
  *	x9 : temp
- *	x10 : thread pointer (set by SET_RECOVERY_HANDLER)
- *	x11 : old recovery function (set by SET_RECOVERY_HANDLER)
+ *	x10 : old recovery function (set by SET_RECOVERY_HANDLER)
  *	x12, x13 : backtrace data
+ *	x16 : thread pointer (set by SET_RECOVERY_HANDLER)
  *
  */
 	.text
@@ -600,7 +698,7 @@ Lcopyinstr_exit:
 LEXT(copyinframe)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER x10, x11, x3, copyio_error
+	SET_RECOVERY_HANDLER copyio_error
 	cbnz	w2, Lcopyinframe64 		// Check frame size
 	adrp	x5, EXT(gVirtBase)@page // For 32-bit frame, make sure we're not trying to copy from kernel
 	add		x5, x5, EXT(gVirtBase)@pageoff
@@ -631,7 +729,7 @@ Lcopyinframe_valid:
 	mov 	w0, #0					// Success
 
 Lcopyinframe_done:
-	CLEAR_RECOVERY_HANDLER x10, x11
+	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
@@ -671,16 +769,27 @@ LEXT(arm64_prepare_for_sleep)
 
 #if defined(APPLETYPHOON)
 	// <rdar://problem/15827409>
-	mrs		x0, ARM64_REG_HID2                              // Read HID2
-	orr		x0, x0, #(ARM64_REG_HID2_disMMUmtlbPrefetch)    // Set HID.DisableMTLBPrefetch
-	msr		ARM64_REG_HID2, x0                              // Write HID2
+	HID_SET_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x9
 	dsb		sy
 	isb		sy
 #endif
 
+#if HAS_CLUSTER
+	cbnz		x0, 1f                                      // Skip if deep_sleep == true
+	// Mask FIQ and IRQ to avoid spurious wakeups
+	mrs		x9, CPU_OVRD
+	and		x9, x9, #(~(ARM64_REG_CYC_OVRD_irq_mask | ARM64_REG_CYC_OVRD_fiq_mask))
+	mov		x10, #(ARM64_REG_CYC_OVRD_irq_disable | ARM64_REG_CYC_OVRD_fiq_disable)
+	orr		x9, x9, x10
+	msr		CPU_OVRD, x9
+	isb
+1:
+#endif
+
+	cbz		x0, 1f                                          // Skip if deep_sleep == false
 #if __ARM_GLOBAL_SLEEP_BIT__
 	// Enable deep sleep
-	mrs		x1, ARM64_REG_ACC_OVRD
+	mrs		x1, ACC_OVRD
 	orr		x1, x1, #(ARM64_REG_ACC_OVRD_enDeepSleep)
 	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_mask))
 	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_deepsleep)
@@ -690,22 +799,47 @@ LEXT(arm64_prepare_for_sleep)
 	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2TrDnLnk_deepsleep)
 	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2PwrDnCPM_mask))
 	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2PwrDnCPM_deepsleep)
-	msr		ARM64_REG_ACC_OVRD, x1
-
-
-#else
-	// Enable deep sleep
-	mov		x1, ARM64_REG_CYC_CFG_deepSleep
-	msr		ARM64_REG_CYC_CFG, x1
+#if HAS_RETENTION_STATE
+	orr		x1, x1, #(ARM64_REG_ACC_OVRD_disPioOnWfiCpu)
 #endif
-	// Set "OK to power down" (<rdar://problem/12390433>)
-	mrs		x0, ARM64_REG_CYC_OVRD
-	orr		x0, x0, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_down)
-	msr		ARM64_REG_CYC_OVRD, x0
+	msr		ACC_OVRD, x1
 
 #if defined(APPLEMONSOON)
-	ARM64_IS_PCORE x0
-	cbz		x0, Lwfi_inst // skip if not p-core 
+	// Skye has an ACC_OVRD register for EBLK and PBLK. Same bitfield layout for these bits
+	mrs		x1, EBLK_OVRD
+	orr		x1, x1, #(ARM64_REG_ACC_OVRD_enDeepSleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_deepsleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2PwrDnSRM_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2PwrDnSRM_deepsleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2TrDnLnk_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2TrDnLnk_deepsleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2PwrDnCPM_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2PwrDnCPM_deepsleep)
+	msr		EBLK_OVRD, x1
+
+#endif
+
+#else
+#if defined(APPLETYPHOON) || defined(APPLETWISTER)
+	// Enable deep sleep
+	mov		x1, ARM64_REG_CYC_CFG_deepSleep
+	msr		CPU_CFG, x1
+#endif
+#endif
+
+1:
+	// Set "OK to power down" (<rdar://problem/12390433>)
+	mrs		x9, CPU_OVRD
+	orr		x9, x9, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_down)
+#if HAS_RETENTION_STATE
+	orr		x9, x9, #(ARM64_REG_CYC_OVRD_disWfiRetn)
+#endif
+	msr		CPU_OVRD, x9
+
+#if defined(APPLEMONSOON) || defined(APPLEVORTEX)
+	ARM64_IS_PCORE x9
+	cbz		x9, Lwfi_inst // skip if not p-core
 
 	/* <rdar://problem/32512947>: Flush the GUPS prefetcher prior to
 	 * wfi.  A Skye HW bug can cause the GUPS prefetcher on p-cores
@@ -717,14 +851,23 @@ LEXT(arm64_prepare_for_sleep)
 	 * and re-enabling GUPS, which forces the prefetch queue to
 	 * drain.  This should be done as close to wfi as possible, i.e.
 	 * at the very end of arm64_prepare_for_sleep(). */
-	mrs		x0, ARM64_REG_HID10
-	orr		x0, x0, #(ARM64_REG_HID10_DisHwpGups)
-	msr		ARM64_REG_HID10, x0
+#if defined(APPLEVORTEX)
+	/* <rdar://problem/32821461>: Cyprus A0/A1 parts have a similar
+	 * bug in the HSP prefetcher that can be worked around through
+	 * the same method mentioned above for Skye. */
+	mrs x9, MIDR_EL1
+	EXEC_COREALL_REVLO CPU_VERSION_B0, x9, x10
+#endif
+	mrs		x9, HID10
+	orr		x9, x9, #(ARM64_REG_HID10_DisHwpGups)
+	msr		HID10, x9
 	isb		sy
-	and		x0, x0, #(~(ARM64_REG_HID10_DisHwpGups))
-	msr		ARM64_REG_HID10, x0
+	and		x9, x9, #(~(ARM64_REG_HID10_DisHwpGups))
+	msr		HID10, x9
 	isb		sy
 #endif
+	EXEC_END
+
 Lwfi_inst:
 	dsb		sy
 	isb		sy
@@ -742,14 +885,29 @@ LEXT(arm64_force_wfi_clock_gate)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
 
-	mrs		x0, ARM64_REG_CYC_OVRD
+	mrs		x0, CPU_OVRD
 	orr		x0, x0, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_up)
-	msr		ARM64_REG_CYC_OVRD, x0
+	msr		CPU_OVRD, x0
 	
 	POP_FRAME
 	ARM64_STACK_EPILOG
 
 
+#if HAS_RETENTION_STATE
+	.text
+	.align 2
+	.globl EXT(arm64_retention_wfi)
+LEXT(arm64_retention_wfi)
+	wfi
+	cbz		lr, Lwfi_retention	// If lr is 0, we entered retention state and lost all GPRs except sp and pc
+	ret					// Otherwise just return to cpu_idle()
+Lwfi_retention:
+	mov		x0, #1
+	bl		EXT(ClearIdlePop)
+	mov		x0, #0 
+	bl		EXT(cpu_idle_exit)	// cpu_idle_exit(from_reset = FALSE)
+	b		.			// cpu_idle_exit() should never return
+#endif
 
 #if defined(APPLETYPHOON)
 
@@ -761,9 +919,7 @@ LEXT(typhoon_prepare_for_wfi)
 	PUSH_FRAME
 
 	// <rdar://problem/15827409>
-	mrs		x0, ARM64_REG_HID2                              // Read HID2
-	orr		x0, x0, #(ARM64_REG_HID2_disMMUmtlbPrefetch)    // Set HID.DisableMTLBPrefetch
-	msr		ARM64_REG_HID2, x0                              // Write HID2
+	HID_SET_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
 	dsb		sy
 	isb		sy
 
@@ -778,10 +934,7 @@ LEXT(typhoon_return_from_wfi)
 	PUSH_FRAME
 
 	// <rdar://problem/15827409>
-	mrs		x0, ARM64_REG_HID2                              // Read HID2
-	mov		x1, #(ARM64_REG_HID2_disMMUmtlbPrefetch)        //
-	bic		x0, x0, x1                                      // Clear HID.DisableMTLBPrefetchMTLBPrefetch
-	msr		ARM64_REG_HID2, x0                              // Write HID2
+	HID_CLEAR_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
 	dsb		sy
 	isb		sy 
 
@@ -826,57 +979,57 @@ LEXT(cpu_defeatures_set)
 	cmp		x0, #1
 	b.ne		cpu_defeatures_set_ret
 	LOAD_UINT64	x1, HID0_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID0
+	mrs		x0, HID0
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID0, x0
+	msr		HID0, x0
 	LOAD_UINT64	x1, HID1_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID1
+	mrs		x0, HID1
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID1, x0
+	msr		HID1, x0
 	LOAD_UINT64	x1, HID2_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID2
+	mrs		x0, HID2
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID2, x0
+	msr		HID2, x0
 	LOAD_UINT64	x1, HID3_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID3
+	mrs		x0, HID3
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID3, x0
+	msr		HID3, x0
 	LOAD_UINT64	x1, HID4_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID4
+	mrs		x0, HID4
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID4, x0
+	msr		HID4, x0
 	LOAD_UINT64	x1, HID7_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID7
+	mrs		x0, HID7
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID7, x0
+	msr		HID7, x0
 	dsb		sy
 	isb		sy 
 	b		cpu_defeatures_set_ret
 cpu_defeatures_set_2:
 	LOAD_UINT64	x1, HID0_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID0
+	mrs		x0, HID0
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID0, x0
+	msr		HID0, x0
 	LOAD_UINT64	x1, HID1_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID1
+	mrs		x0, HID1
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID1, x0
+	msr		HID1, x0
 	LOAD_UINT64	x1, HID2_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID2
+	mrs		x0, HID2
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID2, x0
+	msr		HID2, x0
 	LOAD_UINT64	x1, HID3_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID3
+	mrs		x0, HID3
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID3, x0
+	msr		HID3, x0
 	LOAD_UINT64	x1, HID4_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID4
+	mrs		x0, HID4
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID4, x0
+	msr		HID4, x0
 	LOAD_UINT64	x1, HID7_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID7
+	mrs		x0, HID7
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID7, x0
+	msr		HID7, x0
 	dsb		sy
 	isb		sy 
 	b		cpu_defeatures_set_ret
@@ -931,7 +1084,7 @@ LEXT(arm64_replace_bootstack)
 	mrs		x4, DAIF					// Load current DAIF; use x4 as pinst may trash x1-x3
 	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF | DAIFSC_ASYNCF)		// Disable IRQ/FIQ/serror
 	// Set SP_EL1 to exception stack
-#if defined(KERNEL_INTEGRITY_KTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
 	mov		x1, lr
 	bl		EXT(pinst_spsel_1)
 	mov		lr, x1
@@ -963,15 +1116,13 @@ LEXT(monitor_call)
 #endif
 
 #ifdef HAS_APPLE_PAC
-/**
- * void ml_sign_thread_state(arm_saved_state_t *ss, uint64_t pc,
- *							 uint32_t cpsr, uint64_t lr, uint64_t x16,
- *							 uint64_t x17)
+/*
+ * SIGN_THREAD_STATE
+ *
+ * Macro that signs thread state.
+ * $0 - Offset in arm_saved_state to store JOPHASH value.
  */
-	.text
-	.align 2
-	.globl EXT(ml_sign_thread_state)
-LEXT(ml_sign_thread_state)
+.macro SIGN_THREAD_STATE
 	pacga	x1, x1, x0		/* PC hash (gkey + &arm_saved_state) */
 	/*
 	 * Mask off the carry flag so we don't need to re-sign when that flag is
@@ -982,7 +1133,62 @@ LEXT(ml_sign_thread_state)
 	pacga	x1, x3, x1		/* LR Hash (gkey + spsr hash) */
 	pacga	x1, x4, x1		/* X16 hash (gkey + lr hash) */
 	pacga	x1, x5, x1		/* X17 hash (gkey + x16 hash) */
-	str		x1, [x0, SS64_JOPHASH]
+	str		x1, [x0, $0]
+#if DEBUG || DEVELOPMENT
+	mrs		x1, DAIF
+	tbz		x1, #DAIF_IRQF_SHIFT, Lintr_enabled_panic
+#endif /* DEBUG || DEVELOPMENT */
+.endmacro
+
+/*
+ * CHECK_SIGNED_STATE
+ *
+ * Macro that checks signed thread state.
+ * $0 - Offset in arm_saved_state to to read the JOPHASH value from.
+ * $1 - Label to jump to when check is unsuccessful.
+ */
+.macro CHECK_SIGNED_STATE
+	pacga	x1, x1, x0		/* PC hash (gkey + &arm_saved_state) */
+	/*
+	 * Mask off the carry flag so we don't need to re-sign when that flag is
+	 * touched by the system call return path.
+	 */
+	bic		x2, x2, PSR_CF
+	pacga	x1, x2, x1		/* SPSR hash (gkey + pc hash) */
+	pacga	x1, x3, x1		/* LR Hash (gkey + spsr hash) */
+	pacga	x1, x4, x1		/* X16 hash (gkey + lr hash) */
+	pacga	x1, x5, x1		/* X17 hash (gkey + x16 hash) */
+	ldr		x2, [x0, $0]
+	cmp		x1, x2
+	b.ne	$1
+#if DEBUG || DEVELOPMENT
+	mrs		x1, DAIF
+	tbz		x1, #DAIF_IRQF_SHIFT, Lintr_enabled_panic
+#endif /* DEBUG || DEVELOPMENT */
+.endmacro
+
+/**
+ * void ml_sign_thread_state(arm_saved_state_t *ss, uint64_t pc,
+ *							 uint32_t cpsr, uint64_t lr, uint64_t x16,
+ *							 uint64_t x17)
+ */
+	.text
+	.align 2
+	.globl EXT(ml_sign_thread_state)
+LEXT(ml_sign_thread_state)
+	SIGN_THREAD_STATE SS64_JOPHASH
+	ret
+
+/**
+ * void ml_sign_kernel_thread_state(arm_kernel_saved_state *ss, uint64_t pc,
+ *							 uint32_t cpsr, uint64_t lr, uint64_t x16,
+ *							 uint64_t x17)
+ */
+	.text
+	.align 2
+	.globl EXT(ml_sign_kernel_thread_state)
+LEXT(ml_sign_kernel_thread_state)
+	SIGN_THREAD_STATE SS64_KERNEL_JOPHASH
 	ret
 
 /**
@@ -994,26 +1200,73 @@ LEXT(ml_sign_thread_state)
 	.align 2
 	.globl EXT(ml_check_signed_state)
 LEXT(ml_check_signed_state)
-	pacga	x1, x1, x0		/* PC hash (gkey + &arm_saved_state) */
-	/*
-	 * Mask off the carry flag so we don't need to re-sign when that flag is
-	 * touched by the system call return path.
-	 */
-	bic		x2, x2, PSR_CF
-	pacga	x1, x2, x1		/* SPSR hash (gkey + pc hash) */
-	pacga	x1, x3, x1		/* LR Hash (gkey + spsr hash) */
-	pacga	x1, x4, x1		/* X16 hash (gkey + lr hash) */
-	pacga	x1, x5, x1		/* X17 hash (gkey + x16 hash) */
-	ldr		x2, [x0, SS64_JOPHASH]
-	cmp		x1, x2
-	b.ne	Lcheck_hash_panic
+	CHECK_SIGNED_STATE SS64_JOPHASH, Lcheck_hash_panic
 	ret
 Lcheck_hash_panic:
+	/*
+	 * ml_check_signed_state normally doesn't set up a stack frame, since it
+	 * needs to work in the face of attackers that can modify the stack.
+	 * However we lazily create one in the panic path: at this point we're
+	 * *only* using the stack frame for unwinding purposes, and without one
+	 * we'd be missing information about the caller.
+	 */
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
 	mov		x1, x0
 	adr		x0, Lcheck_hash_str
 	CALL_EXTERN panic_with_thread_kernel_state
+
+/**
+ * void ml_check_kernel_signed_state(arm_kernel_saved_state *ss, uint64_t pc,
+ *							  uint32_t cpsr, uint64_t lr, uint64_t x16,
+ *							  uint64_t x17)
+ */
+	.text
+	.align 2
+	.globl EXT(ml_check_kernel_signed_state)
+LEXT(ml_check_kernel_signed_state)
+	CHECK_SIGNED_STATE SS64_KERNEL_JOPHASH, Lcheck_kernel_hash_panic
+	ret
+Lcheck_kernel_hash_panic:
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
+	adr		x0, Lcheck_hash_str
+	CALL_EXTERN panic
+
 Lcheck_hash_str:
 	.asciz "JOP Hash Mismatch Detected (PC, CPSR, or LR corruption)"
+
+#if DEBUG || DEVELOPMENT
+Lintr_enabled_panic:
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
+	adr		x0, Lintr_enabled_str
+	CALL_EXTERN panic
+Lintr_enabled_str:
+	/*
+	 * Please see the "Signing spilled register state" section of doc/pac.md
+	 * for an explanation of why this is bad and how it should be fixed.
+	 */
+	.asciz "Signed thread state manipulated with interrupts enabled"
+#endif /* DEBUG || DEVELOPMENT */
+
+/**
+ * void ml_auth_thread_state_invalid_cpsr(arm_saved_state_t *ss)
+ *
+ * Panics due to an invalid CPSR value in ss.
+ */
+	.text
+	.align 2
+	.globl EXT(ml_auth_thread_state_invalid_cpsr)
+LEXT(ml_auth_thread_state_invalid_cpsr)
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
+	mov		x1, x0
+	adr		x0, Linvalid_cpsr_str
+	CALL_EXTERN panic_with_thread_kernel_state
+
+Linvalid_cpsr_str:
+	.asciz "Thread state corruption detected (PE mode == 0)"
 #endif /* HAS_APPLE_PAC */
 
 	.text

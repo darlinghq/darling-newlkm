@@ -77,12 +77,12 @@ def print_alloc_free_entry(addr, orig_ptr):
 
     if h.zone:
         zone = h.zone
-        if str(zone.zone_name).startswith("fakestack"):
+        if str(zone.z_name).startswith("fakestack"):
             alloc_type = "fakestack"
             leftrz = 16
         else:
             alloc_type = "zone"
-            leftrz = unsigned(zone.kasan_redzone)
+            leftrz = unsigned(zone.z_kasan_redzone)
     else:
         alloc_type = "kalloc"
         if asz - usz >= 2*pgsz:
@@ -98,7 +98,7 @@ def print_alloc_free_entry(addr, orig_ptr):
     print "Offset:      {} bytes".format(orig_ptr - addr - leftrz)
     print "Redzone:     {} / {} bytes".format(leftrz, rightrz)
     if h.zone:
-        print "Zone:        0x{:x} <{:s}>".format(unsigned(zone), zone.zone_name)
+        print "Zone:        0x{:x} <{:s}>".format(unsigned(zone), zone.z_name)
 
     btframes = unsigned(h.frames)
     if btframes > 0:

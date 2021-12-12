@@ -79,6 +79,15 @@
 
 #include <sys/cdefs.h>
 
+#if XNU_KERNEL_PRIVATE
+#include <os/refcnt.h>
+#if __LP64__
+#define MEMORY_OBJECT_HAS_REFCOUNT 1
+#else
+#define MEMORY_OBJECT_HAS_REFCOUNT 0
+#endif
+#endif /* XNU_KERNEL_PRIVATE */
+
 #define VM_64_BIT_DATA_OBJECTS
 
 typedef unsigned long long      memory_object_offset_t;
@@ -100,23 +109,30 @@ typedef natural_t mo_ipc_object_bits_t;
 
 struct memory_object_pager_ops; /* forward declaration */
 
+typedef struct vm_object       *memory_object_control_t;
 /*
- * "memory_object" and "memory_object_control" types used to be Mach ports
- * in user space and can be passed as such to some kernel APIs.
- * Their first field must match the "io_bits" field of a
- * "struct ipc_object" to identify them as a "IKOT_MEMORY_OBJECT" and
- * "IKOT_MEM_OBJ_CONTROL" respectively.
+ * "memory_object" used to be a Mach port in user space and could be passed
+ * as such to some kernel APIs.
+ *
+ * Its first field must match the "io_bits" field of a
+ * "struct ipc_object" to identify them as a "IKOT_MEMORY_OBJECT".
  */
-typedef struct          memory_object {
+typedef struct memory_object {
 	mo_ipc_object_bits_t                    mo_ikot; /* DO NOT CHANGE */
+#if __LP64__
+#if XNU_KERNEL_PRIVATE
+	/*
+	 * On LP64 there's a 4 byte hole that is perfect for a refcount.
+	 * Expose it so that all pagers can take advantage of it.
+	 */
+	os_ref_atomic_t                         mo_ref;
+#else
+	unsigned int                            __mo_padding;
+#endif /* XNU_KERNEL_PRIVATE */
+#endif /* __LP64__ */
 	const struct memory_object_pager_ops    *mo_pager_ops;
-	struct memory_object_control            *mo_control;
+	memory_object_control_t                 mo_control;
 } *memory_object_t;
-
-typedef struct          memory_object_control {
-	mo_ipc_object_bits_t    moc_ikot; /* DO NOT CHANGE */
-	struct vm_object        *moc_object;
-} *memory_object_control_t;
 
 typedef const struct memory_object_pager_ops {
 	void (*memory_object_reference)(
@@ -166,12 +182,22 @@ typedef const struct memory_object_pager_ops {
 	kern_return_t (*memory_object_data_reclaim)(
 		memory_object_t mem_obj,
 		boolean_t reclaim_backing_store);
+	boolean_t (*memory_object_backing_object)(
+		memory_object_t mem_obj,
+		memory_object_offset_t mem_obj_offset,
+		vm_object_t *backing_object,
+		vm_object_offset_t *backing_offset);
 	const char *memory_object_pager_name;
 } * memory_object_pager_ops_t;
 
 #else   /* KERNEL_PRIVATE */
 
 typedef mach_port_t     memory_object_t;
+/*
+ * vestigial, maintained for source compatibility,
+ * no MIG interface will accept or return non NULL
+ * objects for those.
+ */
 typedef mach_port_t     memory_object_control_t;
 
 #endif  /* KERNEL_PRIVATE */
@@ -301,6 +327,11 @@ typedef struct old_memory_object_attr_info old_memory_object_attr_info_data_t;
 __BEGIN_DECLS
 extern void memory_object_reference(memory_object_t object);
 extern void memory_object_deallocate(memory_object_t object);
+extern boolean_t memory_object_backing_object(
+	memory_object_t mem_obj,
+	memory_object_offset_t offset,
+	vm_object_t *backing_object,
+	vm_object_offset_t *backing_offset);
 
 extern void memory_object_default_reference(memory_object_default_t);
 extern void memory_object_default_deallocate(memory_object_default_t);
@@ -431,11 +462,8 @@ typedef struct memory_object_attr_info  memory_object_attr_info_data_t;
 #define MAX_UPL_TRANSFER_BYTES  (1024 * 1024)
 #define MAX_UPL_SIZE_BYTES      (1024 * 1024 * 64)
 
-#ifndef CONFIG_EMBEDDED
 #define MAX_UPL_SIZE            (MAX_UPL_SIZE_BYTES / PAGE_SIZE)
 #define MAX_UPL_TRANSFER        (MAX_UPL_TRANSFER_BYTES / PAGE_SIZE)
-#endif
-
 
 struct upl_page_info {
 	ppnum_t         phys_addr;      /* physical page index number */
@@ -447,9 +475,13 @@ struct upl_page_info {
 	    precious:1,         /* must be cleaned, we have only copy */
 	    device:1,           /* no page data, mapped dev memory */
 	    speculative:1,      /* page is valid, but not yet accessed */
-	    cs_validated:1,     /* CODE SIGNING: page was validated */
-	    cs_tainted:1,       /* CODE SIGNING: page is tainted */
-	    cs_nx:1,            /* CODE SIGNING: page is NX */
+#define VMP_CS_BITS 4
+#define VMP_CS_ALL_FALSE 0x0
+#define VMP_CS_ALL_TRUE 0xF
+	cs_validated:VMP_CS_BITS,     /* CODE SIGNING: page was validated */
+	    cs_tainted:VMP_CS_BITS,   /* CODE SIGNING: page is tainted */
+	    cs_nx:VMP_CS_BITS,        /* CODE SIGNING: page is NX */
+
 	    needed:1,           /* page should be left in cache on abort */
 	    mark:1,             /* a mark flag for the creator to use as they wish */
 	:0;                     /* force to long boundary */
@@ -713,13 +745,13 @@ typedef uint64_t upl_control_flags_t;
 /* modifier macros for upl_t */
 
 #define UPL_SET_CS_VALIDATED(upl, index, value) \
-	((upl)[(index)].cs_validated = ((value) ? TRUE : FALSE))
+	((upl)[(index)].cs_validated = (value))
 
 #define UPL_SET_CS_TAINTED(upl, index, value) \
-	((upl)[(index)].cs_tainted = ((value) ? TRUE : FALSE))
+	((upl)[(index)].cs_tainted = (value))
 
 #define UPL_SET_CS_NX(upl, index, value) \
-	((upl)[(index)].cs_nx = ((value) ? TRUE : FALSE))
+	((upl)[(index)].cs_nx = (value))
 
 #define UPL_SET_REPRIO_INFO(upl, index, blkno, len) \
 	((upl)->upl_reprio_info[(index)]) = (((uint64_t)(blkno) & UPL_REPRIO_INFO_MASK) | \

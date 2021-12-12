@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -36,11 +36,6 @@
  *	Contains RT distributed semaphore synchronization services.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/kern_return.h>
@@ -65,15 +60,10 @@
 
 #include <libkern/OSAtomic.h>
 
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
-
 static unsigned int semaphore_event;
 #define SEMAPHORE_EVENT CAST_EVENT64_T(&semaphore_event)
 
-zone_t semaphore_zone;
-unsigned int semaphore_max;
+ZONE_DECLARE(semaphore_zone, "semaphores", sizeof(struct semaphore), ZC_NONE);
 
 os_refgrp_decl(static, sema_refgrp, "semaphore", NULL);
 
@@ -120,7 +110,7 @@ semaphore_convert_wait_result(
 	int                             wait_result);
 
 void
-semaphore_wait_continue(void);
+semaphore_wait_continue(void *arg __unused, wait_result_t wr);
 
 static kern_return_t
 semaphore_wait_internal(
@@ -144,22 +134,6 @@ semaphore_deadline(
 }
 
 /*
- *	ROUTINE:	semaphore_init		[private]
- *
- *	Initialize the semaphore mechanisms.
- *	Right now, we only need to initialize the semaphore zone.
- */
-void
-semaphore_init(void)
-{
-	semaphore_zone = zinit(sizeof(struct semaphore),
-	    semaphore_max * sizeof(struct semaphore),
-	    sizeof(struct semaphore),
-	    "semaphores");
-	zone_change(semaphore_zone, Z_NOENCRYPT, TRUE);
-}
-
-/*
  *	Routine:	semaphore_create
  *
  *	Creates a semaphore.
@@ -169,15 +143,14 @@ kern_return_t
 semaphore_create(
 	task_t                  task,
 	semaphore_t             *new_semaphore,
-	int                             policy,
-	int                             value)
+	int                     policy,
+	int                     value)
 {
-	semaphore_t              s = SEMAPHORE_NULL;
+	semaphore_t             s = SEMAPHORE_NULL;
 	kern_return_t           kret;
 
-
 	*new_semaphore = SEMAPHORE_NULL;
-	if (task == TASK_NULL || value < 0 || policy > SYNC_POLICY_MAX) {
+	if (task == TASK_NULL || value < 0 || policy > SYNC_POLICY_MAX || policy < 0) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
@@ -207,6 +180,12 @@ semaphore_create(
 	 *  the new semaphore to the task's semaphore list.
 	 */
 	task_lock(task);
+	/* Check for race with task_terminate */
+	if (!task->active) {
+		task_unlock(task);
+		zfree(semaphore_zone, s);
+		return KERN_INVALID_TASK;
+	}
 	enqueue_head(&task->semaphore_list, (queue_entry_t) s);
 	task->semaphores_owned++;
 	task_unlock(task);
@@ -419,12 +398,15 @@ semaphore_signal_internal(
 	}
 
 	if (semaphore->count < 0) {
+		waitq_options_t wq_option = (options & SEMAPHORE_THREAD_HANDOFF) ?
+		    WQ_OPTION_HANDOFF : WQ_OPTION_NONE;
 		kr = waitq_wakeup64_one_locked(
 			&semaphore->waitq,
 			SEMAPHORE_EVENT,
 			THREAD_AWAKENED, NULL,
 			WAITQ_ALL_PRIORITIES,
-			WAITQ_KEEP_LOCKED);
+			WAITQ_KEEP_LOCKED,
+			wq_option);
 		if (kr == KERN_SUCCESS) {
 			semaphore_unlock(semaphore);
 			splx(spl_level);
@@ -662,10 +644,9 @@ semaphore_convert_wait_result(int wait_result)
  *	It returns directly to user space.
  */
 void
-semaphore_wait_continue(void)
+semaphore_wait_continue(void *arg __unused, wait_result_t wr)
 {
 	thread_t self = current_thread();
-	int wait_result = self->wait_result;
 	void (*caller_cont)(kern_return_t) = self->sth_continuation;
 
 	assert(self->sth_waitsemaphore != SEMAPHORE_NULL);
@@ -674,8 +655,9 @@ semaphore_wait_continue(void)
 		semaphore_dereference(self->sth_signalsemaphore);
 	}
 
+	assert(self->handoff_thread == THREAD_NULL);
 	assert(caller_cont != (void (*)(kern_return_t))0);
-	(*caller_cont)(semaphore_convert_wait_result(wait_result));
+	(*caller_cont)(semaphore_convert_wait_result(wr));
 }
 
 /*
@@ -703,6 +685,10 @@ semaphore_wait_internal(
 
 	spl_level = splsched();
 	semaphore_lock(wait_semaphore);
+	thread_t self = current_thread();
+	thread_t handoff_thread = THREAD_NULL;
+	thread_handoff_option_t handoff_option = THREAD_HANDOFF_NONE;
+	int semaphore_signal_options = SEMAPHORE_SIGNAL_PREPOST;
 
 	if (!wait_semaphore->active) {
 		kr = KERN_TERMINATED;
@@ -712,8 +698,6 @@ semaphore_wait_internal(
 	} else if (option & SEMAPHORE_TIMEOUT_NOBLOCK) {
 		kr = KERN_OPERATION_TIMED_OUT;
 	} else {
-		thread_t        self = current_thread();
-
 		wait_semaphore->count = -1;  /* we don't keep an actual count */
 
 		thread_set_pending_block_hint(self, kThreadWaitSemaphore);
@@ -724,6 +708,8 @@ semaphore_wait_internal(
 			TIMEOUT_URGENCY_USER_NORMAL,
 			deadline, TIMEOUT_NO_LEEWAY,
 			self);
+
+		semaphore_signal_options |= SEMAPHORE_THREAD_HANDOFF;
 	}
 	semaphore_unlock(wait_semaphore);
 	splx(spl_level);
@@ -741,10 +727,10 @@ semaphore_wait_internal(
 		 * our intention to wait above).
 		 */
 		signal_kr = semaphore_signal_internal(signal_semaphore,
-		    THREAD_NULL,
-		    SEMAPHORE_SIGNAL_PREPOST);
+		    THREAD_NULL, semaphore_signal_options);
 
 		if (signal_kr == KERN_NOT_WAITING) {
+			assert(self->handoff_thread == THREAD_NULL);
 			signal_kr = KERN_SUCCESS;
 		} else if (signal_kr == KERN_TERMINATED) {
 			/*
@@ -760,8 +746,7 @@ semaphore_wait_internal(
 			 * (most important) result.  Otherwise,
 			 * return the KERN_TERMINATED status.
 			 */
-			thread_t self = current_thread();
-
+			assert(self->handoff_thread == THREAD_NULL);
 			clear_wait(self, THREAD_INTERRUPTED);
 			kr = semaphore_convert_wait_result(self->wait_result);
 			if (kr == KERN_ABORTED) {
@@ -775,27 +760,34 @@ semaphore_wait_internal(
 	 * return now that we have signalled the signal semaphore.
 	 */
 	if (kr != KERN_ALREADY_WAITING) {
+		assert(self->handoff_thread == THREAD_NULL);
 		return kr;
 	}
 
+	if (self->handoff_thread) {
+		handoff_thread = self->handoff_thread;
+		self->handoff_thread = THREAD_NULL;
+		handoff_option = THREAD_HANDOFF_SETRUN_NEEDED;
+	}
 	/*
 	 * Now, we can block.  If the caller supplied a continuation
 	 * pointer of his own for after the block, block with the
-	 * appropriate semaphore continuation.  Thiswill gather the
+	 * appropriate semaphore continuation.  This will gather the
 	 * semaphore results, release references on the semaphore(s),
 	 * and then call the caller's continuation.
 	 */
 	if (caller_cont) {
-		thread_t self = current_thread();
-
 		self->sth_continuation = caller_cont;
 		self->sth_waitsemaphore = wait_semaphore;
 		self->sth_signalsemaphore = signal_semaphore;
-		wait_result = thread_block((thread_continue_t)semaphore_wait_continue);
+
+		thread_handoff_parameter(handoff_thread, semaphore_wait_continue,
+		    NULL, handoff_option);
 	} else {
-		wait_result = thread_block(THREAD_CONTINUE_NULL);
+		wait_result = thread_handoff_deallocate(handoff_thread, handoff_option);
 	}
 
+	assert(self->handoff_thread == THREAD_NULL);
 	return semaphore_convert_wait_result(wait_result);
 }
 
@@ -1213,17 +1205,14 @@ out:
 	zfree(semaphore_zone, semaphore);
 }
 
-#ifdef __DARLING__
-boolean_t kdp_is_in_zone(void* addr, const char* zone_name);
-#endif
-
 #define WAITQ_TO_SEMA(wq) ((semaphore_t) ((uintptr_t)(wq) - offsetof(struct semaphore, waitq)))
 void
 kdp_sema_find_owner(struct waitq * waitq, __assert_only event64_t event, thread_waitinfo_t * waitinfo)
 {
 	semaphore_t sem = WAITQ_TO_SEMA(waitq);
 	assert(event == SEMAPHORE_EVENT);
-	assert(kdp_is_in_zone(sem, "semaphores"));
+
+	zone_require(semaphore_zone, sem);
 
 	waitinfo->context = VM_KERNEL_UNSLIDE_OR_PERM(sem->port);
 	if (sem->owner) {

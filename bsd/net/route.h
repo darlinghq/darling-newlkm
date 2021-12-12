@@ -84,7 +84,7 @@ struct rt_metrics {
 	u_int32_t       rmx_rttvar;     /* estimated rtt variance */
 	u_int32_t       rmx_pksent;     /* packets sent using this route */
 	u_int32_t       rmx_state;      /* route state */
-	u_int32_t       rmx_filler[3];  /* will be used for T/TCP later */
+	u_int32_t       rmx_filler[3];  /* will be used for TCP's peer-MSS cache */
 };
 
 /*
@@ -314,7 +314,8 @@ extern int route_op_entitlement_check(struct socket *, kauth_cred_t, int, boolea
 #define RTF_PROXY       0x8000000       /* proxying, no interface scope */
 #define RTF_ROUTER      0x10000000      /* host is a router */
 #define RTF_DEAD        0x20000000      /* Route entry is being freed */
-                                        /* 0x40000000 and up unassigned */
+#define RTF_GLOBAL      0x40000000      /* route to destination of the global internet */
+                                        /* 0x80000000 unassigned */
 
 #define RTPRF_OURS      RTF_PROTO3      /* set on routes we manage */
 #define RTF_BITS \
@@ -322,7 +323,7 @@ extern int route_op_entitlement_check(struct socket *, kauth_cred_t, int, boolea
 	"\10DELCLONE\11CLONING\12XRESOLVE\13LLINFO\14STATIC\15BLACKHOLE" \
 	"\16NOIFREF\17PROTO2\20PROTO1\21PRCLONING\22WASCLONED\23PROTO3" \
 	"\25PINNED\26LOCAL\27BROADCAST\30MULTICAST\31IFSCOPE\32CONDEMNED" \
-	"\33IFREF\34PROXY\35ROUTER"
+	"\33IFREF\34PROXY\35ROUTER\37GLOBAL"
 
 #define IS_DIRECT_HOSTROUTE(rt) \
 	(((rt)->rt_flags & (RTF_HOST | RTF_GATEWAY)) == RTF_HOST)
@@ -573,9 +574,7 @@ extern unsigned int rt_verbose;
 extern struct radix_node_head *rt_tables[AF_MAX + 1];
 extern lck_mtx_t *rnh_lock;
 extern uint32_t route_genid_inet;       /* INET route generation count */
-#if INET6
 extern uint32_t route_genid_inet6;      /* INET6 route generation count */
-#endif /* INET6 */
 extern int rttrash;
 extern unsigned int rte_debug;
 
@@ -587,9 +586,9 @@ extern void routegenid_update(void);
 extern void routegenid_inet_update(void);
 extern void routegenid_inet6_update(void);
 extern void rt_ifmsg(struct ifnet *);
-extern void rt_missmsg(int, struct rt_addrinfo *, int, int);
-extern void rt_newaddrmsg(int, struct ifaddr *, int, struct rtentry *);
-extern void rt_newmaddrmsg(int, struct ifmultiaddr *);
+extern void rt_missmsg(u_char, struct rt_addrinfo *, int, int);
+extern void rt_newaddrmsg(u_char, struct ifaddr *, int, struct rtentry *);
+extern void rt_newmaddrmsg(u_char, struct ifmultiaddr *);
 extern int rt_setgate(struct rtentry *, struct sockaddr *, struct sockaddr *);
 extern void set_primary_ifscope(int, unsigned int);
 extern unsigned int get_primary_ifscope(int);

@@ -109,10 +109,8 @@
 #if SYSV_SHM
 static int shminit(void);
 
-static lck_grp_t       *sysv_shm_subsys_lck_grp;
-static lck_grp_attr_t  *sysv_shm_subsys_lck_grp_attr;
-static lck_attr_t      *sysv_shm_subsys_lck_attr;
-static lck_mtx_t        sysv_shm_subsys_mutex;
+static LCK_GRP_DECLARE(sysv_shm_subsys_lck_grp, "sysv_shm_subsys_lock");
+static LCK_MTX_DECLARE(sysv_shm_subsys_mutex, &sysv_shm_subsys_lck_grp);
 
 #define SYSV_SHM_SUBSYS_LOCK() lck_mtx_lock(&sysv_shm_subsys_mutex)
 #define SYSV_SHM_SUBSYS_UNLOCK() lck_mtx_unlock(&sysv_shm_subsys_mutex)
@@ -182,8 +180,6 @@ struct shminfo shminfo = {
 #define SHMID_SENTINEL    (-2)
 
 #endif /* __APPLE_API_PRIVATE */
-
-void sysv_shm_lock_init(void);
 
 static __inline__ time_t
 sysv_shmtime(void)
@@ -277,10 +273,11 @@ shm_deallocate_segment(struct shmid_kernel *shmseg)
 	    shm_handle = shm_handle_next) {
 		shm_handle_next = shm_handle->shm_handle_next;
 		mach_memory_entry_port_release(shm_handle->shm_object);
-		FREE(shm_handle, M_SHM);
+		kheap_free(KM_SHM, shm_handle, sizeof(struct shm_handle));
 	}
 	shmseg->u.shm_internal = USER_ADDR_NULL;                /* tunnel */
-	size = mach_vm_round_page(shmseg->u.shm_segsz);
+	size = vm_map_round_page(shmseg->u.shm_segsz,
+	    vm_map_page_mask(current_map()));
 	shm_committed -= btoc(size);
 	shm_nused--;
 	shmseg->u.shm_perm.mode = SHMSEG_FREE;
@@ -300,7 +297,8 @@ shm_delete_mapping(__unused struct proc *p, struct shmmap_state *shmmap_s,
 
 	segnum = IPCID_TO_IX(shmmap_s->shmid);
 	shmseg = &shmsegs[segnum];
-	size = mach_vm_round_page(shmseg->u.shm_segsz); /* XXX done for us? */
+	size = vm_map_round_page(shmseg->u.shm_segsz,
+	    vm_map_page_mask(current_map())); /* XXX done for us? */
 	if (deallocate) {
 		result = mach_vm_deallocate(current_map(), shmmap_s->va, size);
 		if (result != KERN_SUCCESS) {
@@ -383,6 +381,7 @@ shmat(struct proc *p, struct shmat_args *uap, user_addr_t *retval)
 	struct shmmap_state     *shmmap_s = NULL;
 	struct shm_handle       *shm_handle;
 	mach_vm_address_t       attach_va;      /* attach address in/out */
+	mach_vm_address_t       shmlba;
 	mach_vm_size_t          map_size;       /* size of map entry */
 	mach_vm_size_t          mapped_size;
 	vm_prot_t           prot;
@@ -418,7 +417,7 @@ shmat(struct proc *p, struct shmat_args *uap, user_addr_t *retval)
 			goto shmat_out;
 		}
 
-		MALLOC(shmmap_s, struct shmmap_state *, size, M_SHM, M_WAITOK | M_NULL);
+		shmmap_s = kheap_alloc(KM_SHM, size, Z_WAITOK);
 		if (shmmap_s == NULL) {
 			shmat_ret = ENOMEM;
 			goto shmat_out;
@@ -465,7 +464,8 @@ shmat(struct proc *p, struct shmat_args *uap, user_addr_t *retval)
 		goto shmat_out;
 	}
 
-	map_size = mach_vm_round_page(shmseg->u.shm_segsz);
+	map_size = vm_map_round_page(shmseg->u.shm_segsz,
+	    vm_map_page_mask(current_map()));
 	prot = VM_PROT_READ;
 	if ((uap->shmflg & SHM_RDONLY) == 0) {
 		prot |= VM_PROT_WRITE;
@@ -476,9 +476,10 @@ shmat(struct proc *p, struct shmat_args *uap, user_addr_t *retval)
 	}
 
 	attach_va = (mach_vm_address_t)uap->shmaddr;
+	shmlba = vm_map_page_size(current_map()); /* XXX instead of SHMLBA */
 	if (uap->shmflg & SHM_RND) {
-		attach_va &= ~(SHMLBA - 1);
-	} else if ((attach_va & (SHMLBA - 1)) != 0) {
+		attach_va &= ~(shmlba - 1);
+	} else if ((attach_va & (shmlba - 1)) != 0) {
 		shmat_ret = EINVAL;
 		goto shmat_out;
 	}
@@ -515,10 +516,23 @@ shmat(struct proc *p, struct shmat_args *uap, user_addr_t *retval)
 	for (shm_handle = CAST_DOWN(void *, shmseg->u.shm_internal);/* tunnel */
 	    shm_handle != NULL;
 	    shm_handle = shm_handle->shm_handle_next) {
+		vm_map_size_t chunk_size;
+
+		assert(mapped_size < map_size);
+		chunk_size = shm_handle->shm_handle_size;
+		if (chunk_size > map_size - mapped_size) {
+			/*
+			 * Partial mapping of last chunk due to
+			 * page size mismatch.
+			 */
+			assert(vm_map_page_shift(current_map()) < PAGE_SHIFT);
+			assert(shm_handle->shm_handle_next == NULL);
+			chunk_size = map_size - mapped_size;
+		}
 		rv = vm_map_enter_mem_object(
 			current_map(),          /* process map */
 			&attach_va,             /* attach address */
-			shm_handle->shm_handle_size, /* segment size */
+			chunk_size,             /* size to map */
 			(mach_vm_offset_t)0,    /* alignment mask */
 			VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
 			VM_MAP_KERNEL_FLAGS_NONE,
@@ -533,8 +547,8 @@ shmat(struct proc *p, struct shmat_args *uap, user_addr_t *retval)
 			goto out;
 		}
 
-		mapped_size += shm_handle->shm_handle_size;
-		attach_va = attach_va + shm_handle->shm_handle_size;
+		mapped_size += chunk_size;
+		attach_va = attach_va + chunk_size;
 	}
 
 	shmmap_s->shmid = uap->shmid;
@@ -820,7 +834,7 @@ shmget_allocate_segment(struct proc *p, struct shmget_args *uap, int mode,
 			goto out;
 		}
 
-		MALLOC(shm_handle, struct shm_handle *, sizeof(struct shm_handle), M_SHM, M_WAITOK);
+		shm_handle = kheap_alloc(KM_SHM, sizeof(struct shm_handle), Z_WAITOK);
 		if (shm_handle == NULL) {
 			kret = KERN_NO_SPACE;
 			mach_memory_entry_port_release(mem_object);
@@ -873,7 +887,7 @@ out:
 		    shm_handle = shm_handle_next) {
 			shm_handle_next = shm_handle->shm_handle_next;
 			mach_memory_entry_port_release(shm_handle->shm_object);
-			FREE(shm_handle, M_SHM);
+			kheap_free(KM_SHM, shm_handle, sizeof(struct shm_handle));
 		}
 		shmseg->u.shm_internal = USER_ADDR_NULL; /* tunnel */
 	}
@@ -988,7 +1002,7 @@ shmfork(struct proc *p1, struct proc *p2)
 		ret = 1;
 		goto shmfork_out;
 	}
-	MALLOC(shmmap_s, struct shmmap_state *, size, M_SHM, M_WAITOK);
+	shmmap_s = kheap_alloc(KM_SHM, size, Z_WAITOK);
 	if (shmmap_s == NULL) {
 		ret = 1;
 		goto shmfork_out;
@@ -1011,11 +1025,14 @@ static void
 shmcleanup(struct proc *p, int deallocate)
 {
 	struct shmmap_state *shmmap_s;
+	size_t size = 0;
+	int nsegs = 0;
 
 	SYSV_SHM_SUBSYS_LOCK();
 
 	shmmap_s = (struct shmmap_state *)p->vm_shm;
 	for (; shmmap_s->shmid != SHMID_SENTINEL; shmmap_s++) {
+		nsegs++;
 		if (SHMID_IS_VALID(shmmap_s->shmid)) {
 			/*
 			 * XXX: Should the MAC framework enforce
@@ -1025,8 +1042,10 @@ shmcleanup(struct proc *p, int deallocate)
 		}
 	}
 
-	FREE(p->vm_shm, M_SHM);
-	p->vm_shm = NULL;
+	if (os_add_and_mul_overflow(nsegs, 1, sizeof(struct shmmap_state), &size)) {
+		panic("shmcleanup: p->vm_shm buffer was correupted\n");
+	}
+	kheap_free(KM_SHM, p->vm_shm, size);
 	SYSV_SHM_SUBSYS_UNLOCK();
 }
 
@@ -1066,7 +1085,7 @@ shminit(void)
 			return ENOMEM;
 		}
 
-		MALLOC(shmsegs, struct shmid_kernel *, sz, M_SHM, M_WAITOK | M_ZERO);
+		shmsegs = zalloc_permanent(sz, ZALIGN_PTR);
 		if (shmsegs == NULL) {
 			return ENOMEM;
 		}
@@ -1084,18 +1103,6 @@ shminit(void)
 	}
 
 	return 0;
-}
-
-/* Initialize the mutex governing access to the SysV shm subsystem */
-__private_extern__ void
-sysv_shm_lock_init( void )
-{
-	sysv_shm_subsys_lck_grp_attr = lck_grp_attr_alloc_init();
-
-	sysv_shm_subsys_lck_grp = lck_grp_alloc_init("sysv_shm_subsys_lock", sysv_shm_subsys_lck_grp_attr);
-
-	sysv_shm_subsys_lck_attr = lck_attr_alloc_init();
-	lck_mtx_init(&sysv_shm_subsys_mutex, sysv_shm_subsys_lck_grp, sysv_shm_subsys_lck_attr);
 }
 
 /* (struct sysctl_oid *oidp, void *arg1, int arg2, \
@@ -1185,9 +1192,9 @@ IPCS_shm_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1,
 	union {
 		struct user32_IPCS_command u32;
 		struct user_IPCS_command u64;
-	} ipcs;
-	struct user32_shmid_ds shmid_ds32 = {}; /* post conversion, 32 bit version */
-	struct user_shmid_ds   shmid_ds;        /* 64 bit version */
+	} ipcs = { };
+	struct user32_shmid_ds shmid_ds32 = { }; /* post conversion, 32 bit version */
+	struct user_shmid_ds   shmid_ds = { };   /* 64 bit version */
 	void *shmid_dsp;
 	size_t ipcs_sz = sizeof(struct user_IPCS_command);
 	size_t shmid_ds_sz = sizeof(struct user_shmid_ds);

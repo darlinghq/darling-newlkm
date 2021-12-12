@@ -16,10 +16,12 @@
 #include <sys/kauth.h>
 #include <sys/ucred.h>
 #include <sys/proc_internal.h>
+#include <sys/sysproto.h>
 #include <sys/user.h>
 #include <kern/task.h>
 #include <kern/thread.h>
 #include <vm/vm_map.h>
+
 
 /*
  * copy a null terminated string from the kernel address space into the user
@@ -45,7 +47,7 @@ copyoutstr(const void *from, user_addr_t to, size_t maxlen, size_t * lencopied)
 		error = ENAMETOOLONG;
 	}
 
-	len = min(maxlen, slen);
+	len = MIN(maxlen, slen);
 	if (copyout(from, to, len)) {
 		error = EFAULT;
 	}
@@ -90,3 +92,4 @@ copywithin(void *src, void *dst, size_t count)
 	bcopy(src, dst, count);
 	return 0;
 }
+

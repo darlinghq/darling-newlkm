@@ -78,10 +78,11 @@
 #include <System/libkern/tree.h>
 #endif
 
-//#define NULLFS_DEBUG 0
+// #define NULLFS_DEBUG 0
 
 #define NULLM_CACHE 0x0001
 #define NULLM_CASEINSENSITIVE 0x0000000000000002
+#define NULLM_UNVEIL 0x1ULL << 2
 
 typedef int (*vop_t)(void *);
 
@@ -97,6 +98,12 @@ struct null_mount {
 	                                    *  before we build the shadow vnode lazily*/
 	lck_mtx_t nullm_lock;              /* lock to protect vps above */
 	uint64_t nullm_flags;
+	uid_t uid;
+	gid_t gid;
+};
+
+struct null_mount_conf {
+	uint64_t flags;
 };
 
 #ifdef KERNEL
@@ -132,8 +139,8 @@ struct vnodeop_desc_fake {
 __BEGIN_DECLS
 
 int nullfs_init(struct vfsconf * vfsp);
-int nullfs_init_lck(lck_mtx_t * lck);
-int nullfs_destroy_lck(lck_mtx_t * lck);
+void nullfs_init_lck(lck_mtx_t * lck);
+void nullfs_destroy_lck(lck_mtx_t * lck);
 int nullfs_uninit(void);
 int null_nodeget(
 	struct mount * mp, struct vnode * lowervp, struct vnode * dvp, struct vnode ** vpp, struct componentname * cnp, int root);
@@ -143,6 +150,9 @@ int null_getnewvnode(
 void null_hashrem(struct null_node * xp);
 
 int nullfs_getbackingvnode(vnode_t in_vp, vnode_t* out_vpp);
+
+vfs_context_t nullfs_get_patched_context(struct null_mount * null_mp, vfs_context_t ctx);
+void nullfs_cleanup_patched_context(struct null_mount * null_mp, vfs_context_t ctx);
 
 #define NULLVPTOLOWERVP(vp) (VTONULL(vp)->null_lowervp)
 #define NULLVPTOLOWERVID(vp) (VTONULL(vp)->null_lowervid)

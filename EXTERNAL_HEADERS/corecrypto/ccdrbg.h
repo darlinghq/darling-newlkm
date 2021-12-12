@@ -1,11 +1,12 @@
-/*
- *  ccdrbg.h
- *  corecrypto
+/* Copyright (c) (2010,2011,2012,2014,2015,2016,2017,2018,2019) Apple Inc. All rights reserved.
  *
- *  Created on 08/17/2010
- *
- *  Copyright (c) 2010,2011,2012,2014,2015 Apple Inc. All rights reserved.
- *
+ * corecrypto is licensed under Apple Inc.’s Internal Use License Agreement (which
+ * is contained in the License.txt file distributed with corecrypto) and only to 
+ * people who accept that license. IMPORTANT:  Any license rights granted to you by 
+ * Apple Inc. (if any) are limited to internal use within your organization only on 
+ * devices and computers you own or control, for the sole purpose of verifying the 
+ * security characteristics and correct functioning of the Apple Software.  You may 
+ * not, directly or indirectly, redistribute the Apple Software or any portions thereof.
  */
 
 /*!
@@ -21,28 +22,18 @@
 #include <corecrypto/cc.h>
 #include <corecrypto/ccdrbg_impl.h>
 
-/* error codes */
-#define CCDRBG_STATUS_OK 0
-#define CCDRBG_STATUS_ERROR (-1)
-#define CCDRBG_STATUS_NEED_RESEED (-2)
-#define CCDRBG_STATUS_PARAM_ERROR (-3)
-// If this value is returned, the caller must abort or panic the process for security reasons.
-// for example in the case of catastrophic error in
-// http://csrc.nist.gov/publications/drafts/800-90/sp800_90a_r1_draft.pdf
-// ccdrbg calls abort() or panic(), if they are available in the system.
-#define CCDRBG_STATUS_ABORT (-4)
 /*
- * The maximum length of the entropy_input,  additional_input (max_additional_input_length) , personalization string 
+ * The maximum length of the entropy_input,  additional_input (max_additional_input_length) , personalization string
  * (max_personalization_string_length) and max_number_of_bits_per_request  are implementation dependent
- * but shall fit in a 32 bit register and be be less than or equal to the specified maximum length for the 
+ * but shall fit in a 32 bit register and be be less than or equal to the specified maximum length for the
  * selected DRBG mechanism (NIST 800-90A Section 10).
  */
 
 #define CCDRBG_MAX_ENTROPY_SIZE         ((uint32_t)1<<16)
 #define CCDRBG_MAX_ADDITIONALINPUT_SIZE ((uint32_t)1<<16)
 #define CCDRBG_MAX_PSINPUT_SIZE         ((uint32_t)1<<16)
-#define CCDRBG_MAX_REQUEST_SIZE         ((uint32_t)1<<16) //this is the the absolute maximum in NIST 800-90A
-#define CCDRBG_RESEED_INTERVAL          ((uint64_t)1<<30) // must be able to fit the NIST maximum of 2^48
+#define CCDRBG_MAX_REQUEST_SIZE         ((uint32_t)1<<16) //this is the absolute maximum in NIST 800-90A
+#define CCDRBG_RESEED_INTERVAL          ((uint64_t)1<<48) // must be able to fit the NIST maximum of 2^48
 
 
 /*
@@ -87,18 +78,18 @@ CC_INLINE void ccdrbg_done(const struct ccdrbg_info *info,
 	info->done(drbg);
 }
 
-CC_INLINE size_t ccdrbg_context_size(const struct ccdrbg_info *drbg)
+CC_INLINE size_t ccdrbg_context_size(const struct ccdrbg_info *info)
 {
-    return drbg->size;
+    return info->size;
 }
 
 
 /*
  * NIST SP 800-90 CTR_DRBG
- * the mximum security strengh of drbg equals to the block size of the corresponding ECB.
+ * the maximum security strengh of drbg equals to the block size of the corresponding ECB.
  */
 struct ccdrbg_nistctr_custom {
-    const struct ccmode_ecb *ecb;
+    const struct ccmode_ctr *ctr_info;
     size_t keylen;
     int strictFIPS;
     int use_df;
@@ -110,19 +101,11 @@ void ccdrbg_factory_nistctr(struct ccdrbg_info *info, const struct ccdrbg_nistct
  * NIST SP 800-90 HMAC_DRBG
  * the maximum security strengh of drbg is half of output size of the input hash function and it internally is limited to 256 bits
  */
-extern struct ccdrbg_info ccdrbg_nistdigest_info;
-
 struct ccdrbg_nisthmac_custom {
     const struct ccdigest_info *di;
     int strictFIPS;
 };
 
 void ccdrbg_factory_nisthmac(struct ccdrbg_info *info, const struct ccdrbg_nisthmac_custom *custom);
-
-
-/*
- * Dummy DRBG
- */
-extern struct ccdrbg_info ccdrbg_dummy_info;
 
 #endif /* _CORECRYPTO_CCDRBG_H_ */

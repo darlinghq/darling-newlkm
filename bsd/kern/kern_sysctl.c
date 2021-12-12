@@ -105,12 +105,14 @@
 #include <sys/memory_maintenance.h>
 #include <sys/priv.h>
 #include <stdatomic.h>
+#include <uuid/uuid.h>
 
 #include <security/audit/audit.h>
 #include <kern/kalloc.h>
 
 #include <machine/smp.h>
 #include <machine/atomic.h>
+#include <machine/config.h>
 #include <mach/machine.h>
 #include <mach/mach_host.h>
 #include <mach/mach_types.h>
@@ -139,11 +141,18 @@
 #include <machine/machine_routines.h>
 #include <machine/exec.h>
 
+#include <nfs/nfs_conf.h>
+
 #include <vm/vm_protos.h>
 #include <vm/vm_pageout.h>
 #include <vm/vm_compressor_algorithms.h>
 #include <sys/imgsrc.h>
 #include <kern/timer_call.h>
+#include <sys/codesign.h>
+#include <IOKit/IOBSD.h>
+#if CONFIG_CSR
+#include <sys/csr.h>
+#endif
 
 #if defined(__i386__) || defined(__x86_64__)
 #include <i386/cpuid.h>
@@ -181,6 +190,7 @@ extern unsigned int speculative_prefetch_max_iosize;
 extern unsigned int preheat_max_bytes;
 extern unsigned int preheat_min_bytes;
 extern long numvnodes;
+extern long freevnodes;
 extern long num_recycledvnodes;
 
 extern uuid_string_t bootsessionuuid_string;
@@ -232,7 +242,7 @@ fill_user32_proc(proc_t, struct user32_kinfo_proc *__restrict);
 
 extern int
 kdbg_control(int *name, u_int namelen, user_addr_t where, size_t * sizep);
-#if NFSCLIENT
+#if CONFIG_NFS_CLIENT
 extern int
 netboot_root(void);
 #endif
@@ -253,6 +263,9 @@ STATIC int  sysdoproc_filt_KERN_PROC_UID(proc_t p, void * arg);
 STATIC int  sysdoproc_filt_KERN_PROC_RUID(proc_t p, void * arg);
 int sysdoproc_callback(proc_t p, void *arg);
 
+#if CONFIG_THREAD_GROUPS && (DEVELOPMENT || DEBUG)
+STATIC int sysctl_get_thread_group_id SYSCTL_HANDLER_ARGS;
+#endif
 
 /* forward declarations for non-static STATIC */
 STATIC void fill_loadavg64(struct loadavg *la, struct user64_loadavg *la64);
@@ -264,9 +277,9 @@ STATIC int sysctl_kdebug_ops SYSCTL_HANDLER_ARGS;
 #if COUNT_SYSCALLS
 STATIC int sysctl_docountsyscalls SYSCTL_HANDLER_ARGS;
 #endif  /* COUNT_SYSCALLS */
-#if !CONFIG_EMBEDDED
+#if defined(XNU_TARGET_OS_OSX)
 STATIC int sysctl_doprocargs SYSCTL_HANDLER_ARGS;
-#endif  /* !CONFIG_EMBEDDED */
+#endif  /* defined(XNU_TARGET_OS_OSX) */
 STATIC int sysctl_doprocargs2 SYSCTL_HANDLER_ARGS;
 STATIC int sysctl_prochandle SYSCTL_HANDLER_ARGS;
 STATIC int sysctl_aiomax(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
@@ -281,8 +294,9 @@ STATIC int sysctl_domainname(struct sysctl_oid *oidp, void *arg1, int arg2, stru
 STATIC int sysctl_hostname(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
 STATIC int sysctl_procname(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
 STATIC int sysctl_boottime(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
+STATIC int sysctl_bootuuid(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
 STATIC int sysctl_symfile(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
-#if NFSCLIENT
+#if CONFIG_NFS_CLIENT
 STATIC int sysctl_netboot(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req);
 #endif
 #ifdef CONFIG_IMGSRC_ACCESS
@@ -437,6 +451,7 @@ sysctl_sched_stats(__unused struct sysctl_oid *oidp, __unused void *arg1, __unus
 	host_basic_info_data_t hinfo;
 	kern_return_t kret;
 	uint32_t size;
+	uint32_t buf_size = 0;
 	int changed;
 	mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
 	struct _processor_statistics_np *buf;
@@ -453,7 +468,8 @@ sysctl_sched_stats(__unused struct sysctl_oid *oidp, __unused void *arg1, __unus
 		return EINVAL;
 	}
 
-	MALLOC(buf, struct _processor_statistics_np*, size, M_TEMP, M_ZERO | M_WAITOK);
+	buf_size = size;
+	buf = kheap_alloc(KHEAP_TEMP, buf_size, Z_ZERO | Z_WAITOK);
 
 	kret = get_sched_statistics(buf, &size);
 	if (kret != KERN_SUCCESS) {
@@ -470,7 +486,7 @@ sysctl_sched_stats(__unused struct sysctl_oid *oidp, __unused void *arg1, __unus
 		panic("Sched info changed?!");
 	}
 out:
-	FREE(buf, M_TEMP);
+	kheap_free(KHEAP_TEMP, buf, buf_size);
 	return error;
 }
 
@@ -519,11 +535,7 @@ sysctl_docountsyscalls SYSCTL_HANDLER_ARGS
 	__unused int cmd = oidp->oid_arg2;      /* subcommand*/
 	__unused int *name = arg1;      /* oid element argument vector */
 	__unused int namelen = arg2;    /* number of oid element arguments */
-	user_addr_t oldp = req->oldptr; /* user buffer copy out address */
-	size_t *oldlenp = &req->oldlen; /* user buffer copy out size */
-	user_addr_t newp = req->newptr; /* user buffer copy in address */
-	size_t newlen = req->newlen;    /* user buffer copy in size */
-	int error;
+	int error, changed;
 
 	int tmp;
 
@@ -535,16 +547,17 @@ sysctl_docountsyscalls SYSCTL_HANDLER_ARGS
 	 * for example, to dump current counts:
 	 *		sysctl -w kern.count_calls=2
 	 */
-	error = sysctl_int(oldp, oldlenp, newp, newlen, &tmp);
-	if (error != 0) {
+	error = sysctl_io_number(req, do_count_syscalls,
+	    sizeof(do_count_syscalls), &tmp, &changed);
+
+	if (error != 0 || !changed) {
 		return error;
 	}
 
 	if (tmp == 1) {
 		do_count_syscalls = 1;
 	} else if (tmp == 0 || tmp == 2 || tmp == 3) {
-		int                     i;
-		for (i = 0; i < nsysent; i++) {
+		for (int i = 0; i < nsysent; i++) {
 			if (syscalls_log[i] != 0) {
 				if (tmp == 2) {
 					printf("%d calls - name %s \n", syscalls_log[i], syscallnames[i]);
@@ -553,14 +566,7 @@ sysctl_docountsyscalls SYSCTL_HANDLER_ARGS
 				}
 			}
 		}
-		if (tmp != 0) {
-			do_count_syscalls = 1;
-		}
-	}
-
-	/* adjust index so we return the right required/consumed amount */
-	if (!error) {
-		req->oldidx += req->oldlen;
+		do_count_syscalls = (tmp != 0);
 	}
 
 	return error;
@@ -582,65 +588,6 @@ SYSCTL_PROC(_kern, KERN_COUNT_SYSCALLS, count_syscalls, CTLTYPE_NODE | CTLFLAG_R
  *  sysctl_io_opaque()
  * instead.
  */
-
-/*
- * Validate parameters and get old / set new parameters
- * for an integer-valued sysctl function.
- */
-int
-sysctl_int(user_addr_t oldp, size_t *oldlenp,
-    user_addr_t newp, size_t newlen, int *valp)
-{
-	int error = 0;
-
-	if (oldp != USER_ADDR_NULL && oldlenp == NULL) {
-		return EFAULT;
-	}
-	if (oldp && *oldlenp < sizeof(int)) {
-		return ENOMEM;
-	}
-	if (newp && newlen != sizeof(int)) {
-		return EINVAL;
-	}
-	*oldlenp = sizeof(int);
-	if (oldp) {
-		error = copyout(valp, oldp, sizeof(int));
-	}
-	if (error == 0 && newp) {
-		error = copyin(newp, valp, sizeof(int));
-		AUDIT_ARG(value32, *valp);
-	}
-	return error;
-}
-
-/*
- * Validate parameters and get old / set new parameters
- * for an quad(64bit)-valued sysctl function.
- */
-int
-sysctl_quad(user_addr_t oldp, size_t *oldlenp,
-    user_addr_t newp, size_t newlen, quad_t *valp)
-{
-	int error = 0;
-
-	if (oldp != USER_ADDR_NULL && oldlenp == NULL) {
-		return EFAULT;
-	}
-	if (oldp && *oldlenp < sizeof(quad_t)) {
-		return ENOMEM;
-	}
-	if (newp && newlen != sizeof(quad_t)) {
-		return EINVAL;
-	}
-	*oldlenp = sizeof(quad_t);
-	if (oldp) {
-		error = copyout(valp, oldp, sizeof(quad_t));
-	}
-	if (error == 0 && newp) {
-		error = copyin(newp, valp, sizeof(quad_t));
-	}
-	return error;
-}
 
 STATIC int
 sysdoproc_filt_KERN_PROC_PID(proc_t p, void * arg)
@@ -725,14 +672,14 @@ sysdoproc_filt_KERN_PROC_RUID(proc_t p, void * arg)
 /*
  * try over estimating by 5 procs
  */
-#define KERN_PROCSLOP   (5 * sizeof (struct kinfo_proc))
+#define KERN_PROCSLOP (5 * sizeof(struct kinfo_proc))
 struct sysdoproc_args {
-	int     buflen;
-	void    *kprocp;
+	size_t buflen;
+	void *kprocp;
 	boolean_t is_64_bit;
-	user_addr_t     dp;
+	user_addr_t dp;
 	size_t needed;
-	int sizeof_kproc;
+	unsigned int sizeof_kproc;
 	int *errorp;
 	int uidcheck;
 	int ruidcheck;
@@ -785,7 +732,7 @@ sysctl_prochandle SYSCTL_HANDLER_ARGS
 
 	user_addr_t dp = where;
 	size_t needed = 0;
-	int buflen = where != USER_ADDR_NULL ? req->oldlen : 0;
+	size_t buflen = where != USER_ADDR_NULL ? req->oldlen : 0;
 	int error = 0;
 	boolean_t is_64_bit = proc_is64bit(current_proc());
 	struct user32_kinfo_proc  user32_kproc;
@@ -877,6 +824,7 @@ sysctl_prochandle SYSCTL_HANDLER_ARGS
 	req->oldidx += req->oldlen;
 	return 0;
 }
+
 
 /*
  * We specify the subcommand code for multiple nodes as the 'req->arg2' value
@@ -976,9 +924,10 @@ fill_user32_eproc(proc_t p, struct user32_eproc *__restrict ep)
 		ep->e_pcred.p_svgid = kauth_cred_getsvgid(my_cred);
 
 		/* A fake historical *kauth_cred_t */
-		ep->e_ucred.cr_ref = os_atomic_load(&my_cred->cr_ref, relaxed);
+		unsigned long refcnt = os_atomic_load(&my_cred->cr_ref, relaxed);
+		ep->e_ucred.cr_ref = (uint32_t)MIN(refcnt, UINT32_MAX);
 		ep->e_ucred.cr_uid = kauth_cred_getuid(my_cred);
-		ep->e_ucred.cr_ngroups = posix_cred_get(my_cred)->cr_ngroups;
+		ep->e_ucred.cr_ngroups = (short)posix_cred_get(my_cred)->cr_ngroups;
 		bcopy(posix_cred_get(my_cred)->cr_groups,
 		    ep->e_ucred.cr_groups, NGROUPS * sizeof(gid_t));
 
@@ -1036,9 +985,10 @@ fill_user64_eproc(proc_t p, struct user64_eproc *__restrict ep)
 		ep->e_pcred.p_svgid = kauth_cred_getsvgid(my_cred);
 
 		/* A fake historical *kauth_cred_t */
-		ep->e_ucred.cr_ref = os_atomic_load(&my_cred->cr_ref, relaxed);
+		unsigned long refcnt = os_atomic_load(&my_cred->cr_ref, relaxed);
+		ep->e_ucred.cr_ref = (uint32_t)MIN(refcnt, UINT32_MAX);
 		ep->e_ucred.cr_uid = kauth_cred_getuid(my_cred);
-		ep->e_ucred.cr_ngroups = posix_cred_get(my_cred)->cr_ngroups;
+		ep->e_ucred.cr_ngroups = (short)posix_cred_get(my_cred)->cr_ngroups;
 		bcopy(posix_cred_get(my_cred)->cr_groups,
 		    ep->e_ucred.cr_groups, NGROUPS * sizeof(gid_t));
 
@@ -1071,7 +1021,7 @@ fill_user64_eproc(proc_t p, struct user64_eproc *__restrict ep)
 STATIC void
 fill_user32_externproc(proc_t p, struct user32_extern_proc *__restrict exp)
 {
-	exp->p_starttime.tv_sec = p->p_start.tv_sec;
+	exp->p_starttime.tv_sec = (user32_time_t)p->p_start.tv_sec;
 	exp->p_starttime.tv_usec = p->p_start.tv_usec;
 	exp->p_flag = p->p_flag;
 	if (p->p_lflag & P_LTRACED) {
@@ -1087,7 +1037,6 @@ fill_user32_externproc(proc_t p, struct user32_extern_proc *__restrict exp)
 	exp->p_pid = p->p_pid;
 	exp->p_oppid = p->p_oppid;
 	/* Mach related  */
-	exp->user_stack = p->user_stack;
 	exp->p_debugger = p->p_debugger;
 	exp->sigwait = p->sigwait;
 	/* scheduling */
@@ -1114,7 +1063,7 @@ fill_user32_externproc(proc_t p, struct user32_extern_proc *__restrict exp)
 	exp->p_priority = p->p_priority;
 	exp->p_nice = p->p_nice;
 	bcopy(&p->p_comm, &exp->p_comm, MAXCOMLEN);
-	exp->p_xstat = p->p_xstat;
+	exp->p_xstat = (u_short)MIN(p->p_xstat, USHRT_MAX);
 	exp->p_acflag = p->p_acflag;
 }
 
@@ -1140,7 +1089,6 @@ fill_user64_externproc(proc_t p, struct user64_extern_proc *__restrict exp)
 	exp->p_pid = p->p_pid;
 	exp->p_oppid = p->p_oppid;
 	/* Mach related  */
-	exp->user_stack = p->user_stack;
 	exp->p_debugger = p->p_debugger;
 	exp->sigwait = p->sigwait;
 	/* scheduling */
@@ -1163,7 +1111,7 @@ fill_user64_externproc(proc_t p, struct user64_extern_proc *__restrict exp)
 	exp->p_priority = p->p_priority;
 	exp->p_nice = p->p_nice;
 	bcopy(&p->p_comm, &exp->p_comm, MAXCOMLEN);
-	exp->p_xstat = p->p_xstat;
+	exp->p_xstat = (u_short)MIN(p->p_xstat, USHRT_MAX);
 	exp->p_acflag = p->p_acflag;
 }
 
@@ -1244,7 +1192,7 @@ SYSCTL_PROC(_kern, KERN_KDEBUG, kdebug, CTLTYPE_NODE | CTLFLAG_RD | CTLFLAG_LOCK
     "");
 
 
-#if !CONFIG_EMBEDDED
+#if defined(XNU_TARGET_OS_OSX)
 /*
  * Return the top *sizep bytes of the user stack, or the entire area of the
  * user stack down through the saved exec_path, whichever is smaller.
@@ -1276,7 +1224,7 @@ SYSCTL_PROC(_kern, KERN_PROCARGS, procargs, CTLTYPE_NODE | CTLFLAG_RD | CTLFLAG_
     sysctl_doprocargs,          /* Handler function */
     NULL,                       /* Data pointer */
     "");
-#endif  /* !CONFIG_EMBEDDED */
+#endif  /* defined(XNU_TARGET_OS_OSX) */
 
 STATIC int
 sysctl_doprocargs2 SYSCTL_HANDLER_ARGS
@@ -1306,31 +1254,40 @@ SYSCTL_PROC(_kern, KERN_PROCARGS2, procargs2, CTLTYPE_NODE | CTLFLAG_RD | CTLFLA
     NULL,                       /* Data pointer */
     "");
 
+#define SYSCTL_PROCARGS_READ_ENVVARS_ENTITLEMENT "com.apple.private.read-environment-variables"
 STATIC int
 sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
     size_t *sizep, proc_t cur_proc, int argc_yes)
 {
-	proc_t p;
-	int buflen = where != USER_ADDR_NULL ? *sizep : 0;
+	assert(sizep != NULL);
+	proc_t p = NULL;
+	size_t buflen = where != USER_ADDR_NULL ? *sizep : 0;
 	int error = 0;
-	struct _vm_map *proc_map;
+	struct _vm_map *proc_map = NULL;
 	struct task * task;
-	vm_map_copy_t   tmp;
+	vm_map_copy_t   tmp = NULL;
 	user_addr_t     arg_addr;
 	size_t          arg_size;
 	caddr_t data;
 	size_t argslen = 0;
-	int size;
-	vm_size_t alloc_size = 0;
-	vm_offset_t     copy_start, copy_end;
+	size_t size = 0;
+	vm_offset_t     copy_start = 0, copy_end;
+	vm_offset_t     smallbuffer_start;
 	kern_return_t ret;
 	int pid;
 	kauth_cred_t my_cred;
 	uid_t uid;
 	int argc = -1;
+	size_t argvsize;
+	size_t remaining;
+	size_t current_arg_index;
+	size_t current_arg_len;
+	const char * current_arg;
+	bool omit_env_vars = true;
 
 	if (namelen < 1) {
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
 	}
 
 	if (argc_yes) {
@@ -1341,9 +1298,9 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 	/* is not NULL then the caller wants us to return the length needed to */
 	/* hold the data we would return */
 	if (where != USER_ADDR_NULL && (buflen <= 0 || buflen > ARG_MAX)) {
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
 	}
-	arg_size = buflen;
 
 	/*
 	 *	Lookup process by pid
@@ -1351,7 +1308,29 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 	pid = name[0];
 	p = proc_find(pid);
 	if (p == NULL) {
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
+	}
+
+	/* Allow reading environment variables if any of the following are true:
+	 * - kernel is DEVELOPMENT || DEBUG
+	 * - target process is same as current_proc()
+	 * - target process is not cs_restricted
+	 * - SIP is off
+	 * - caller has an entitlement
+	 */
+
+#if DEVELOPMENT || DEBUG
+	omit_env_vars = false;
+#endif
+	if (p == current_proc() ||
+	    !cs_restricted(p) ||
+#if CONFIG_CSR
+	    csr_check(CSR_ALLOW_UNRESTRICTED_DTRACE) == 0 ||
+#endif
+	    IOTaskHasEntitlement(current_task(), SYSCTL_PROCARGS_READ_ENVVARS_ENTITLEMENT)
+	    ) {
+		omit_env_vars = false;
 	}
 
 	/*
@@ -1365,31 +1344,31 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 	 */
 
 	if (!p->user_stack) {
-		proc_rele(p);
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
 	}
 
-	if (where == USER_ADDR_NULL) {
-		/* caller only wants to know length of proc args data */
-		if (sizep == NULL) {
-			proc_rele(p);
-			return EFAULT;
-		}
+	/* save off argc before releasing the proc */
+	argc = p->p_argc;
 
-		size = p->p_argslen;
-		proc_rele(p);
-		if (argc_yes) {
-			size += sizeof(int);
-		} else {
-			/*
-			 * old PROCARGS will return the executable's path and plus some
-			 * extra space for work alignment and data tags
-			 */
-			size += PATH_MAX + (6 * sizeof(int));
-		}
-		size += (size & (sizeof(int) - 1)) ? (sizeof(int) - (size & (sizeof(int) - 1))) : 0;
-		*sizep = size;
-		return 0;
+	argslen = p->p_argslen;
+
+	/*
+	 * When these sysctls were introduced, the first string in the strings
+	 * section was just the bare path of the executable.  However, for security
+	 * reasons we now prefix this string with executable_path= so it can be
+	 * parsed getenv style.  To avoid binary compatability issues with exising
+	 * callers of this sysctl, we strip it off here.
+	 * (rdar://problem/13746466)
+	 */
+#define        EXECUTABLE_KEY "executable_path="
+	argslen -= strlen(EXECUTABLE_KEY);
+
+	if (where == USER_ADDR_NULL && !omit_env_vars) {
+		/* caller only wants to know length of proc args data.
+		 * If we don't need to omit environment variables, we can skip
+		 * copying the target process stack */
+		goto calculate_size;
 	}
 
 	my_cred = kauth_cred_proc_ref(p);
@@ -1398,13 +1377,11 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 
 	if ((uid != kauth_cred_getuid(kauth_cred_get()))
 	    && suser(kauth_cred_get(), &cur_proc->p_acflag)) {
-		proc_rele(p);
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
 	}
 
-	if ((u_int)arg_size > p->p_argslen) {
-		arg_size = round_page(p->p_argslen);
-	}
+	arg_size = round_page(argslen);
 
 	arg_addr = p->user_stack - arg_size;
 
@@ -1415,14 +1392,10 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 	 */
 	task = p->task;
 	if (task == NULL) {
-		proc_rele(p);
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
 	}
 
-	/* save off argc before releasing the proc */
-	argc = p->p_argc;
-
-	argslen = p->p_argslen;
 	/*
 	 * Once we have a task reference we can convert that into a
 	 * map reference, which we will use in the calls below.  The
@@ -1432,29 +1405,30 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 	 */
 	task_reference(task);
 	proc_rele(p);
+	p = NULL;
 	proc_map = get_task_map_reference(task);
 	task_deallocate(task);
 
 	if (proc_map == NULL) {
-		return EINVAL;
+		error = EINVAL;
+		goto finish;
 	}
 
-	alloc_size = round_page(arg_size);
-	ret = kmem_alloc(kernel_map, &copy_start, alloc_size, VM_KERN_MEMORY_BSD);
+	ret = kmem_alloc(kernel_map, &copy_start, arg_size, VM_KERN_MEMORY_BSD);
 	if (ret != KERN_SUCCESS) {
-		vm_map_deallocate(proc_map);
-		return ENOMEM;
+		error = ENOMEM;
+		goto finish;
 	}
-	bzero((void *)copy_start, alloc_size);
+	bzero((void *)copy_start, arg_size);
 
-	copy_end = round_page(copy_start + arg_size);
+	/* End of buffer should be page aligned */
+	assert(copy_start + arg_size == round_page(copy_start + arg_size));
+	copy_end = copy_start + arg_size;
 
 	if (vm_map_copyin(proc_map, (vm_map_address_t)arg_addr,
 	    (vm_map_size_t)arg_size, FALSE, &tmp) != KERN_SUCCESS) {
-		vm_map_deallocate(proc_map);
-		kmem_free(kernel_map, copy_start,
-		    round_page(arg_size));
-		return EIO;
+		error = EIO;
+		goto finish;
 	}
 
 	/*
@@ -1462,36 +1436,102 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 	 *	map, we can release the reference to it.
 	 */
 	vm_map_deallocate(proc_map);
+	proc_map = NULL;
 
 	if (vm_map_copy_overwrite(kernel_map,
 	    (vm_map_address_t)copy_start,
-	    tmp, FALSE) != KERN_SUCCESS) {
-		kmem_free(kernel_map, copy_start,
-		    round_page(arg_size));
-		vm_map_copy_discard(tmp);
-		return EIO;
+	    tmp, (vm_map_size_t) arg_size, FALSE) != KERN_SUCCESS) {
+		error = EIO;
+		goto finish;
+	}
+	/* tmp was consumed */
+	tmp = NULL;
+
+	if (omit_env_vars) {
+		argvsize = 0;
+
+		/* Iterate over everything in argv, plus one for the bare executable path */
+		for (current_arg_index = 0; current_arg_index < argc + 1 && argvsize < argslen; ++current_arg_index) {
+			current_arg = (const char *)(copy_end - argslen) + argvsize;
+			remaining = argslen - argvsize;
+			current_arg_len = strnlen(current_arg, remaining);
+			if (current_arg_len < remaining) {
+				/* We have space for the null terminator */
+				current_arg_len += 1;
+
+				if (current_arg_index == 0) {
+					/* The bare executable path may have multiple null bytes after it for alignment */
+					while (current_arg_len < remaining && current_arg[current_arg_len] == 0) {
+						current_arg_len += 1;
+					}
+				}
+			}
+			argvsize += current_arg_len;
+		}
+		assert(argvsize <= argslen);
+
+		/* Adjust argslen and copy_end to make the copyout range extend to the end of argv */
+		copy_end = copy_end - argslen + argvsize;
+		argslen = argvsize;
 	}
 
-	if (arg_size > argslen) {
+	if (where == USER_ADDR_NULL) {
+		/* Skip copyout */
+		goto calculate_size;
+	}
+
+	if (buflen >= argslen) {
 		data = (caddr_t) (copy_end - argslen);
 		size = argslen;
 	} else {
-		data = (caddr_t) (copy_end - arg_size);
-		size = arg_size;
-	}
-
-	/*
-	 * When these sysctls were introduced, the first string in the strings
-	 * section was just the bare path of the executable.  However, for security
-	 * reasons we now prefix this string with executable_path= so it can be
-	 * parsed getenv style.  To avoid binary compatability issues with exising
-	 * callers of this sysctl, we strip it off here if present.
-	 * (rdar://problem/13746466)
-	 */
-#define        EXECUTABLE_KEY "executable_path="
-	if (strncmp(EXECUTABLE_KEY, data, strlen(EXECUTABLE_KEY)) == 0) {
-		data += strlen(EXECUTABLE_KEY);
-		size -= strlen(EXECUTABLE_KEY);
+		/*
+		 * Before rdar://25397314, this function contained incorrect logic when buflen is less
+		 * than argslen. The problem was that it copied in `buflen` bytes from the end of the target
+		 * process user stack into the beginning of a buffer of size round_page(buflen), and then
+		 * copied out `buflen` bytes from the end of this buffer. The effect of this was that
+		 * the caller of this sysctl would get zeros at the end of their buffer.
+		 *
+		 * To preserve this behavior, bzero everything from copy_end-round_page(buflen)+buflen to the
+		 * end of the buffer. This emulates copying in only `buflen` bytes.
+		 *
+		 *
+		 * In the old code:
+		 *
+		 *   copy_start     .... size: round_page(buflen) ....        copy_end
+		 *      [---copied in data (size: buflen)---|--- zeros ----------]
+		 *                           ^
+		 *                          data = copy_end - buflen
+		 *
+		 *
+		 * In the new code:
+		 *   copy_start        .... size: round_page(p->argslen) ....                full copy_end
+		 *      ^         ....................... p->argslen ...............................^
+		 *      ^         ^                                         truncated copy_end      ^
+		 *      ^         ^                                                 ^               ^
+		 *      ^         ................  argslen  ........................               ^
+		 *      ^         ^                                                 ^               ^
+		 *      [-------copied in data (size: round_page(p->argslen))-------:----env vars---]
+		 *                                ^            ^
+		 *                                ^         data = copy_end - buflen
+		 *                smallbuffer_start = max(copy_end - round_page(buflen), copy_start)
+		 *
+		 *
+		 * Full copy_end: copy_end calculated from copy_start + round_page(p->argslen)
+		 * Truncated copy_end: copy_end after truncation to remove environment variables.
+		 *
+		 * If environment variables were omitted, then we use the truncated copy_end, otherwise
+		 * we use full copy_end.
+		 *
+		 * smallbuffer_start: represents where copy_start would be in the old code.
+		 * data: The beginning of the region we copyout
+		 */
+		smallbuffer_start = copy_end - round_page(buflen);
+		if (smallbuffer_start < copy_start) {
+			smallbuffer_start = copy_start;
+		}
+		bzero((void *)(smallbuffer_start + buflen), copy_end - (smallbuffer_start + buflen));
+		data = (caddr_t) (copy_end - buflen);
+		size = buflen;
 	}
 
 	if (argc_yes) {
@@ -1510,12 +1550,12 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 		 *
 		 * Note: we keep all pointers&sizes aligned to word boundries
 		 */
-		if ((!error) && (buflen > 0 && (u_int)buflen > argslen)) {
+		if ((!error) && (buflen > 0 && (u_int)buflen > size)) {
 			int binPath_sz, alignedBinPath_sz = 0;
 			int extraSpaceNeeded, addThis;
 			user_addr_t placeHere;
 			char * str = (char *) data;
-			int max_len = size;
+			size_t max_len = size;
 
 			/* Some apps are really bad about messing up their stacks
 			 *  So, we have to be extra careful about getting the length
@@ -1552,7 +1592,7 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 			extraSpaceNeeded = alignedBinPath_sz + addThis + binPath_sz + (4 * sizeof(int));
 
 			/* is there is room to tack on argv[0]? */
-			if ((buflen & ~(sizeof(int) - 1)) >= (argslen + extraSpaceNeeded)) {
+			if ((buflen & ~(sizeof(int) - 1)) >= (size + extraSpaceNeeded)) {
 				placeHere += addThis;
 				suword(placeHere, 0);
 				placeHere += sizeof(int);
@@ -1570,17 +1610,38 @@ sysctl_procargsx(int *name, u_int namelen, user_addr_t where,
 		}
 	}
 
-	if (copy_start != (vm_offset_t) 0) {
-		kmem_free(kernel_map, copy_start, copy_end - copy_start);
-	}
-	if (error) {
-		return error;
+calculate_size:
+	/* Size has already been calculated for the where != NULL case */
+	if (where == USER_ADDR_NULL) {
+		size = argslen;
+		if (argc_yes) {
+			size += sizeof(int);
+		} else {
+			/*
+			 * old PROCARGS will return the executable's path and plus some
+			 * extra space for work alignment and data tags
+			 */
+			size += PATH_MAX + (6 * sizeof(int));
+		}
+		size += (size & (sizeof(int) - 1)) ? (sizeof(int) - (size & (sizeof(int) - 1))) : 0;
 	}
 
-	if (where != USER_ADDR_NULL) {
-		*sizep = size;
+	*sizep = size;
+
+finish:
+	if (p != NULL) {
+		proc_rele(p);
 	}
-	return 0;
+	if (tmp != NULL) {
+		vm_map_copy_discard(tmp);
+	}
+	if (proc_map != NULL) {
+		vm_map_deallocate(proc_map);
+	}
+	if (copy_start != (vm_offset_t) 0) {
+		kmem_free(kernel_map, copy_start, arg_size);
+	}
+	return error;
 }
 
 
@@ -1829,27 +1890,110 @@ SYSCTL_PROC(_kern, KERN_OSVERSION, osversion,
     osversion, 256 /* OSVERSIZE*/,
     sysctl_osversion, "A", "");
 
-char osproductversion[48] = { '\0' };
-
-STATIC int
-sysctl_osproductversion(__unused struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+static bool
+_already_set_or_not_launchd(struct sysctl_req *req, char *val)
 {
 	if (req->newptr != 0) {
 		/*
 		 * Can only ever be set by launchd, and only once at boot.
 		 */
-		if (req->p->p_pid != 1 || osproductversion[0] != '\0') {
-			return EPERM;
+		if (req->p->p_pid != 1 || val[0] != '\0') {
+			return true;
 		}
 	}
+	return false;
+}
 
+#if XNU_TARGET_OS_OSX
+static int
+sysctl_system_version_compat
+(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int oldval = (task_has_system_version_compat_enabled(current_task()));
+	int new_value = 0, changed = 0;
+
+	int error = sysctl_io_number(req, oldval, sizeof(int), &new_value, &changed);
+	if (changed) {
+		task_set_system_version_compat_enabled(current_task(), (new_value));
+	}
+	return error;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, system_version_compat,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED,
+    0, 0, sysctl_system_version_compat, "A", "");
+
+char osproductversioncompat[48] = { '\0' };
+
+static int
+sysctl_osproductversioncompat(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+	if (_already_set_or_not_launchd(req, osproductversioncompat)) {
+		return EPERM;
+	}
 	return sysctl_handle_string(oidp, arg1, arg2, req);
 }
+
+
+SYSCTL_PROC(_kern, OID_AUTO, osproductversioncompat,
+    CTLFLAG_RW | CTLFLAG_KERN | CTLTYPE_STRING | CTLFLAG_LOCKED,
+    osproductversioncompat, sizeof(osproductversioncompat),
+    sysctl_osproductversioncompat, "A", "The ProductVersion from SystemVersionCompat.plist");
+#endif
+
+char osproductversion[48] = { '\0' };
+
+static int
+sysctl_osproductversion(__unused struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+	if (_already_set_or_not_launchd(req, osproductversion)) {
+		return EPERM;
+	}
+
+#if !XNU_TARGET_OS_OSX
+	return sysctl_handle_string(oidp, arg1, arg2, req);
+#else
+	if (task_has_system_version_compat_enabled(current_task()) && (osproductversioncompat[0] != '\0')) {
+		return sysctl_handle_string(oidp, osproductversioncompat, arg2, req);
+	} else {
+		return sysctl_handle_string(oidp, arg1, arg2, req);
+	}
+#endif
+}
+
+#if XNU_TARGET_OS_OSX
+static_assert(sizeof(osproductversioncompat) == sizeof(osproductversion),
+    "osproductversion size matches osproductversioncompat size");
+#endif
 
 SYSCTL_PROC(_kern, OID_AUTO, osproductversion,
     CTLFLAG_RW | CTLFLAG_KERN | CTLTYPE_STRING | CTLFLAG_LOCKED,
     osproductversion, sizeof(osproductversion),
     sysctl_osproductversion, "A", "The ProductVersion from SystemVersion.plist");
+
+char osreleasetype[48] = { '\0' };
+
+STATIC int
+sysctl_osreleasetype(__unused struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+	if (_already_set_or_not_launchd(req, osreleasetype)) {
+		return EPERM;
+	}
+	return sysctl_handle_string(oidp, arg1, arg2, req);
+}
+
+void reset_osreleasetype(void);
+
+void
+reset_osreleasetype(void)
+{
+	memset(osreleasetype, 0, sizeof(osreleasetype));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, osreleasetype,
+    CTLFLAG_RW | CTLFLAG_KERN | CTLTYPE_STRING | CTLFLAG_LOCKED,
+    osreleasetype, sizeof(osreleasetype),
+    sysctl_osreleasetype, "A", "The ReleaseType from SystemVersion.plist");
 
 static uint64_t iossupportversion_string[48];
 
@@ -1880,7 +2024,10 @@ sysctl_osvariant_status(__unused struct sysctl_oid *oidp, void *arg1, int arg2, 
 {
 	if (req->newptr != 0) {
 		/*
-		 * Can only ever be set by launchd, and only once at boot.
+		 * Can only ever be set by launchd, and only once.
+		 * Reset by usrctl() -> reset_osvariant_status() during
+		 * userspace reboot, since userspace could reboot into
+		 * a different variant.
 		 */
 		if (req->p->p_pid != 1 || osvariant_status != 0) {
 			return EPERM;
@@ -1895,11 +2042,19 @@ SYSCTL_PROC(_kern, OID_AUTO, osvariant_status,
     &osvariant_status, sizeof(osvariant_status),
     sysctl_osvariant_status, "Q", "Opaque flags used to cache OS variant information");
 
+void reset_osvariant_status(void);
+
+void
+reset_osvariant_status(void)
+{
+	osvariant_status = 0;
+}
+
 extern void commpage_update_dyld_flags(uint64_t);
-static uint64_t dyld_system_flags = 0;
+uint64_t dyld_flags = 0;
 
 STATIC int
-sysctl_dyld_system_flags(__unused struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+sysctl_dyld_flags(__unused struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
 {
 	/*
 	 * Can only ever be set by launchd, possibly several times
@@ -1911,15 +2066,15 @@ sysctl_dyld_system_flags(__unused struct sysctl_oid *oidp, void *arg1, int arg2,
 
 	int res = sysctl_handle_quad(oidp, arg1, arg2, req);
 	if (req->newptr && res == 0) {
-		commpage_update_dyld_flags(osvariant_status);
+		commpage_update_dyld_flags(dyld_flags);
 	}
 	return res;
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, dyld_system_flags,
+SYSCTL_PROC(_kern, OID_AUTO, dyld_flags,
     CTLFLAG_RW | CTLTYPE_QUAD | CTLFLAG_LOCKED | CTLFLAG_MASKED,
-    &dyld_system_flags, sizeof(dyld_system_flags),
-    sysctl_dyld_system_flags, "Q", "Opaque flags used to cache dyld system-wide configuration");
+    &dyld_flags, sizeof(dyld_flags),
+    sysctl_dyld_flags, "Q", "Opaque flags used to cache dyld system-wide configuration");
 
 #if defined(XNU_TARGET_OS_BRIDGE)
 char macosproductversion[MACOS_VERS_LEN] = { '\0' };
@@ -1967,6 +2122,67 @@ SYSCTL_PROC(_kern, OID_AUTO, kernelcacheuuid,
     kernelcache_uuid_string, sizeof(kernelcache_uuid_string),
     sysctl_kernelcacheuuid, "A", "");
 
+STATIC int
+sysctl_systemfilesetuuid(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+	int rval = ENOENT;
+	if (pageablekc_uuid_valid) {
+		rval = sysctl_handle_string(oidp, arg1, arg2, req);
+	}
+	return rval;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, systemfilesetuuid,
+    CTLFLAG_RD | CTLFLAG_KERN | CTLTYPE_STRING | CTLFLAG_LOCKED,
+    pageablekc_uuid_string, sizeof(pageablekc_uuid_string),
+    sysctl_systemfilesetuuid, "A", "");
+
+STATIC int
+sysctl_auxiliaryfilesetuuid(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+	int rval = ENOENT;
+	if (auxkc_uuid_valid) {
+		rval = sysctl_handle_string(oidp, arg1, arg2, req);
+	}
+	return rval;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, auxiliaryfilesetuuid,
+    CTLFLAG_RD | CTLFLAG_KERN | CTLTYPE_STRING | CTLFLAG_LOCKED,
+    auxkc_uuid_string, sizeof(auxkc_uuid_string),
+    sysctl_auxiliaryfilesetuuid, "A", "");
+
+STATIC int
+sysctl_filesetuuid(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int rval = ENOENT;
+	kc_format_t kcformat;
+	kernel_mach_header_t *mh;
+	void *uuid = NULL;
+	unsigned long uuidlen = 0;
+	uuid_string_t uuid_str;
+
+	if (!PE_get_primary_kc_format(&kcformat) || kcformat != KCFormatFileset) {
+		return rval;
+	}
+
+	mh = (kernel_mach_header_t *)PE_get_kc_header(KCKindPrimary);
+	uuid = getuuidfromheader(mh, &uuidlen);
+
+	if ((uuid != NULL) && (uuidlen == sizeof(uuid_t))) {
+		uuid_unparse_upper(*(uuid_t *)uuid, uuid_str);
+		rval = sysctl_io_string(req, (char *)uuid_str, sizeof(uuid_str), 0, NULL);
+	}
+
+	return rval;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, filesetuuid,
+    CTLFLAG_RD | CTLFLAG_KERN | CTLTYPE_STRING | CTLFLAG_LOCKED,
+    NULL, 0,
+    sysctl_filesetuuid, "A", "");
+
+
 SYSCTL_INT(_kern, KERN_MAXFILES, maxfiles,
     CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
     &maxfiles, 0, "");
@@ -2009,6 +2225,9 @@ SYSCTL_INT(_kern, OID_AUTO, num_taskthreads,
 SYSCTL_LONG(_kern, OID_AUTO, num_recycledvnodes,
     CTLFLAG_RD | CTLFLAG_LOCKED,
     &num_recycledvnodes, "");
+SYSCTL_COMPAT_INT(_kern, OID_AUTO, free_vnodes,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &freevnodes, 0, "");
 
 STATIC int
 sysctl_maxvnodes(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
@@ -2057,6 +2276,16 @@ SYSCTL_INT(_kern, OID_AUTO, sched_allow_NO_SMT_threads,
     &sched_allow_NO_SMT_threads, 0, "");
 
 #if (DEVELOPMENT || DEBUG)
+extern int smt_sched_bonus_16ths;
+SYSCTL_INT(_kern, OID_AUTO, smt_sched_bonus_16ths,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &smt_sched_bonus_16ths, 0, "");
+
+extern int smt_timeshare_enabled;
+SYSCTL_INT(_kern, OID_AUTO, sched_smt_timeshare_enable,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &smt_timeshare_enabled, 0, "");
+
 extern int sched_smt_balance;
 SYSCTL_INT(_kern, OID_AUTO, sched_smt_balance,
     CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
@@ -2132,6 +2361,28 @@ SYSCTL_PROC(_kern_perfcontrol_callout, OID_AUTO, update_cycles,
     (void *)PERFCONTROL_STAT_CYCLES, PERFCONTROL_CALLOUT_STATE_UPDATE,
     sysctl_perfcontrol_callout_stat, "I", "");
 
+#if __AMP__
+extern int sched_amp_idle_steal;
+SYSCTL_INT(_kern, OID_AUTO, sched_amp_idle_steal,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &sched_amp_idle_steal, 0, "");
+extern int sched_amp_spill_steal;
+SYSCTL_INT(_kern, OID_AUTO, sched_amp_spill_steal,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &sched_amp_spill_steal, 0, "");
+extern int sched_amp_spill_count;
+SYSCTL_INT(_kern, OID_AUTO, sched_amp_spill_count,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &sched_amp_spill_count, 0, "");
+extern int sched_amp_spill_deferred_ipi;
+SYSCTL_INT(_kern, OID_AUTO, sched_amp_spill_deferred_ipi,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &sched_amp_spill_deferred_ipi, 0, "");
+extern int sched_amp_pcores_preempt_immediate_ipi;
+SYSCTL_INT(_kern, OID_AUTO, sched_amp_pcores_preempt_immediate_ipi,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &sched_amp_pcores_preempt_immediate_ipi, 0, "");
+#endif /* __AMP__ */
 #endif /* __arm__ || __arm64__ */
 
 #if __arm64__
@@ -2140,6 +2391,23 @@ SYSCTL_INT(_kern, OID_AUTO, legacy_footprint_entitlement_mode,
     CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
     &legacy_footprint_entitlement_mode, 0, "");
 #endif /* __arm64__ */
+
+static int
+sysctl_kern_sched_rt_n_backup_processors(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int new_value, changed;
+	int old_value = sched_get_rt_n_backup_processors();
+	int error = sysctl_io_number(req, old_value, sizeof(int), &new_value, &changed);
+	if (changed) {
+		sched_set_rt_n_backup_processors(new_value);
+	}
+
+	return error;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, sched_rt_n_backup_processors,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, sysctl_kern_sched_rt_n_backup_processors, "I", "");
 
 #endif /* (DEVELOPMENT || DEBUG) */
 
@@ -2283,6 +2551,7 @@ SYSCTL_STRING(_kern, OID_AUTO, bootsessionuuid,
     CTLFLAG_RD | CTLFLAG_LOCKED,
     &bootsessionuuid_string, sizeof(bootsessionuuid_string), "");
 
+
 STATIC int
 sysctl_boottime
 (__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
@@ -2298,7 +2567,7 @@ sysctl_boottime
 		return sysctl_io_opaque(req, &t, sizeof(t), NULL);
 	} else {
 		struct user32_timeval t = {};
-		t.tv_sec = tv.tv_sec;
+		t.tv_sec = (user32_time_t)tv.tv_sec;
 		t.tv_usec = tv.tv_usec;
 		return sysctl_io_opaque(req, &t, sizeof(t), NULL);
 	}
@@ -2307,6 +2576,107 @@ sysctl_boottime
 SYSCTL_PROC(_kern, KERN_BOOTTIME, boottime,
     CTLTYPE_STRUCT | CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
     0, 0, sysctl_boottime, "S,timeval", "");
+
+extern const char* IOGetBootUUID(void);
+
+/* non-static: written by imageboot.c */
+uuid_string_t fake_bootuuid;
+
+STATIC int
+sysctl_bootuuid
+(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int error = ENOENT;
+
+	/* check the first byte to see if the string has been
+	 * populated. this is a uuid_STRING_t, this check would
+	 * not work with a uuid_t.
+	 */
+	if (fake_bootuuid[0] != '\0') {
+		error = sysctl_io_string(req, fake_bootuuid, 0, 0, NULL);
+		goto out;
+	}
+
+	const char *uuid_string = IOGetBootUUID();
+	if (uuid_string) {
+		uuid_t boot_uuid;
+		error = uuid_parse(uuid_string, boot_uuid);
+		if (!error) {
+			error = sysctl_io_string(req, __DECONST(char *, uuid_string), 0, 0, NULL);
+		}
+	}
+
+out:
+	return error;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, bootuuid,
+    CTLTYPE_STRING | CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
+    0, 0, sysctl_bootuuid, "A", "");
+
+
+extern const char* IOGetApfsPrebootUUID(void);
+extern const char *IOGetAssociatedApfsVolgroupUUID(void);
+
+STATIC int
+sysctl_apfsprebootuuid
+(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int error = ENOENT;
+
+	const char *uuid_string = IOGetApfsPrebootUUID();
+	if (uuid_string) {
+		uuid_t apfs_preboot_uuid;
+		error = uuid_parse(uuid_string, apfs_preboot_uuid);
+		if (!error) {
+			error = sysctl_io_string(req, __DECONST(char *, uuid_string), 0, 0, NULL);
+		}
+	}
+
+	return error;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, apfsprebootuuid,
+    CTLTYPE_STRING | CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
+    0, 0, sysctl_apfsprebootuuid, "A", "");
+
+STATIC int
+sysctl_targetsystemvolgroupuuid
+(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int error = ENOENT;
+
+	const char *uuid_string = IOGetApfsPrebootUUID();
+	if (uuid_string) {
+		uuid_t apfs_preboot_uuid;
+		error = uuid_parse(uuid_string, apfs_preboot_uuid);
+		if (!error) {
+			error = sysctl_io_string(req, __DECONST(char *, uuid_string), 0, 0, NULL);
+		}
+	} else {
+		/*
+		 * In special boot modes, such as kcgen-mode, the
+		 * apfs-preboot-uuid property will not be set. Instead, a
+		 * different property, associated-volume-group, will be set
+		 * which indicates the UUID of the VolumeGroup containing the
+		 * system volume into which you will boot.
+		 */
+		uuid_string = IOGetAssociatedApfsVolgroupUUID();
+		if (uuid_string) {
+			uuid_t apfs_preboot_uuid;
+			error = uuid_parse(uuid_string, apfs_preboot_uuid);
+			if (!error) {
+				error = sysctl_io_string(req, __DECONST(char *, uuid_string), 0, 0, NULL);
+			}
+		}
+	}
+
+	return error;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, targetsystemvolgroupuuid,
+    CTLTYPE_STRING | CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    0, 0, sysctl_targetsystemvolgroupuuid, "A", "");
 
 STATIC int
 sysctl_symfile
@@ -2325,7 +2695,7 @@ SYSCTL_PROC(_kern, KERN_SYMFILE, symfile,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
     0, 0, sysctl_symfile, "A", "");
 
-#if NFSCLIENT
+#if CONFIG_NFS_CLIENT
 STATIC int
 sysctl_netboot
 (__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
@@ -2864,9 +3234,7 @@ SYSCTL_PROC(_debug, OID_AUTO, toggle_address_reuse, CTLFLAG_ANYBODY | CTLTYPE_IN
 
 #ifdef CONFIG_XNUPOST
 
-extern int xnupost_export_testdata(void *outp, uint32_t size, uint32_t *lenp);
 extern uint32_t xnupost_get_estimated_testdata_size(void);
-
 extern int xnupost_reset_all_tests(void);
 
 STATIC int
@@ -3004,8 +3372,9 @@ SYSCTL_PROC(_debug,
 #include <mach/task.h>
 #include <mach/semaphore.h>
 
-extern lck_grp_t * sysctl_debug_test_stackshot_owner_grp; /* used for both mutexes and rwlocks */
-extern lck_mtx_t * sysctl_debug_test_stackshot_owner_init_mtx; /* used to protect lck_*_init */
+static LCK_GRP_DECLARE(sysctl_debug_test_stackshot_owner_grp, "test-stackshot-owner-grp");
+static LCK_MTX_DECLARE(sysctl_debug_test_stackshot_owner_init_mtx,
+    &sysctl_debug_test_stackshot_owner_grp);
 
 /* This is a sysctl for testing collection of owner info on a lock in kernel space. A multi-threaded
  * test from userland sets this sysctl in such a way that a thread blocks in kernel mode, and a
@@ -3032,17 +3401,17 @@ sysctl_debug_test_stackshot_mutex_owner(__unused struct sysctl_oid *oidp, __unus
 	long long mtx_unslid_addr = (long long)VM_KERNEL_UNSLIDE_OR_PERM(&sysctl_debug_test_stackshot_owner_lck);
 	int error = sysctl_io_number(req, mtx_unslid_addr, sizeof(long long), (void*)&option, NULL);
 
-	lck_mtx_lock(sysctl_debug_test_stackshot_owner_init_mtx);
+	lck_mtx_lock(&sysctl_debug_test_stackshot_owner_init_mtx);
 	if (!sysctl_debug_test_stackshot_mtx_inited) {
 		lck_mtx_init(&sysctl_debug_test_stackshot_owner_lck,
-		    sysctl_debug_test_stackshot_owner_grp,
+		    &sysctl_debug_test_stackshot_owner_grp,
 		    LCK_ATTR_NULL);
 		semaphore_create(kernel_task,
 		    &sysctl_debug_test_stackshot_mutex_sem,
 		    SYNC_POLICY_FIFO, 0);
 		sysctl_debug_test_stackshot_mtx_inited = 1;
 	}
-	lck_mtx_unlock(sysctl_debug_test_stackshot_owner_init_mtx);
+	lck_mtx_unlock(&sysctl_debug_test_stackshot_owner_init_mtx);
 
 	if (!error) {
 		switch (option) {
@@ -3059,15 +3428,15 @@ sysctl_debug_test_stackshot_mutex_owner(__unused struct sysctl_oid *oidp, __unus
 			semaphore_signal(sysctl_debug_test_stackshot_mutex_sem);
 			break;
 		case SYSCTL_DEBUG_MTX_TEARDOWN:
-			lck_mtx_lock(sysctl_debug_test_stackshot_owner_init_mtx);
+			lck_mtx_lock(&sysctl_debug_test_stackshot_owner_init_mtx);
 
 			lck_mtx_destroy(&sysctl_debug_test_stackshot_owner_lck,
-			    sysctl_debug_test_stackshot_owner_grp);
+			    &sysctl_debug_test_stackshot_owner_grp);
 			semaphore_destroy(kernel_task,
 			    sysctl_debug_test_stackshot_mutex_sem);
 			sysctl_debug_test_stackshot_mtx_inited = 0;
 
-			lck_mtx_unlock(sysctl_debug_test_stackshot_owner_init_mtx);
+			lck_mtx_unlock(&sysctl_debug_test_stackshot_owner_init_mtx);
 			break;
 		case -1:         /* user just wanted to read the value, so do nothing */
 			break;
@@ -3113,10 +3482,10 @@ sysctl_debug_test_stackshot_rwlck_owner(__unused struct sysctl_oid *oidp, __unus
 	long long rwlck_unslid_addr = (long long)VM_KERNEL_UNSLIDE_OR_PERM(&sysctl_debug_test_stackshot_owner_rwlck);
 	int error = sysctl_io_number(req, rwlck_unslid_addr, sizeof(long long), (void*)&option, NULL);
 
-	lck_mtx_lock(sysctl_debug_test_stackshot_owner_init_mtx);
+	lck_mtx_lock(&sysctl_debug_test_stackshot_owner_init_mtx);
 	if (!sysctl_debug_test_stackshot_rwlck_inited) {
 		lck_rw_init(&sysctl_debug_test_stackshot_owner_rwlck,
-		    sysctl_debug_test_stackshot_owner_grp,
+		    &sysctl_debug_test_stackshot_owner_grp,
 		    LCK_ATTR_NULL);
 		semaphore_create(kernel_task,
 		    &sysctl_debug_test_stackshot_rwlck_sem,
@@ -3124,7 +3493,7 @@ sysctl_debug_test_stackshot_rwlck_owner(__unused struct sysctl_oid *oidp, __unus
 		    0);
 		sysctl_debug_test_stackshot_rwlck_inited = 1;
 	}
-	lck_mtx_unlock(sysctl_debug_test_stackshot_owner_init_mtx);
+	lck_mtx_unlock(&sysctl_debug_test_stackshot_owner_init_mtx);
 
 	if (!error) {
 		switch (option) {
@@ -3150,15 +3519,15 @@ sysctl_debug_test_stackshot_rwlck_owner(__unused struct sysctl_oid *oidp, __unus
 			semaphore_signal(sysctl_debug_test_stackshot_rwlck_sem);
 			break;
 		case SYSCTL_DEBUG_KRWLCK_TEARDOWN:
-			lck_mtx_lock(sysctl_debug_test_stackshot_owner_init_mtx);
+			lck_mtx_lock(&sysctl_debug_test_stackshot_owner_init_mtx);
 
 			lck_rw_destroy(&sysctl_debug_test_stackshot_owner_rwlck,
-			    sysctl_debug_test_stackshot_owner_grp);
+			    &sysctl_debug_test_stackshot_owner_grp);
 			semaphore_destroy(kernel_task,
 			    sysctl_debug_test_stackshot_rwlck_sem);
 			sysctl_debug_test_stackshot_rwlck_inited = 0;
 
-			lck_mtx_unlock(sysctl_debug_test_stackshot_owner_init_mtx);
+			lck_mtx_unlock(&sysctl_debug_test_stackshot_owner_init_mtx);
 			break;
 		case -1:         /* user just wanted to read the value, so do nothing */
 			break;
@@ -3204,7 +3573,7 @@ sysctl_swapusage
 	xsu.xsu_total = swap_total;
 	xsu.xsu_avail = swap_avail;
 	xsu.xsu_used = swap_total - swap_avail;
-	xsu.xsu_pagesize = swap_pagesize;
+	xsu.xsu_pagesize = (u_int32_t)MIN(swap_pagesize, UINT32_MAX);
 	xsu.xsu_encrypted = swap_encrypted;
 	return sysctl_io_opaque(req, &xsu, sizeof(xsu), NULL);
 }
@@ -3346,6 +3715,7 @@ out:
 	return error;
 }
 
+
 STATIC int
 sysctl_sysctl_native(__unused struct sysctl_oid *oidp, void *arg1, int arg2,
     struct sysctl_req *req)
@@ -3361,7 +3731,7 @@ sysctl_sysctl_native(__unused struct sysctl_oid *oidp, void *arg1, int arg2,
 	}
 	return SYSCTL_OUT(req, &res, sizeof(res));
 }
-SYSCTL_PROC(_sysctl, OID_AUTO, proc_native, CTLTYPE_NODE | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0, sysctl_sysctl_native, "I", "proc_native");
+SYSCTL_PROC(_sysctl, OID_AUTO, proc_native, CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0, sysctl_sysctl_native, "I", "proc_native");
 
 STATIC int
 sysctl_sysctl_cputype(__unused struct sysctl_oid *oidp, void *arg1, int arg2,
@@ -3438,6 +3808,29 @@ SYSCTL_PROC(_kern, OID_AUTO, slide,
     CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED,
     0, 0, sysctl_slide, "I", "");
 
+/* User address of the PFZ */
+#if DEBUG || DEVELOPMENT
+extern user32_addr_t commpage_text32_location;
+extern user64_addr_t commpage_text64_location;
+
+STATIC int
+sysctl_pfz_start SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+
+#ifdef __LP64__
+	return sysctl_io_number(req, commpage_text64_location, sizeof(user64_addr_t), NULL, NULL);
+#else
+	return sysctl_io_number(req, commpage_text32_location, sizeof(user32_addr_t), NULL, NULL);
+#endif
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, pfz,
+    CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_LOCKED | CTLFLAG_MASKED,
+    0, 0, sysctl_pfz_start, "I", "");
+#endif
+
+
 /*
  * Limit on total memory users can wire.
  *
@@ -3453,8 +3846,10 @@ SYSCTL_PROC(_kern, OID_AUTO, slide,
 
 vm_map_size_t   vm_global_user_wire_limit;
 vm_map_size_t   vm_per_task_user_wire_limit;
-extern uint64_t max_mem;
+extern uint64_t max_mem_actual, max_mem;
 
+uint64_t        vm_add_wire_count_over_global_limit;
+uint64_t        vm_add_wire_count_over_user_limit;
 /*
  * We used to have a global in the kernel called vm_global_no_user_wire_limit which was the inverse
  * of vm_global_user_wire_limit. But maintaining both of those is silly, and vm_global_user_wire_limit is the
@@ -3469,14 +3864,18 @@ sysctl_global_no_user_wire_amount(__unused struct sysctl_oid *oidp, __unused voi
 	vm_map_size_t new_value;
 	int changed;
 	int error;
+	uint64_t config_memsize = max_mem;
+#if defined(XNU_TARGET_OS_OSX)
+	config_memsize = max_mem_actual;
+#endif /* defined(XNU_TARGET_OS_OSX) */
 
-	old_value = max_mem - vm_global_user_wire_limit;
+	old_value = (vm_map_size_t)(config_memsize - vm_global_user_wire_limit);
 	error = sysctl_io_number(req, old_value, sizeof(vm_map_size_t), &new_value, &changed);
 	if (changed) {
-		if ((uint64_t)new_value > max_mem) {
+		if ((uint64_t)new_value > config_memsize) {
 			error = EINVAL;
 		} else {
-			vm_global_user_wire_limit = max_mem - new_value;
+			vm_global_user_wire_limit = (vm_map_size_t)(config_memsize - new_value);
 		}
 	}
 	return error;
@@ -3494,8 +3893,36 @@ SYSCTL_QUAD(_vm, OID_AUTO, user_wire_limit, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_per
 SYSCTL_PROC(_vm, OID_AUTO, global_no_user_wire_amount, CTLTYPE_QUAD | CTLFLAG_RW | CTLFLAG_LOCKED, 0, 0, &sysctl_global_no_user_wire_amount, "Q", "");
 #endif
 
+/*
+ * Relaxed atomic RW of a 64bit value via sysctl.
+ */
+STATIC int
+sysctl_r_64bit_atomic(uint64_t *ptr, struct sysctl_req *req)
+{
+	uint64_t old_value;
+	uint64_t new_value;
+	int error;
+
+	old_value = os_atomic_load_wide(ptr, relaxed);
+	error = sysctl_io_number(req, old_value, sizeof(vm_map_size_t), &new_value, NULL);
+	return error;
+}
+STATIC int
+sysctl_add_wire_count_over_global_limit(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	return sysctl_r_64bit_atomic(&vm_add_wire_count_over_global_limit, req);
+}
+STATIC int
+sysctl_add_wire_count_over_user_limit(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	return sysctl_r_64bit_atomic(&vm_add_wire_count_over_user_limit, req);
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, add_wire_count_over_global_limit, CTLTYPE_QUAD | CTLFLAG_RD |  CTLFLAG_LOCKED, 0, 0, &sysctl_add_wire_count_over_global_limit, "Q", "");
+SYSCTL_PROC(_vm, OID_AUTO, add_wire_count_over_user_limit, CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0, &sysctl_add_wire_count_over_user_limit, "Q", "");
+
 #if DEVELOPMENT || DEBUG
-/* These sysyctls are used to test the wired limit. */
+/* These sysctls are used to test the wired limit. */
 extern unsigned int    vm_page_wire_count;
 extern uint32_t        vm_lopage_free_count;
 SYSCTL_INT(_vm, OID_AUTO, page_wire_count, CTLFLAG_RD | CTLFLAG_LOCKED, &vm_page_wire_count, 0, "");
@@ -3633,6 +4060,9 @@ SYSCTL_INT(_vm, OID_AUTO, compressor_is_active, CTLFLAG_RD | CTLFLAG_LOCKED, &vm
 SYSCTL_INT(_vm, OID_AUTO, compressor_swapout_target_age, CTLFLAG_RD | CTLFLAG_LOCKED, &swapout_target_age, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, compressor_available, CTLFLAG_RD | CTLFLAG_LOCKED, &vm_compressor_available, 0, "");
 
+extern int min_csegs_per_major_compaction;
+SYSCTL_INT(_vm, OID_AUTO, compressor_min_csegs_per_major_compaction, CTLFLAG_RW | CTLFLAG_LOCKED, &min_csegs_per_major_compaction, 0, "");
+
 SYSCTL_INT(_vm, OID_AUTO, vm_ripe_target_age_in_secs, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_ripe_target_age, 0, "");
 
 SYSCTL_INT(_vm, OID_AUTO, compressor_eval_period_in_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &compressor_eval_period_in_msecs, 0, "");
@@ -3640,6 +4070,17 @@ SYSCTL_INT(_vm, OID_AUTO, compressor_sample_min_in_msecs, CTLFLAG_RW | CTLFLAG_L
 SYSCTL_INT(_vm, OID_AUTO, compressor_sample_max_in_msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &compressor_sample_max_in_msecs, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, compressor_thrashing_threshold_per_10msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &compressor_thrashing_threshold_per_10msecs, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, compressor_thrashing_min_per_10msecs, CTLFLAG_RW | CTLFLAG_LOCKED, &compressor_thrashing_min_per_10msecs, 0, "");
+
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapouts_under_30s, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.unripe_under_30s, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapouts_under_60s, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.unripe_under_60s, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapouts_under_300s, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.unripe_under_300s, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_reclaim_swapins, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.reclaim_swapins, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_defrag_swapins, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.defrag_swapins, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_swapout_threshold_exceeded, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.compressor_swap_threshold_exceeded, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_swapout_fileq_throttled, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.external_q_throttled, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_swapout_free_count_low, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.free_count_below_reserve, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_swapout_thrashing_detected, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.thrashing_detected, "");
+SYSCTL_QUAD(_vm, OID_AUTO, compressor_swapper_swapout_fragmentation_detected, CTLFLAG_RD | CTLFLAG_LOCKED, &vmcs_stats.fragmentation_detected, "");
 
 SYSCTL_STRING(_vm, OID_AUTO, swapfileprefix, CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED, swapfilename, sizeof(swapfilename) - SWAPFILENAME_INDEX_LEN, "");
 
@@ -3662,6 +4103,36 @@ SYSCTL_INT(_vm, OID_AUTO, compressor_thread_minpages1, CTLFLAG_RD | CTLFLAG_LOCK
 
 SYSCTL_INT(_vm, OID_AUTO, compressor_thread_maxpages0, CTLFLAG_RD | CTLFLAG_LOCKED, &vmct_stats.vmct_maxpages[0], 0, "");
 SYSCTL_INT(_vm, OID_AUTO, compressor_thread_maxpages1, CTLFLAG_RD | CTLFLAG_LOCKED, &vmct_stats.vmct_maxpages[1], 0, "");
+
+int vm_compressor_injected_error_count;
+
+SYSCTL_INT(_vm, OID_AUTO, compressor_injected_error_count, CTLFLAG_RD | CTLFLAG_LOCKED, &vm_compressor_injected_error_count, 0, "");
+
+static int
+sysctl_compressor_inject_error(__unused struct sysctl_oid *oidp,
+    __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int result;
+	vm_address_t va = 0;
+	int changed;
+
+	result = sysctl_io_number(req, va, sizeof(va), &va, &changed);
+	if (result == 0 && changed) {
+		result = vm_map_inject_error(current_map(), va);
+		if (result == 0) {
+			/*
+			 * Count the number of errors injected successfully to detect
+			 * situations where corruption was caused by improper use of this
+			 * sysctl.
+			 */
+			os_atomic_inc(&vm_compressor_injected_error_count, relaxed);
+		}
+	}
+	return result;
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, compressor_inject_error, CTLTYPE_QUAD | CTLFLAG_LOCKED | CTLFLAG_RW,
+    0, 0, sysctl_compressor_inject_error, "Q", "flips a bit in a compressed page for the current task");
 
 #endif
 
@@ -3818,36 +4289,67 @@ extern uint32_t vm_grab_anon_nops;
 SYSCTL_INT(_vm, OID_AUTO, vm_grab_anon_overrides, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pageout_debug.vm_grab_anon_overrides, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, vm_grab_anon_nops, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pageout_debug.vm_grab_anon_nops, 0, "");
 
+extern int vm_page_delayed_work_ctx_needed;
+SYSCTL_INT(_vm, OID_AUTO, vm_page_needed_delayed_work_ctx, CTLFLAG_RD | CTLFLAG_LOCKED, &vm_page_delayed_work_ctx_needed, 0, "");
+
 /* log message counters for persistence mode */
-extern uint32_t oslog_p_total_msgcount;
-extern uint32_t oslog_p_metadata_saved_msgcount;
-extern uint32_t oslog_p_metadata_dropped_msgcount;
-extern uint32_t oslog_p_error_count;
-extern uint32_t oslog_p_saved_msgcount;
-extern uint32_t oslog_p_dropped_msgcount;
-extern uint32_t oslog_p_boot_dropped_msgcount;
+SCALABLE_COUNTER_DECLARE(oslog_p_total_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_metadata_saved_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_metadata_dropped_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_error_count);
+SCALABLE_COUNTER_DECLARE(oslog_p_saved_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_dropped_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_boot_dropped_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_coprocessor_total_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_coprocessor_dropped_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_unresolved_kc_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_fmt_invalid_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_fmt_max_args_msgcount);
+SCALABLE_COUNTER_DECLARE(oslog_p_truncated_msgcount);
 
 /* log message counters for streaming mode */
 extern uint32_t oslog_s_total_msgcount;
 extern uint32_t oslog_s_metadata_msgcount;
-extern uint32_t oslog_s_error_count;
+SCALABLE_COUNTER_DECLARE(oslog_s_error_count);
 extern uint32_t oslog_s_streamed_msgcount;
 extern uint32_t oslog_s_dropped_msgcount;
 
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_total_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_total_msgcount, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_metadata_saved_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_metadata_saved_msgcount, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_metadata_dropped_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_metadata_dropped_msgcount, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_error_count, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_error_count, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_saved_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_saved_msgcount, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_dropped_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_dropped_msgcount, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_p_boot_dropped_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_p_boot_dropped_msgcount, 0, "");
+/* log message counters for msgbuf logging */
+extern uint32_t oslog_msgbuf_msgcount;
+extern uint32_t oslog_msgbuf_dropped_msgcount;
+extern uint32_t oslog_msgbuf_dropped_charcount;
+
+/* log message counters for vaddlog logging */
+extern uint32_t vaddlog_msgcount;
+extern uint32_t vaddlog_msgcount_dropped;
+
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_total_msgcount, oslog_p_total_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_metadata_saved_msgcount, oslog_p_metadata_saved_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_metadata_dropped_msgcount, oslog_p_metadata_dropped_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_error_count, oslog_p_error_count, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_saved_msgcount, oslog_p_saved_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_dropped_msgcount, oslog_p_dropped_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_boot_dropped_msgcount, oslog_p_boot_dropped_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_coprocessor_total_msgcount, oslog_p_coprocessor_total_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_coprocessor_dropped_msgcount, oslog_p_coprocessor_dropped_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_unresolved_kc_msgcount, oslog_p_unresolved_kc_msgcount, "");
+
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_fmt_invalid_msgcount, oslog_p_fmt_invalid_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_fmt_max_args_msgcount, oslog_p_fmt_max_args_msgcount, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_p_truncated_msgcount, oslog_p_truncated_msgcount, "");
 
 SYSCTL_UINT(_debug, OID_AUTO, oslog_s_total_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_s_total_msgcount, 0, "");
 SYSCTL_UINT(_debug, OID_AUTO, oslog_s_metadata_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_s_metadata_msgcount, 0, "");
-SYSCTL_UINT(_debug, OID_AUTO, oslog_s_error_count, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_s_error_count, 0, "");
+SYSCTL_SCALABLE_COUNTER(_debug, oslog_s_error_count, oslog_s_error_count, "");
 SYSCTL_UINT(_debug, OID_AUTO, oslog_s_streamed_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_s_streamed_msgcount, 0, "");
 SYSCTL_UINT(_debug, OID_AUTO, oslog_s_dropped_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_s_dropped_msgcount, 0, "");
 
+SYSCTL_UINT(_debug, OID_AUTO, oslog_msgbuf_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_msgbuf_msgcount, 0, "");
+SYSCTL_UINT(_debug, OID_AUTO, oslog_msgbuf_dropped_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_msgbuf_dropped_msgcount, 0, "");
+SYSCTL_UINT(_debug, OID_AUTO, oslog_msgbuf_dropped_charcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &oslog_msgbuf_dropped_charcount, 0, "");
+
+SYSCTL_UINT(_debug, OID_AUTO, vaddlog_msgcount, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &vaddlog_msgcount, 0, "");
+SYSCTL_UINT(_debug, OID_AUTO, vaddlog_msgcount_dropped, CTLFLAG_ANYBODY | CTLFLAG_RD | CTLFLAG_LOCKED, &vaddlog_msgcount_dropped, 0, "");
 
 #endif /* DEVELOPMENT || DEBUG */
 
@@ -3879,6 +4381,28 @@ extern int ipc_portbt;
 SYSCTL_INT(_kern, OID_AUTO, ipc_portbt,
     CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
     &ipc_portbt, 0, "");
+
+/*
+ * Mach message signature validation control and outputs
+ */
+extern unsigned int ikm_signature_failures;
+SYSCTL_INT(_kern, OID_AUTO, ikm_signature_failures,
+    CTLFLAG_RD | CTLFLAG_LOCKED, &ikm_signature_failures, 0, "Message signature failure count");
+extern unsigned int ikm_signature_failure_id;
+SYSCTL_INT(_kern, OID_AUTO, ikm_signature_failure_id,
+    CTLFLAG_RD | CTLFLAG_LOCKED, &ikm_signature_failure_id, 0, "Message signature failure count");
+
+#if (DEVELOPMENT || DEBUG)
+extern unsigned int ikm_signature_panic_disable;
+SYSCTL_INT(_kern, OID_AUTO, ikm_signature_panic_disable,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &ikm_signature_panic_disable, 0, "Message signature failure mode");
+extern unsigned int ikm_signature_header_failures;
+SYSCTL_INT(_kern, OID_AUTO, ikm_signature_header_failures,
+    CTLFLAG_RD | CTLFLAG_LOCKED, &ikm_signature_header_failures, 0, "Message header signature failure count");
+extern unsigned int ikm_signature_trailer_failures;
+SYSCTL_INT(_kern, OID_AUTO, ikm_signature_trailer_failures,
+    CTLFLAG_RD | CTLFLAG_LOCKED, &ikm_signature_trailer_failures, 0, "Message trailer signature failure count");
+#endif
 
 /*
  * Scheduler sysctls
@@ -3916,18 +4440,14 @@ SYSCTL_PROC(_kern, OID_AUTO, cpu_checkin_interval,
 
 
 /*
- * Only support runtime modification on embedded platforms
- * with development config enabled
+ * Only support runtime modification on development / debug
  */
-#if CONFIG_EMBEDDED
-#if !SECURE_KERNEL
+#if DEVELOPMENT || DEBUG
 extern int precise_user_kernel_time;
 SYSCTL_INT(_kern, OID_AUTO, precise_user_kernel_time,
     CTLFLAG_RW | CTLFLAG_LOCKED,
     &precise_user_kernel_time, 0, "Precise accounting of kernel vs. user time");
-#endif
-#endif
-
+#endif /* DEVELOPMENT || DEBUG */
 
 /* Parameters related to timer coalescing tuning, to be replaced
  * with a dedicated systemcall in the future.
@@ -4113,9 +4633,41 @@ SYSCTL_PROC(_machdep, OID_AUTO, user_idle_level,
 SYSCTL_INT(_kern, OID_AUTO, hv_support,
     CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
     &hv_support_available, 0, "");
+
+SYSCTL_INT(_kern, OID_AUTO, hv_disable,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &hv_disable, 0, "");
 #endif
 
-#if CONFIG_EMBEDDED
+#if DEVELOPMENT || DEBUG
+extern uint64_t driverkit_checkin_timed_out;
+SYSCTL_QUAD(_kern, OID_AUTO, driverkit_checkin_timed_out,
+    CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
+    &driverkit_checkin_timed_out, "timestamp of dext checkin timeout");
+#endif
+
+extern int IOGetVMMPresent(void);
+
+static int
+hv_vmm_present SYSCTL_HANDLER_ARGS
+{
+	__unused struct sysctl_oid *unused_oidp = oidp;
+	__unused void *unused_arg1 = arg1;
+	__unused int unused_arg2 = arg2;
+
+	int hv_vmm_present = 0;
+
+	hv_vmm_present = IOGetVMMPresent();
+
+	return SYSCTL_OUT(req, &hv_vmm_present, sizeof(hv_vmm_present));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, hv_vmm_present,
+    CTLTYPE_INT | CTLFLAG_ANYBODY | CTLFLAG_KERN | CTLFLAG_LOCKED,
+    0, 0,
+    hv_vmm_present, "I", "");
+
+#if CONFIG_DARKBOOT
 STATIC int
 sysctl_darkboot SYSCTL_HANDLER_ARGS
 {
@@ -4185,7 +4737,7 @@ exit:
 SYSCTL_PROC(_kern, OID_AUTO, darkboot,
     CTLFLAG_KERN | CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
     0, 0, sysctl_darkboot, "I", "");
-#endif
+#endif /* CONFIG_DARKBOOT */
 
 #if DEVELOPMENT || DEBUG
 #include <sys/sysent.h>
@@ -4200,7 +4752,7 @@ kern_sysent_write(__unused struct sysctl_oid *oidp, __unused void *arg1, __unuse
 
 	error = sysctl_io_number(req, old_value, sizeof(uint64_t), &new_value, &changed);
 	if ((error == 0) && changed) {
-		volatile uint32_t *wraddr = (uint32_t *) &sysent[0];
+		volatile uint32_t *wraddr = __DECONST(uint32_t *, &sysent[0]);
 		*wraddr = 0;
 		printf("sysent[0] write succeeded\n");
 	}
@@ -4215,7 +4767,7 @@ SYSCTL_PROC(_kern, OID_AUTO, sysent_const_check,
 #endif
 
 #if DEVELOPMENT || DEBUG
-SYSCTL_COMPAT_INT(_kern, OID_AUTO, development, CTLFLAG_RD | CTLFLAG_MASKED, NULL, 1, "");
+SYSCTL_COMPAT_INT(_kern, OID_AUTO, development, CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_KERN, NULL, 1, "");
 #else
 SYSCTL_COMPAT_INT(_kern, OID_AUTO, development, CTLFLAG_RD | CTLFLAG_MASKED, NULL, 0, "");
 #endif
@@ -4373,7 +4925,35 @@ SYSCTL_INT(_kern, OID_AUTO, exc_resource_threads_enabled, CTLFLAG_RD | CTLFLAG_L
 
 #endif /* DEVELOPMENT || DEBUG */
 
+#if CONFIG_THREAD_GROUPS
+#if DEVELOPMENT || DEBUG
+
+static int
+sysctl_get_thread_group_id SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2, oidp)
+	uint64_t thread_group_id = thread_group_get_id(thread_group_get(current_thread()));
+	return SYSCTL_OUT(req, &thread_group_id, sizeof(thread_group_id));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, thread_group_id, CTLFLAG_RD | CTLFLAG_LOCKED | CTLTYPE_QUAD,
+    0, 0, &sysctl_get_thread_group_id, "I", "thread group id of the thread");
+
+STATIC int
+sysctl_thread_group_count(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	int value = thread_group_count();
+	return sysctl_io_number(req, value, sizeof(value), NULL, NULL);
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, thread_group_count, CTLFLAG_RD | CTLFLAG_LOCKED | CTLFLAG_KERN,
+    0, 0, &sysctl_thread_group_count, "I", "count of thread groups");
+
+#endif /* DEVELOPMENT || DEBUG */
+const uint32_t thread_groups_supported = 1;
+#else /* CONFIG_THREAD_GROUPS */
 const uint32_t thread_groups_supported = 0;
+#endif /* CONFIG_THREAD_GROUPS */
 
 STATIC int
 sysctl_thread_groups_supported(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
@@ -4399,7 +4979,7 @@ sysctl_grade_cputype SYSCTL_HANDLER_ARGS
 		return error;
 	}
 
-	return_value = grade_binary(type_tuple[0], type_tuple[1], FALSE);
+	return_value = grade_binary(type_tuple[0], type_tuple[1] & ~CPU_SUBTYPE_MASK, type_tuple[1] & CPU_SUBTYPE_MASK, FALSE);
 
 	error = SYSCTL_OUT(req, &return_value, sizeof(return_value));
 
@@ -4415,8 +4995,54 @@ SYSCTL_PROC(_kern, OID_AUTO, grade_cputype,
     0, 0, &sysctl_grade_cputype, "S",
     "grade value of cpu_type_t+cpu_sub_type_t");
 
+extern boolean_t allow_direct_handoff;
+SYSCTL_INT(_kern, OID_AUTO, direct_handoff,
+    CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &allow_direct_handoff, 0, "Enable direct handoff for realtime threads");
 
 #if DEVELOPMENT || DEBUG
+
+SYSCTL_LONG(_kern, OID_AUTO, phys_carveout_pa, CTLFLAG_RD | CTLFLAG_LOCKED,
+    &phys_carveout_pa,
+    "base physical address of the phys_carveout_mb boot-arg region");
+SYSCTL_LONG(_kern, OID_AUTO, phys_carveout_size, CTLFLAG_RD | CTLFLAG_LOCKED,
+    &phys_carveout_size,
+    "size in bytes of the phys_carveout_mb boot-arg region");
+
+extern void do_cseg_wedge_thread(void);
+extern void do_cseg_unwedge_thread(void);
+
+static int
+cseg_wedge_thread SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+
+	int error, val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || val == 0) {
+		return error;
+	}
+
+	do_cseg_wedge_thread();
+	return 0;
+}
+SYSCTL_PROC(_kern, OID_AUTO, cseg_wedge_thread, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_MASKED, 0, 0, cseg_wedge_thread, "I", "wedge c_seg thread");
+
+static int
+cseg_unwedge_thread SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+
+	int error, val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || val == 0) {
+		return error;
+	}
+
+	do_cseg_unwedge_thread();
+	return 0;
+}
+SYSCTL_PROC(_kern, OID_AUTO, cseg_unwedge_thread, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_MASKED, 0, 0, cseg_unwedge_thread, "I", "unstuck c_seg thread");
 
 static atomic_int wedge_thread_should_wake = 0;
 
@@ -4435,13 +5061,6 @@ unwedge_thread SYSCTL_HANDLER_ARGS
 }
 
 SYSCTL_PROC(_kern, OID_AUTO, unwedge_thread, CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, 0, 0, unwedge_thread, "I", "unwedge the thread wedged by kern.wedge_thread");
-
-SYSCTL_LONG(_kern, OID_AUTO, phys_carveout_pa, CTLFLAG_RD | CTLFLAG_LOCKED,
-    &phys_carveout_pa,
-    "base physical address of the phys_carveout_mb boot-arg region");
-SYSCTL_LONG(_kern, OID_AUTO, phys_carveout_size, CTLFLAG_RD | CTLFLAG_LOCKED,
-    &phys_carveout_size,
-    "size in bytes of the phys_carveout_mb boot-arg region");
 
 static int
 wedge_thread SYSCTL_HANDLER_ARGS
@@ -4465,23 +5084,24 @@ wedge_thread SYSCTL_HANDLER_ARGS
 	return 0;
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, wedge_thread, CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, 0, 0, wedge_thread, "I", "wedge this thread so it cannot be cleaned up");
-
-extern unsigned long
-total_corpses_count(void);
-
-static int
-sysctl_total_corpses_count SYSCTL_HANDLER_ARGS;
+SYSCTL_PROC(_kern, OID_AUTO, wedge_thread,
+    CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, 0, 0, wedge_thread, "I",
+    "wedge this thread so it cannot be cleaned up");
 
 static int
 sysctl_total_corpses_count SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg1, arg2)
-	int corpse_count = total_corpses_count();
-	return sysctl_io_opaque(req, &corpse_count, sizeof(int), NULL);
+	extern unsigned long total_corpses_count(void);
+
+	unsigned long corpse_count_long = total_corpses_count();
+	unsigned int corpse_count = (unsigned int)MIN(corpse_count_long, UINT_MAX);
+	return sysctl_io_opaque(req, &corpse_count, sizeof(corpse_count), NULL);
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, total_corpses_count, CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, 0, 0, sysctl_total_corpses_count, "I", "total corpses on the system");
+SYSCTL_PROC(_kern, OID_AUTO, total_corpses_count,
+    CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, 0, 0,
+    sysctl_total_corpses_count, "I", "total corpses on the system");
 
 static int
 sysctl_turnstile_test_prim_lock SYSCTL_HANDLER_ARGS;
@@ -4600,7 +5220,7 @@ sysctl_get_test_mtx_stats SYSCTL_HANDLER_ARGS
 	int size, buffer_size, error;
 
 	buffer_size = 1000;
-	buffer = kalloc(buffer_size);
+	buffer = kheap_alloc(KHEAP_TEMP, buffer_size, Z_WAITOK);
 	if (!buffer) {
 		panic("Impossible to allocate memory for %s\n", __func__);
 	}
@@ -4611,7 +5231,7 @@ sysctl_get_test_mtx_stats SYSCTL_HANDLER_ARGS
 
 	error = sysctl_io_string(req, buffer, size, 0, NULL);
 
-	kfree(buffer, buffer_size);
+	kheap_free(KHEAP_TEMP, buffer, buffer_size);
 
 	return error;
 }
@@ -4658,7 +5278,7 @@ sysctl_test_mtx_uncontended SYSCTL_HANDLER_ARGS
 
 	buffer_size = 2000;
 	offset = 0;
-	buffer = kalloc(buffer_size);
+	buffer = kheap_alloc(KHEAP_TEMP, buffer_size, Z_WAITOK);
 	if (!buffer) {
 		panic("Impossible to allocate memory for %s\n", __func__);
 	}
@@ -4674,7 +5294,7 @@ sysctl_test_mtx_uncontended SYSCTL_HANDLER_ARGS
 
 	error = SYSCTL_OUT(req, buffer, offset);
 
-	kfree(buffer, buffer_size);
+	kheap_free(KHEAP_TEMP, buffer, buffer_size);
 	return error;
 }
 
@@ -4722,11 +5342,10 @@ sysctl_test_mtx_contended SYSCTL_HANDLER_ARGS
 
 	buffer_size = 2000;
 	offset = 0;
-	buffer = kalloc(buffer_size);
+	buffer = kheap_alloc(KHEAP_TEMP, buffer_size, Z_WAITOK | Z_ZERO);
 	if (!buffer) {
 		panic("Impossible to allocate memory for %s\n", __func__);
 	}
-	memset(buffer, 0, buffer_size);
 
 	printf("%s starting contended mutex test with %d iterations FULL_CONTENDED\n", __func__, iter);
 
@@ -4751,27 +5370,66 @@ sysctl_test_mtx_contended SYSCTL_HANDLER_ARGS
 	error = SYSCTL_OUT(req, buffer, offset);
 
 	printf("\n%s\n", buffer);
-	kfree(buffer, buffer_size);
+	kheap_free(KHEAP_TEMP, buffer, buffer_size);
 
 	return error;
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, erase_all_test_mtx_stats, CTLFLAG_WR | CTLFLAG_MASKED | CTLFLAG_ANYBODY | CTLFLAG_KERN | CTLFLAG_LOCKED,
+SYSCTL_PROC(_kern, OID_AUTO, erase_all_test_mtx_stats,
+    CTLFLAG_WR | CTLFLAG_MASKED | CTLFLAG_ANYBODY | CTLFLAG_KERN | CTLFLAG_LOCKED,
     0, 0, sysctl_erase_all_test_mtx_stats, "I", "erase test_mtx statistics");
 
-SYSCTL_PROC(_kern, OID_AUTO, get_test_mtx_stats, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_KERN | CTLFLAG_LOCKED,
+SYSCTL_PROC(_kern, OID_AUTO, get_test_mtx_stats,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_KERN | CTLFLAG_LOCKED,
     0, 0, sysctl_get_test_mtx_stats, "A", "get test_mtx statistics");
 
-SYSCTL_PROC(_kern, OID_AUTO, test_mtx_contended, CTLTYPE_STRING | CTLFLAG_MASKED | CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
+SYSCTL_PROC(_kern, OID_AUTO, test_mtx_contended,
+    CTLTYPE_STRING | CTLFLAG_MASKED | CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
     0, 0, sysctl_test_mtx_contended, "A", "get statistics for contended mtx test");
 
-SYSCTL_PROC(_kern, OID_AUTO, test_mtx_uncontended, CTLTYPE_STRING | CTLFLAG_MASKED | CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
+SYSCTL_PROC(_kern, OID_AUTO, test_mtx_uncontended,
+    CTLTYPE_STRING | CTLFLAG_MASKED | CTLFLAG_RW | CTLFLAG_KERN | CTLFLAG_LOCKED,
     0, 0, sysctl_test_mtx_uncontended, "A", "get statistics for uncontended mtx test");
 
 extern uint64_t MutexSpin;
 
-SYSCTL_QUAD(_kern, OID_AUTO, mutex_spin_us, CTLFLAG_RW, &MutexSpin,
-    "Spin time for acquiring a kernel mutex");
+SYSCTL_QUAD(_kern, OID_AUTO, mutex_spin_abs, CTLFLAG_RW, &MutexSpin,
+    "Spin time in abs for acquiring a kernel mutex");
+
+extern uint64_t low_MutexSpin;
+extern int64_t high_MutexSpin;
+extern unsigned int real_ncpus;
+
+SYSCTL_QUAD(_kern, OID_AUTO, low_mutex_spin_abs, CTLFLAG_RW, &low_MutexSpin,
+    "Low spin threshold in abs for acquiring a kernel mutex");
+
+static int
+sysctl_high_mutex_spin_ns SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	int error;
+	int64_t val = 0;
+	int64_t res;
+
+	/* Check if the user is writing to high_MutexSpin, or just reading it */
+	if (req->newptr) {
+		error = SYSCTL_IN(req, &val, sizeof(val));
+		if (error || (val < 0 && val != -1)) {
+			return error;
+		}
+		high_MutexSpin = val;
+	}
+
+	if (high_MutexSpin >= 0) {
+		res = high_MutexSpin;
+	} else {
+		res = low_MutexSpin * real_ncpus;
+	}
+	return SYSCTL_OUT(req, &res, sizeof(res));
+}
+SYSCTL_PROC(_kern, OID_AUTO, high_mutex_spin_abs, CTLFLAG_RW | CTLTYPE_QUAD, 0, 0, sysctl_high_mutex_spin_ns, "I",
+    "High spin threshold in abs for acquiring a kernel mutex");
+
 
 #if defined (__x86_64__)
 
@@ -4846,7 +5504,8 @@ sysctl_test_panic_with_thread SYSCTL_HANDLER_ARGS
 	return EINVAL;
 }
 
-SYSCTL_PROC(_kern, OID_AUTO, test_panic_with_thread, CTLFLAG_MASKED | CTLFLAG_KERN | CTLFLAG_LOCKED | CTLFLAG_WR | CTLTYPE_STRING,
+SYSCTL_PROC(_kern, OID_AUTO, test_panic_with_thread,
+    CTLFLAG_MASKED | CTLFLAG_KERN | CTLFLAG_LOCKED | CTLFLAG_WR | CTLTYPE_STRING,
     0, 0, sysctl_test_panic_with_thread, "A", "test panic flow for backtracing a different thread");
 #endif /* defined (__x86_64__) */
 
@@ -4866,26 +5525,10 @@ sysctl_get_owned_vmobjects SYSCTL_HANDLER_ARGS
 	int error;
 	mach_port_name_t task_port_name;
 	task_t task;
-	int buffer_size = (req->oldptr != USER_ADDR_NULL) ? req->oldlen : 0;
-	vmobject_list_output_t buffer;
+	size_t buffer_size = (req->oldptr != USER_ADDR_NULL) ? req->oldlen : 0;
+	vmobject_list_output_t buffer = NULL;
 	size_t output_size;
-
-	if (buffer_size) {
-		const int min_size = sizeof(vm_object_query_data_t) + sizeof(int64_t);
-
-		if (buffer_size < min_size) {
-			buffer_size = min_size;
-		}
-
-		buffer = kalloc(buffer_size);
-
-		if (!buffer) {
-			error = ENOMEM;
-			goto sysctl_get_vmobject_list_exit;
-		}
-	} else {
-		buffer = NULL;
-	}
+	size_t entries;
 
 	/* we have a "newptr" (for write) we get a task port name from the caller. */
 	error = SYSCTL_IN(req, &task_port_name, sizeof(mach_port_name_t));
@@ -4894,33 +5537,73 @@ sysctl_get_owned_vmobjects SYSCTL_HANDLER_ARGS
 		goto sysctl_get_vmobject_list_exit;
 	}
 
-	task = port_name_to_task(task_port_name);
+	task = port_name_to_task_read(task_port_name);
 	if (task == TASK_NULL) {
 		error = ESRCH;
 		goto sysctl_get_vmobject_list_exit;
 	}
 
-	/* copy the vmobjects and vmobject data out of the task */
-	if (buffer_size == 0) {
-		int64_t __size;
-		task_copy_vmobjects(task, NULL, 0, &__size);
-		output_size = (__size > 0) ? __size * sizeof(vm_object_query_data_t) + sizeof(int64_t) : 0;
+	/* get the current size */
+	task_copy_vmobjects(task, NULL, 0, &entries);
+	size_t max_size = (entries > 0) ? entries * sizeof(vm_object_query_data_t) + sizeof(*buffer) : 0;
+
+	/* if buffer_size is specified clamp to the current size then allcoate the kernel buffer */
+	if (buffer_size) {
+		if (buffer_size < sizeof(*buffer) + sizeof(vm_object_query_data_t)) {
+			error = ENOMEM;
+			goto sysctl_get_vmobject_list_deallocate_and_exit;
+		}
+
+		buffer_size = (buffer_size > max_size) ? max_size : buffer_size;
+		buffer = kheap_alloc(KHEAP_TEMP, buffer_size, Z_WAITOK);
+
+		if (!buffer) {
+			error = ENOMEM;
+			goto sysctl_get_vmobject_list_deallocate_and_exit;
+		}
 	} else {
-		task_copy_vmobjects(task, &buffer->data[0], buffer_size - sizeof(int64_t), &buffer->entries);
-		output_size = buffer->entries * sizeof(vm_object_query_data_t) + sizeof(int64_t);
+		buffer = NULL;
 	}
 
-	task_deallocate(task);
+	/* copy the vmobjects and vmobject data out of the task */
+	if (buffer_size == 0) {
+		output_size = max_size;
+	} else {
+		task_copy_vmobjects(task, &buffer->data[0], buffer_size - sizeof(*buffer), &entries);
+		buffer->entries = (uint64_t)entries;
+		output_size = entries * sizeof(vm_object_query_data_t) + sizeof(*buffer);
+	}
 
 	error = SYSCTL_OUT(req, (char*) buffer, output_size);
 
+sysctl_get_vmobject_list_deallocate_and_exit:
+	task_deallocate(task);
+
 sysctl_get_vmobject_list_exit:
 	if (buffer) {
-		kfree(buffer, buffer_size);
+		kheap_free(KHEAP_TEMP, buffer, buffer_size);
 	}
 
 	return error;
 }
 
-SYSCTL_PROC(_vm, OID_AUTO, get_owned_vmobjects, CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_WR | CTLFLAG_MASKED | CTLFLAG_KERN | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
+SYSCTL_PROC(_vm, OID_AUTO, get_owned_vmobjects,
+    CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_WR | CTLFLAG_MASKED | CTLFLAG_KERN | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
     0, 0, sysctl_get_owned_vmobjects, "A", "get owned vmobjects in task");
+
+extern uint64_t num_static_scalable_counters;
+SYSCTL_QUAD(_kern, OID_AUTO, num_static_scalable_counters, CTLFLAG_RD | CTLFLAG_LOCKED, &num_static_scalable_counters, "");
+
+uuid_string_t trial_treatment_id;
+uuid_string_t trial_experiment_id;
+int trial_deployment_id = -1;
+
+SYSCTL_STRING(_kern, OID_AUTO, trial_treatment_id, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY | CTLFLAG_EXPERIMENT, trial_treatment_id, sizeof(trial_treatment_id), "");
+SYSCTL_STRING(_kern, OID_AUTO, trial_experiment_id, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY | CTLFLAG_EXPERIMENT, trial_experiment_id, sizeof(trial_experiment_id), "");
+SYSCTL_INT(_kern, OID_AUTO, trial_deployment_id, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY | CTLFLAG_EXPERIMENT, &trial_deployment_id, 0, "");
+
+#if DEVELOPMENT || DEBUG
+/* For unit testing setting factors & limits. */
+unsigned int testing_experiment_factor;
+EXPERIMENT_FACTOR_UINT(_kern, testing_experiment_factor, &testing_experiment_factor, 5, 10, "");
+#endif /* DEVELOPMENT || DEBUG */

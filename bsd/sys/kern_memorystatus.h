@@ -102,6 +102,12 @@ enum {
 	kMemorystatusLevelCritical = 3
 };
 
+#define KEV_DIRTYSTATUS_SUBCLASS                  4
+
+enum {
+	kDirtyStatusChangeNote = 1
+};
+
 typedef struct memorystatus_priority_entry {
 	pid_t pid;
 	int32_t priority;
@@ -155,6 +161,20 @@ typedef struct memorystatus_kernel_stats {
 	char     largest_zone_name[MACH_ZONE_NAME_MAX_LEN];
 } memorystatus_kernel_stats_t;
 
+typedef enum memorystatus_freeze_skip_reason {
+	kMemorystatusFreezeSkipReasonNone = 0,
+	kMemorystatusFreezeSkipReasonExcessSharedMemory = 1,
+	kMemorystatusFreezeSkipReasonLowPrivateSharedRatio = 2,
+	kMemorystatusFreezeSkipReasonNoCompressorSpace = 3,
+	kMemorystatusFreezeSkipReasonNoSwapSpace = 4,
+	kMemorystatusFreezeSkipReasonBelowMinPages = 5,
+	kMemorystatusFreezeSkipReasonLowProbOfUse = 6,
+	kMemorystatusFreezeSkipReasonOther = 7,
+	kMemorystatusFreezeSkipReasonOutOfBudget = 8,
+	kMemorystatusFreezeSkipReasonOutOfSlots = 9,
+	kMemorystatusFreezeSkipReasonDisabled = 10,
+	_kMemorystatusFreezeSkipReasonMax
+} memorystatus_freeze_skip_reason_t;
 /*
 ** This is a variable-length struct.
 ** Allocate a buffer of the size returned by the sysctl, cast to a memorystatus_snapshot_t *
@@ -166,6 +186,7 @@ typedef struct jetsam_snapshot_entry {
 	int32_t  priority;
 	uint32_t state;
 	uint32_t fds;
+	memorystatus_freeze_skip_reason_t jse_freeze_skip_reason; /* why wasn't this process frozen? */
 	uint8_t  uuid[16];
 	uint64_t user_data;
 	uint64_t killed;
@@ -188,6 +209,7 @@ typedef struct jetsam_snapshot_entry {
 	uint64_t jse_coalition_jetsam_id;       /* we only expose coalition id for COALITION_TYPE_JETSAM */
 	struct timeval64 cpu_time;
 	uint64_t jse_thaw_count;
+	uint64_t jse_frozen_to_swap_pages;
 } memorystatus_jetsam_snapshot_entry_t;
 
 typedef struct jetsam_snapshot {
@@ -199,6 +221,20 @@ typedef struct jetsam_snapshot {
 	memorystatus_jetsam_snapshot_entry_t entries[];
 } memorystatus_jetsam_snapshot_t;
 
+typedef enum dirty_status_change_event_type {
+	kDirtyStatusChangedDirty = 0x0,
+	kDirtyStatusChangedClean = 0x1
+} dirty_status_change_event_type_t;
+
+typedef struct dirty_status_change_event {
+	pid_t    dsc_pid;
+	char     dsc_process_name[(2 * MAXCOMLEN) + 1];
+	dirty_status_change_event_type_t dsc_event_type;
+	uint64_t dsc_time;
+	uint64_t dsc_pages;
+	int32_t dsc_priority;
+} dirty_status_change_event_t;
+
 /* TODO - deprecate; see <rdar://problem/12969599> */
 #define kMaxSnapshotEntries 192
 
@@ -207,6 +243,11 @@ typedef struct jetsam_snapshot {
  */
 extern memorystatus_jetsam_snapshot_t *memorystatus_jetsam_snapshot;
 extern memorystatus_jetsam_snapshot_t *memorystatus_jetsam_snapshot_copy;
+#if CONFIG_FREEZE
+extern memorystatus_jetsam_snapshot_t *memorystatus_jetsam_snapshot_freezer;
+extern unsigned int memorystatus_jetsam_snapshot_freezer_max;
+extern unsigned int memorystatus_jetsam_snapshot_freezer_size;
+#endif /* CONFIG_FREEZE */
 extern unsigned int memorystatus_jetsam_snapshot_count;
 extern unsigned int memorystatus_jetsam_snapshot_copy_count;
 extern unsigned int memorystatus_jetsam_snapshot_max;
@@ -316,15 +357,17 @@ int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void *bu
 	                                                    *  if they would prefer being jetsam'ed in the idle band to being frozen in an elevated band. */
 #define MEMORYSTATUS_CMD_GET_PROCESS_IS_FREEZABLE     19   /* Return the freezable state of a process. */
 
-#if CONFIG_FREEZE
-#if DEVELOPMENT || DEBUG
 #define MEMORYSTATUS_CMD_FREEZER_CONTROL              20
-#endif /* DEVELOPMENT || DEBUG */
-#endif /* CONFIG_FREEZE */
 
 #define MEMORYSTATUS_CMD_GET_AGGRESSIVE_JETSAM_LENIENT_MODE      21   /* Query if the lenient mode for aggressive jetsam is enabled. */
 
 #define MEMORYSTATUS_CMD_INCREASE_JETSAM_TASK_LIMIT   22   /* Used by DYLD to increase the jetsam active and inactive limits, when using roots */
+
+#if PRIVATE
+#define MEMORYSTATUS_CMD_SET_TESTING_PID 23 /* Used by unit tests in the development kernel only. */
+#endif /* PRIVATE */
+
+#define MEMORYSTATUS_CMD_GET_PROCESS_IS_FROZEN 24 /* Check if the process is frozen. */
 
 /* Commands that act on a group of processes */
 #define MEMORYSTATUS_CMD_GRP_SET_PROPERTIES           100
@@ -358,6 +401,12 @@ typedef struct memorystatus_jetsam_panic_options {
 #define MEMORYSTATUS_FLAGS_GRP_SET_PRIORITY             0x8     /* Set jetsam priorities for a group of pids */
 #define MEMORYSTATUS_FLAGS_GRP_SET_PROBABILITY          0x10    /* Set probability of use for a group of processes */
 
+#if PRIVATE
+#define MEMORYSTATUS_FLAGS_SET_TESTING_PID     0x20 /* Only used by xnu unit tests. */
+#define MEMORYSTATUS_FLAGS_UNSET_TESTING_PID   0x40 /* Only used by xnu unit tests. */
+#endif /* PRIVATE */
+
+#define MEMORYSTATUS_FLAGS_SNAPSHOT_FREEZER             0x80    /* A snapshot buffer containing app kills since last consumption */
 /*
  * For use with memorystatus_control:
  * MEMORYSTATUS_CMD_GET_JETSAM_SNAPSHOT
@@ -471,7 +520,7 @@ typedef struct memorystatus_memlimit_properties2 {
 #define P_MEMSTAT_USE_ELEVATED_INACTIVE_BAND      0x00010000   /* if set, the process will go into this band & stay there when in the background instead
 	                                                        *  of the aging bands and/or the IDLE band. */
 #define P_MEMSTAT_PRIORITY_ASSERTION              0x00020000   /* jetsam priority is being driven by an assertion */
-
+#define P_MEMSTAT_FREEZE_CONSIDERED               0x00040000   /* This process has been considered for the freezer. */
 
 /*
  * p_memstat_relaunch_flags holds
@@ -515,7 +564,7 @@ extern memorystatus_internal_probabilities_t *memorystatus_global_probabilities_
 extern size_t memorystatus_global_probabilities_size;
 
 
-extern void memorystatus_init(void) __attribute__((section("__TEXT, initcode")));
+extern void memorystatus_init(void);
 
 extern void memorystatus_init_at_boot_snapshot(void);
 
@@ -563,6 +612,7 @@ void memorystatus_proc_flags_unsafe(void * v, boolean_t *is_dirty, boolean_t *is
 #if __arm64__
 void memorystatus_act_on_legacy_footprint_entitlement(proc_t p, boolean_t footprint_increase);
 void memorystatus_act_on_ios13extended_footprint_entitlement(proc_t p);
+void memorystatus_act_on_entitled_task_limit(proc_t p);
 #endif /* __arm64__ */
 
 #endif /* CONFIG_MEMORYSTATUS */

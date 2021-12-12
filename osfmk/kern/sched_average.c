@@ -71,6 +71,7 @@
 #if CONFIG_TELEMETRY
 #include <kern/telemetry.h>
 #endif
+#include <kern/zalloc_internal.h>
 
 #include <sys/kdebug.h>
 
@@ -112,6 +113,7 @@ static struct sched_average {
 	{ compute_stack_target, NULL, 5, 1 },
 	{ compute_pageout_gc_throttle, NULL, 1, 0 },
 	{ compute_pmap_gc_throttle, NULL, 60, 0 },
+	{ compute_zone_working_set_size, NULL, ZONE_WSS_UPDATE_PERIOD, 0 },
 #if CONFIG_TELEMETRY
 	{ compute_telemetry, NULL, 1, 0 },
 #endif
@@ -292,7 +294,13 @@ compute_averages(uint64_t stdelta)
 	/* Update the global pri_shifts based on the latest values */
 	for (uint32_t i = TH_BUCKET_SHARE_FG; i <= TH_BUCKET_SHARE_BG; i++) {
 		uint32_t bucket_load = SCHED_LOAD_EWMA_UNSCALE(sched_load[i]);
-		sched_pri_shifts[i] = sched_fixed_shift - sched_load_shifts[bucket_load];
+		uint32_t shift = sched_fixed_shift - sched_load_shifts[bucket_load];
+
+		if (shift > SCHED_PRI_SHIFT_MAX) {
+			sched_pri_shifts[i] = INT8_MAX;
+		} else {
+			sched_pri_shifts[i] = shift;
+		}
 	}
 
 	/*

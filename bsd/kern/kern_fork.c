@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -126,8 +126,6 @@ static void (*dtrace_proc_waitfor_hook)(proc_t) = NULL;
 
 #include <os/log.h>
 
-#include <os/log.h>
-
 #if CONFIG_MACF
 #include <security/mac_framework.h>
 #include <security/mac_mach_internal.h>
@@ -168,6 +166,20 @@ thread_t fork_create_child(task_t parent_task,
     int in_exec);
 void proc_vfork_begin(proc_t parent_proc);
 void proc_vfork_end(proc_t parent_proc);
+
+static LCK_GRP_DECLARE(rethrottle_lock_grp, "rethrottle");
+static ZONE_DECLARE(uthread_zone, "uthreads",
+    sizeof(struct uthread), ZC_ZFREE_CLEARMEM);
+
+SECURITY_READ_ONLY_LATE(zone_t) proc_zone;
+ZONE_INIT(&proc_zone, "proc", sizeof(struct proc), ZC_ZFREE_CLEARMEM,
+    ZONE_ID_PROC, NULL);
+
+ZONE_DECLARE(proc_stats_zone, "pstats",
+    sizeof(struct pstats), ZC_NOENCRYPT | ZC_ZFREE_CLEARMEM);
+
+ZONE_DECLARE(proc_sigacts_zone, "sigacts",
+    sizeof(struct sigacts), ZC_NOENCRYPT);
 
 #define DOFORK  0x1     /* fork() system call */
 #define DOVFORK 0x2     /* vfork() system call */
@@ -382,9 +394,10 @@ fork1(proc_t parent_proc, thread_t *child_threadp, int kind, coalition_t *coalit
 	proc_t child_proc = NULL;       /* set in switch, but compiler... */
 	thread_t child_thread = NULL;
 	uid_t uid;
-	int count;
+	size_t count;
 	int err = 0;
 	int spawn = 0;
+	rlim_t rlimit_nproc_cur;
 
 	/*
 	 * Although process entries are dynamically created, we still keep
@@ -396,7 +409,7 @@ fork1(proc_t parent_proc, thread_t *child_threadp, int kind, coalition_t *coalit
 	uid = kauth_getruid();
 	proc_list_lock();
 	if ((nprocs >= maxproc - 1 && uid != 0) || nprocs >= maxproc) {
-#if (DEVELOPMENT || DEBUG) && CONFIG_EMBEDDED
+#if (DEVELOPMENT || DEBUG) && !defined(XNU_TARGET_OS_OSX)
 		/*
 		 * On the development kernel, panic so that the fact that we hit
 		 * the process limit is obvious, as this may very well wedge the
@@ -417,9 +430,10 @@ fork1(proc_t parent_proc, thread_t *child_threadp, int kind, coalition_t *coalit
 	 * (locking protection is provided by list lock held in chgproccnt)
 	 */
 	count = chgproccnt(uid, 1);
+	rlimit_nproc_cur = proc_limitgetcur(parent_proc, RLIMIT_NPROC, TRUE);
 	if (uid != 0 &&
-	    (rlim_t)count > parent_proc->p_rlimit[RLIMIT_NPROC].rlim_cur) {
-#if (DEVELOPMENT || DEBUG) && CONFIG_EMBEDDED
+	    (rlim_t)count > rlimit_nproc_cur) {
+#if (DEVELOPMENT || DEBUG) && !defined(XNU_TARGET_OS_OSX)
 		/*
 		 * On the development kernel, panic so that the fact that we hit
 		 * the per user process limit is obvious.  This may be less dire
@@ -575,7 +589,7 @@ fork1(proc_t parent_proc, thread_t *child_threadp, int kind, coalition_t *coalit
 		 */
 		spawn = 1;
 
-	/* FALLSTHROUGH */
+		OS_FALLTHROUGH;
 
 	case PROC_CREATE_FORK:
 		/*
@@ -827,12 +841,13 @@ fork_create_child(task_t parent_task,
 	}
 
 	/*
-	 * Create a new thread for the child process
+	 * Create a new thread for the child process. Pin it and make it immovable.
 	 * The new thread is waiting on the event triggered by 'task_clear_return_wait'
 	 */
 	result = thread_create_waiting(child_task,
 	    (thread_continue_t)task_wait_to_return,
 	    task_get_return_wait_event(child_task),
+	    TH_CREATE_WAITING_OPTION_PINNED | TH_CREATE_WAITING_OPTION_IMMOVABLE,
 	    &child_thread);
 
 	if (result != KERN_SUCCESS) {
@@ -1080,8 +1095,7 @@ forkproc_free(proc_t p)
 	 * need to free it.  If it's a shared copy, we need to drop our
 	 * reference on it.
 	 */
-	proc_limitdrop(p, 0);
-	p->p_limit = NULL;
+	proc_limitdrop(p);
 
 #if SYSV_SHM
 	/* Need to drop references to the shared memory segment(s), if any */
@@ -1111,16 +1125,19 @@ forkproc_free(proc_t p)
 	/* Update the audit session proc count */
 	AUDIT_SESSION_PROCEXIT(p);
 
-	lck_mtx_destroy(&p->p_mlock, proc_mlock_grp);
-	lck_mtx_destroy(&p->p_fdmlock, proc_fdmlock_grp);
-	lck_mtx_destroy(&p->p_ucred_mlock, proc_ucred_mlock_grp);
+	lck_mtx_destroy(&p->p_mlock, &proc_mlock_grp);
+	lck_mtx_destroy(&p->p_fdmlock, &proc_fdmlock_grp);
+	lck_mtx_destroy(&p->p_ucred_mlock, &proc_ucred_mlock_grp);
 #if CONFIG_DTRACE
-	lck_mtx_destroy(&p->p_dtrace_sprlock, proc_lck_grp);
+	lck_mtx_destroy(&p->p_dtrace_sprlock, &proc_lck_grp);
 #endif
-	lck_spin_destroy(&p->p_slock, proc_slock_grp);
+	lck_spin_destroy(&p->p_slock, &proc_slock_grp);
+	lck_rw_destroy(&p->p_dirs_lock, &proc_dirslock_grp);
 
 	/* Release the credential reference */
-	kauth_cred_unref(&p->p_ucred);
+	kauth_cred_t tmp_ucred = p->p_ucred;
+	kauth_cred_unref(&tmp_ucred);
+	p->p_ucred = tmp_ucred;
 
 	proc_list_lock();
 	/* Decrement the count of processes in the system */
@@ -1134,13 +1151,16 @@ forkproc_free(proc_t p)
 	thread_call_free(p->p_rcall);
 
 	/* Free allocated memory */
-	FREE_ZONE(p->p_sigacts, sizeof *p->p_sigacts, M_SIGACTS);
+	zfree(proc_sigacts_zone, p->p_sigacts);
 	p->p_sigacts = NULL;
-	FREE_ZONE(p->p_stats, sizeof *p->p_stats, M_PSTATS);
+	zfree(proc_stats_zone, p->p_stats);
 	p->p_stats = NULL;
+	if (p->p_subsystem_root_path) {
+		zfree(ZV_NAMEI, p->p_subsystem_root_path);
+	}
 
 	proc_checkdeadrefs(p);
-	FREE_ZONE(p, sizeof *p, M_PROC);
+	zfree(proc_zone, p);
 }
 
 
@@ -1168,42 +1188,18 @@ forkproc(proc_t parent_proc)
 	int error = 0;
 	struct session *sessp;
 	uthread_t parent_uthread = (uthread_t)get_bsdthread_info(current_thread());
+	rlim_t rlimit_cpu_cur;
 
-	MALLOC_ZONE(child_proc, proc_t, sizeof *child_proc, M_PROC, M_WAITOK);
-	if (child_proc == NULL) {
-		printf("forkproc: M_PROC zone exhausted\n");
-		goto bad;
-	}
-	/* zero it out as we need to insert in hash */
-	bzero(child_proc, sizeof *child_proc);
-
-	MALLOC_ZONE(child_proc->p_stats, struct pstats *,
-	    sizeof *child_proc->p_stats, M_PSTATS, M_WAITOK);
-	if (child_proc->p_stats == NULL) {
-		printf("forkproc: M_SUBPROC zone exhausted (p_stats)\n");
-		FREE_ZONE(child_proc, sizeof *child_proc, M_PROC);
-		child_proc = NULL;
-		goto bad;
-	}
-	MALLOC_ZONE(child_proc->p_sigacts, struct sigacts *,
-	    sizeof *child_proc->p_sigacts, M_SIGACTS, M_WAITOK);
-	if (child_proc->p_sigacts == NULL) {
-		printf("forkproc: M_SUBPROC zone exhausted (p_sigacts)\n");
-		FREE_ZONE(child_proc->p_stats, sizeof *child_proc->p_stats, M_PSTATS);
-		child_proc->p_stats = NULL;
-		FREE_ZONE(child_proc, sizeof *child_proc, M_PROC);
-		child_proc = NULL;
-		goto bad;
-	}
+	child_proc = zalloc_flags(proc_zone, Z_WAITOK | Z_ZERO);
+	child_proc->p_stats = zalloc_flags(proc_stats_zone, Z_WAITOK | Z_ZERO);
+	child_proc->p_sigacts = zalloc_flags(proc_sigacts_zone, Z_WAITOK);
 
 	/* allocate a callout for use by interval timers */
 	child_proc->p_rcall = thread_call_allocate((thread_call_func_t)realitexpire, child_proc);
 	if (child_proc->p_rcall == NULL) {
-		FREE_ZONE(child_proc->p_sigacts, sizeof *child_proc->p_sigacts, M_SIGACTS);
-		child_proc->p_sigacts = NULL;
-		FREE_ZONE(child_proc->p_stats, sizeof *child_proc->p_stats, M_PSTATS);
-		child_proc->p_stats = NULL;
-		FREE_ZONE(child_proc, sizeof *child_proc, M_PROC);
+		zfree(proc_sigacts_zone, child_proc->p_sigacts);
+		zfree(proc_stats_zone, child_proc->p_stats);
+		zfree(proc_zone, child_proc);
 		child_proc = NULL;
 		goto bad;
 	}
@@ -1282,17 +1278,33 @@ retry:
 	__nochk_bcopy(&parent_proc->p_startcopy, &child_proc->p_startcopy,
 	    (unsigned) ((caddr_t)&child_proc->p_endcopy - (caddr_t)&child_proc->p_startcopy));
 
+#if defined(HAS_APPLE_PAC)
+	/*
+	 * The p_textvp and p_pgrp pointers are address-diversified by PAC, so we must
+	 * resign them here for the new proc
+	 */
+	if (parent_proc->p_textvp) {
+		child_proc->p_textvp = parent_proc->p_textvp;
+	}
+
+	if (parent_proc->p_pgrp) {
+		child_proc->p_pgrp = parent_proc->p_pgrp;
+	}
+#endif /* defined(HAS_APPLE_PAC) */
+
+	child_proc->p_sessionid = parent_proc->p_sessionid;
+
 	/*
 	 * Some flags are inherited from the parent.
 	 * Duplicate sub-structures as needed.
 	 * Increase reference counts on shared objects.
 	 * The p_stats and p_sigacts substructs are set in vm_fork.
 	 */
-#if !CONFIG_EMBEDDED
-	child_proc->p_flag = (parent_proc->p_flag & (P_LP64 | P_DISABLE_ASLR | P_DELAYIDLESLEEP | P_SUGID));
-#else /*  !CONFIG_EMBEDDED */
-	child_proc->p_flag = (parent_proc->p_flag & (P_LP64 | P_DISABLE_ASLR | P_SUGID));
-#endif /* !CONFIG_EMBEDDED */
+#if CONFIG_DELAY_IDLE_SLEEP
+	child_proc->p_flag = (parent_proc->p_flag & (P_LP64 | P_TRANSLATED | P_DISABLE_ASLR | P_DELAYIDLESLEEP | P_SUGID | P_AFFINITY));
+#else /* CONFIG_DELAY_IDLE_SLEEP */
+	child_proc->p_flag = (parent_proc->p_flag & (P_LP64 | P_TRANSLATED | P_DISABLE_ASLR | P_SUGID));
+#endif /* CONFIG_DELAY_IDLE_SLEEP */
 
 	child_proc->p_vfs_iopolicy = (parent_proc->p_vfs_iopolicy & (P_VFS_IOPOLICY_VALID_MASK));
 
@@ -1308,13 +1320,14 @@ retry:
 	/* update audit session proc count */
 	AUDIT_SESSION_PROCNEW(child_proc);
 
-	lck_mtx_init(&child_proc->p_mlock, proc_mlock_grp, proc_lck_attr);
-	lck_mtx_init(&child_proc->p_fdmlock, proc_fdmlock_grp, proc_lck_attr);
-	lck_mtx_init(&child_proc->p_ucred_mlock, proc_ucred_mlock_grp, proc_lck_attr);
+	lck_mtx_init(&child_proc->p_mlock, &proc_mlock_grp, &proc_lck_attr);
+	lck_mtx_init(&child_proc->p_fdmlock, &proc_fdmlock_grp, &proc_lck_attr);
+	lck_mtx_init(&child_proc->p_ucred_mlock, &proc_ucred_mlock_grp, &proc_lck_attr);
 #if CONFIG_DTRACE
-	lck_mtx_init(&child_proc->p_dtrace_sprlock, proc_lck_grp, proc_lck_attr);
+	lck_mtx_init(&child_proc->p_dtrace_sprlock, &proc_lck_grp, &proc_lck_attr);
 #endif
-	lck_spin_init(&child_proc->p_slock, proc_slock_grp, proc_lck_attr);
+	lck_spin_init(&child_proc->p_slock, &proc_slock_grp, &proc_lck_attr);
+	lck_rw_init(&child_proc->p_dirs_lock, &proc_dirslock_grp, &proc_lck_attr);
 
 	klist_init(&child_proc->p_klist);
 
@@ -1347,19 +1360,19 @@ retry:
 		(void)shmfork(parent_proc, child_proc);
 	}
 #endif
+
 	/*
-	 * inherit the limit structure to child
+	 * Child inherits the parent's plimit
 	 */
 	proc_limitfork(parent_proc, child_proc);
 
-	if (child_proc->p_limit->pl_rlimit[RLIMIT_CPU].rlim_cur != RLIM_INFINITY) {
-		uint64_t rlim_cur = child_proc->p_limit->pl_rlimit[RLIMIT_CPU].rlim_cur;
-		child_proc->p_rlim_cpu.tv_sec = (rlim_cur > __INT_MAX__) ? __INT_MAX__ : rlim_cur;
+	rlimit_cpu_cur = proc_limitgetcur(child_proc, RLIMIT_CPU, TRUE);
+	if (rlimit_cpu_cur != RLIM_INFINITY) {
+		child_proc->p_rlim_cpu.tv_sec = (rlimit_cpu_cur > __INT_MAX__) ? __INT_MAX__ : rlimit_cpu_cur;
 	}
 
 	/* Intialize new process stats, including start time */
 	/* <rdar://6640543> non-zeroed portion contains garbage AFAICT */
-	bzero(child_proc->p_stats, sizeof(*child_proc->p_stats));
 	microtime_with_abstime(&child_proc->p_start, &child_proc->p_stats->ps_start);
 
 	if (parent_proc->p_sigacts != NULL) {
@@ -1450,6 +1463,14 @@ retry:
 	child_proc->p_memstat_idledeadline = 0;
 #endif /* CONFIG_MEMORYSTATUS */
 
+	if (parent_proc->p_subsystem_root_path) {
+		size_t parent_length = strlen(parent_proc->p_subsystem_root_path) + 1;
+		assert(parent_length <= MAXPATHLEN);
+		child_proc->p_subsystem_root_path = zalloc_flags(ZV_NAMEI,
+		    Z_WAITOK | Z_ZERO);
+		memcpy(child_proc->p_subsystem_root_path, parent_proc->p_subsystem_root_path, parent_length);
+	}
+
 bad:
 	return child_proc;
 }
@@ -1457,7 +1478,7 @@ bad:
 void
 proc_lock(proc_t p)
 {
-	LCK_MTX_ASSERT(proc_list_mlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, LCK_MTX_ASSERT_NOTOWNED);
 	lck_mtx_lock(&p->p_mlock);
 }
 
@@ -1470,7 +1491,7 @@ proc_unlock(proc_t p)
 void
 proc_spinlock(proc_t p)
 {
-	lck_spin_lock_grp(&p->p_slock, proc_slock_grp);
+	lck_spin_lock_grp(&p->p_slock, &proc_slock_grp);
 }
 
 void
@@ -1482,13 +1503,13 @@ proc_spinunlock(proc_t p)
 void
 proc_list_lock(void)
 {
-	lck_mtx_lock(proc_list_mlock);
+	lck_mtx_lock(&proc_list_mlock);
 }
 
 void
 proc_list_unlock(void)
 {
-	lck_mtx_unlock(proc_list_mlock);
+	lck_mtx_unlock(&proc_list_mlock);
 }
 
 void
@@ -1503,29 +1524,6 @@ proc_ucred_unlock(proc_t p)
 	lck_mtx_unlock(&p->p_ucred_mlock);
 }
 
-#include <kern/zalloc.h>
-
-struct zone *uthread_zone = NULL;
-
-static lck_grp_t        *rethrottle_lock_grp;
-static lck_attr_t       *rethrottle_lock_attr;
-static lck_grp_attr_t   *rethrottle_lock_grp_attr;
-
-static void
-uthread_zone_init(void)
-{
-	assert(uthread_zone == NULL);
-
-	rethrottle_lock_grp_attr = lck_grp_attr_alloc_init();
-	rethrottle_lock_grp = lck_grp_alloc_init("rethrottle", rethrottle_lock_grp_attr);
-	rethrottle_lock_attr = lck_attr_alloc_init();
-
-	uthread_zone = zinit(sizeof(struct uthread),
-	    thread_max * sizeof(struct uthread),
-	    THREAD_CHUNK * sizeof(struct uthread),
-	    "uthreads");
-}
-
 void *
 uthread_alloc(task_t task, thread_t thread, int noinherit)
 {
@@ -1534,19 +1532,14 @@ uthread_alloc(task_t task, thread_t thread, int noinherit)
 	uthread_t uth_parent;
 	void *ut;
 
-	if (uthread_zone == NULL) {
-		uthread_zone_init();
-	}
-
-	ut = (void *)zalloc(uthread_zone);
-	bzero(ut, sizeof(struct uthread));
+	ut = zalloc_flags(uthread_zone, Z_WAITOK | Z_ZERO);
 
 	p = (proc_t) get_bsdtask_info(task);
 	uth = (uthread_t)ut;
 	uth->uu_thread = thread;
 
-	lck_spin_init(&uth->uu_rethrottle_lock, rethrottle_lock_grp,
-	    rethrottle_lock_attr);
+	lck_spin_init(&uth->uu_rethrottle_lock, &rethrottle_lock_grp,
+	    LCK_ATTR_NULL);
 
 	/*
 	 * Thread inherits credential from the creating thread, if both
@@ -1646,7 +1639,6 @@ uthread_cleanup_name(void *uthread)
 void
 uthread_cleanup(task_t task, void *uthread, void * bsd_info)
 {
-	struct _select *sel;
 	uthread_t uth = (uthread_t)uthread;
 	proc_t p = (proc_t)bsd_info;
 
@@ -1681,12 +1673,8 @@ uthread_cleanup(task_t task, void *uthread, void * bsd_info)
 		kqueue_threadreq_unbind(p, uth->uu_kqr_bound);
 	}
 
-	sel = &uth->uu_select;
-	/* cleanup the select bit space */
-	if (sel->nbytes) {
-		FREE(sel->ibits, M_TEMP);
-		FREE(sel->obits, M_TEMP);
-		sel->nbytes = 0;
+	if (uth->uu_select.nbytes) {
+		select_cleanup_uthread(&uth->uu_select);
 	}
 
 	if (uth->uu_cdir) {
@@ -1698,7 +1686,7 @@ uthread_cleanup(task_t task, void *uthread, void * bsd_info)
 		if (waitq_set_is_valid(uth->uu_wqset)) {
 			waitq_set_deinit(uth->uu_wqset);
 		}
-		FREE(uth->uu_wqset, M_SELECT);
+		kheap_free(KHEAP_DEFAULT, uth->uu_wqset, uth->uu_wqstate_sz);
 		uth->uu_wqset = NULL;
 		uth->uu_wqstate_sz = 0;
 	}
@@ -1758,7 +1746,7 @@ uthread_zone_free(void *uthread)
 		uth->t_tombstone = NULL;
 	}
 
-	lck_spin_destroy(&uth->uu_rethrottle_lock, rethrottle_lock_grp);
+	lck_spin_destroy(&uth->uu_rethrottle_lock, &rethrottle_lock_grp);
 
 	uthread_cleanup_name(uthread);
 	/* and free the uthread itself */

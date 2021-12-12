@@ -58,6 +58,10 @@
 //      ARM_THREAD_STATE_LAST    8 /* legacy */
 #define ARM_THREAD_STATE32       9
 
+#ifdef XNU_KERNEL_PRIVATE
+#define X86_THREAD_STATE_NONE    13 /* i386/thread_status.h THREAD_STATE_NONE */
+#endif /* XNU_KERNEL_PRIVATE */
+
 /* API */
 #define ARM_DEBUG_STATE32        14
 #define ARM_DEBUG_STATE64        15
@@ -143,6 +147,9 @@ typedef _STRUCT_ARM_THREAD_STATE64 arm_thread_state64_t;
 /* Set fp field of arm_thread_state64_t to a data pointer value */
 #define arm_thread_state64_set_fp(ts, ptr) \
 	        __darwin_arm_thread_state64_set_fp(ts, ptr)
+/* Strip ptr auth bits from pc, lr, sp and fp field of arm_thread_state64_t */
+#define arm_thread_state64_ptrauth_strip(ts) \
+	        __darwin_arm_thread_state64_ptrauth_strip(ts)
 
 #endif /* __DARWIN_C_LEVEL >= __DARWIN_C_FULL && defined(__arm64__) */
 #endif /* !defined(KERNEL) */
@@ -357,13 +364,13 @@ get_saved_state_pc(const arm_saved_state_t *iss)
 static inline void
 add_saved_state_pc(arm_saved_state_t *iss, int diff)
 {
-	iss->pc += diff;
+	iss->pc += (unsigned int)diff;
 }
 
 static inline void
 set_saved_state_pc(arm_saved_state_t *iss, register_t pc)
 {
-	iss->pc = pc;
+	iss->pc = (typeof(iss->pc))pc;
 }
 
 static inline register_t
@@ -393,7 +400,7 @@ set_saved_state_fp(arm_saved_state_t *iss, register_t fp)
 static inline register_t
 get_saved_state_lr(const arm_saved_state_t *iss)
 {
-	return iss->lr;
+	return (register_t)iss->lr;
 }
 
 static inline void
@@ -502,8 +509,35 @@ struct arm_saved_state {
 
 typedef struct arm_saved_state arm_saved_state_t;
 
+struct arm_kernel_saved_state {
+	uint64_t x[12];     /* General purpose registers x16-x28 */
+	uint64_t fp;        /* Frame pointer x29 */
+	uint64_t lr;        /* Link register x30 */
+	uint64_t sp;        /* Stack pointer x31 */
+	uint64_t pc;        /* Program counter */
+	uint32_t cpsr;      /* Current program status register */
+	uint32_t reserved;  /* Reserved padding */
+#if defined(HAS_APPLE_PAC)
+	uint64_t jophash;
+#endif /* defined(HAS_APPLE_PAC) */
+} __attribute__((aligned(16)));
+
+typedef struct arm_kernel_saved_state arm_kernel_saved_state_t;
+
 #if defined(XNU_KERNEL_PRIVATE)
 #if defined(HAS_APPLE_PAC)
+
+#include <sys/cdefs.h>
+
+/*
+ * Used by MANIPULATE_SIGNED_THREAD_STATE(), potentially from C++ (IOKit) code.
+ * Open-coded to prevent a circular dependency between mach/arm/thread_status.h
+ * and osfmk/arm/machine_routines.h.
+ */
+__BEGIN_DECLS
+extern boolean_t ml_set_interrupts_enabled(boolean_t);
+__END_DECLS
+
 /*
  * Methods used to sign and check thread state to detect corruptions of saved
  * thread state across exceptions and context switches.
@@ -531,30 +565,34 @@ extern void ml_check_signed_state(const arm_saved_state_t *, uint64_t, uint32_t,
  * x6: scratch register
  * x7: scratch register
  */
-#define MANIPULATE_SIGNED_THREAD_STATE(_iss, _instr, ...)               \
-	asm volatile (                                                  \
-	        "mov	x8, lr"				"\n"            \
-	        "mov	x0, %[iss]"			"\n"            \
-	        "ldp	x4, x5, [x0, %[SS64_X16]]"	"\n"            \
-	        "ldr	x6, [x0, %[SS64_PC]]"		"\n"            \
-	        "ldr	w7, [x0, %[SS64_CPSR]]"		"\n"            \
-	        "ldr	x3, [x0, %[SS64_LR]]"		"\n"            \
-	        "mov	x1, x6"				"\n"            \
-	        "mov	w2, w7"				"\n"            \
-	        "bl	_ml_check_signed_state"		"\n"            \
-	        "mov	x1, x6"				"\n"            \
-	        "mov	w2, w7"				"\n"            \
-	        _instr					"\n"            \
-	        "bl	_ml_sign_thread_state"		"\n"            \
-	        "mov	lr, x8"				"\n"            \
-	        :                                                       \
-	        : [iss]         "r"(_iss),                              \
-	          [SS64_X16]	"i"(ss64_offsetof(x[16])),              \
-	          [SS64_PC]	"i"(ss64_offsetof(pc)),                 \
-	          [SS64_CPSR]	"i"(ss64_offsetof(cpsr)),               \
-	          [SS64_LR]	"i"(ss64_offsetof(lr)),##__VA_ARGS__    \
-	        : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8"  \
-	)
+#define MANIPULATE_SIGNED_THREAD_STATE(_iss, _instr, ...)                       \
+	do {                                                                    \
+	        boolean_t _intr = ml_set_interrupts_enabled(FALSE);             \
+	        asm volatile (                                                  \
+	                "mov	x8, lr"				"\n"            \
+	                "mov	x0, %[iss]"			"\n"            \
+	                "ldp	x4, x5, [x0, %[SS64_X16]]"	"\n"            \
+	                "ldr	x6, [x0, %[SS64_PC]]"		"\n"            \
+	                "ldr	w7, [x0, %[SS64_CPSR]]"		"\n"            \
+	                "ldr	x3, [x0, %[SS64_LR]]"		"\n"            \
+	                "mov	x1, x6"				"\n"            \
+	                "mov	w2, w7"				"\n"            \
+	                "bl	_ml_check_signed_state"		"\n"            \
+	                "mov	x1, x6"				"\n"            \
+	                "mov	w2, w7"				"\n"            \
+	                _instr					"\n"            \
+	                "bl	_ml_sign_thread_state"		"\n"            \
+	                "mov	lr, x8"				"\n"            \
+	                :                                                       \
+	                : [iss]         "r"(_iss),                              \
+	                  [SS64_X16]	"i"(ss64_offsetof(x[16])),              \
+	                  [SS64_PC]	"i"(ss64_offsetof(pc)),                 \
+	                  [SS64_CPSR]	"i"(ss64_offsetof(cpsr)),               \
+	                  [SS64_LR]	"i"(ss64_offsetof(lr)),##__VA_ARGS__    \
+	                : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8"  \
+	        );                                                              \
+	        ml_set_interrupts_enabled(_intr);                               \
+	} while (0)
 
 static inline void
 check_and_sign_copied_thread_state(arm_saved_state_t *dst, const arm_saved_state_t *src)
@@ -616,14 +654,14 @@ const_saved_state64(const arm_saved_state_t *iss)
 static inline register_t
 get_saved_state_pc(const arm_saved_state_t *iss)
 {
-	return is_saved_state32(iss) ? const_saved_state32(iss)->pc : const_saved_state64(iss)->pc;
+	return (register_t)(is_saved_state32(iss) ? const_saved_state32(iss)->pc : const_saved_state64(iss)->pc);
 }
 
 static inline void
 add_saved_state_pc(arm_saved_state_t *iss, int diff)
 {
 	if (is_saved_state32(iss)) {
-		uint64_t pc = saved_state32(iss)->pc + diff;
+		uint64_t pc = saved_state32(iss)->pc + (uint32_t)diff;
 		saved_state32(iss)->pc = CAST_ASSERT_SAFE(uint32_t, pc);
 	} else {
 #if defined(XNU_KERNEL_PRIVATE) && defined(HAS_APPLE_PAC)
@@ -634,7 +672,7 @@ add_saved_state_pc(arm_saved_state_t *iss, int diff)
 		    [diff] "r"(diff)
 		    );
 #else
-		saved_state64(iss)->pc += diff;
+		saved_state64(iss)->pc += (unsigned long)diff;
 #endif /* defined(XNU_KERNEL_PRIVATE) && defined(HAS_APPLE_PAC) */
 	}
 }
@@ -652,7 +690,7 @@ set_saved_state_pc(arm_saved_state_t *iss, register_t pc)
 		    [pc] "r"(pc)
 		    );
 #else
-		saved_state64(iss)->pc = pc;
+		saved_state64(iss)->pc = (unsigned long)pc;
 #endif /* defined(XNU_KERNEL_PRIVATE) && defined(HAS_APPLE_PAC) */
 	}
 }
@@ -660,7 +698,7 @@ set_saved_state_pc(arm_saved_state_t *iss, register_t pc)
 static inline register_t
 get_saved_state_sp(const arm_saved_state_t *iss)
 {
-	return is_saved_state32(iss) ? const_saved_state32(iss)->sp : const_saved_state64(iss)->sp;
+	return (register_t)(is_saved_state32(iss) ? const_saved_state32(iss)->sp : const_saved_state64(iss)->sp);
 }
 
 static inline void
@@ -669,14 +707,14 @@ set_saved_state_sp(arm_saved_state_t *iss, register_t sp)
 	if (is_saved_state32(iss)) {
 		saved_state32(iss)->sp = CAST_ASSERT_SAFE(uint32_t, sp);
 	} else {
-		saved_state64(iss)->sp = sp;
+		saved_state64(iss)->sp = (uint64_t)sp;
 	}
 }
 
 static inline register_t
 get_saved_state_lr(const arm_saved_state_t *iss)
 {
-	return is_saved_state32(iss) ? const_saved_state32(iss)->lr : const_saved_state64(iss)->lr;
+	return (register_t)(is_saved_state32(iss) ? const_saved_state32(iss)->lr : const_saved_state64(iss)->lr);
 }
 
 static inline void
@@ -692,7 +730,7 @@ set_saved_state_lr(arm_saved_state_t *iss, register_t lr)
 		    [lr] "r"(lr)
 		    );
 #else
-		saved_state64(iss)->lr = lr;
+		saved_state64(iss)->lr = (unsigned long)lr;
 #endif /* defined(XNU_KERNEL_PRIVATE) && defined(HAS_APPLE_PAC) */
 	}
 }
@@ -700,7 +738,7 @@ set_saved_state_lr(arm_saved_state_t *iss, register_t lr)
 static inline register_t
 get_saved_state_fp(const arm_saved_state_t *iss)
 {
-	return is_saved_state32(iss) ? const_saved_state32(iss)->r[7] : const_saved_state64(iss)->fp;
+	return (register_t)(is_saved_state32(iss) ? const_saved_state32(iss)->r[7] : const_saved_state64(iss)->fp);
 }
 
 static inline void
@@ -709,7 +747,7 @@ set_saved_state_fp(arm_saved_state_t *iss, register_t fp)
 	if (is_saved_state32(iss)) {
 		saved_state32(iss)->r[7] = CAST_ASSERT_SAFE(uint32_t, fp);
 	} else {
-		saved_state64(iss)->fp = fp;
+		saved_state64(iss)->fp = (uint64_t)fp;
 	}
 }
 
@@ -726,7 +764,7 @@ get_saved_state_reg(const arm_saved_state_t *iss, unsigned reg)
 		return 0;
 	}
 
-	return is_saved_state32(iss) ? (const_saved_state32(iss)->r[reg]) : (const_saved_state64(iss)->x[reg]);
+	return (register_t)(is_saved_state32(iss) ? (const_saved_state32(iss)->r[reg]) : (const_saved_state64(iss)->x[reg]));
 }
 
 static inline void
@@ -758,9 +796,10 @@ set_saved_state_reg(arm_saved_state_t *iss, unsigned reg, register_t value)
 			return;
 		}
 #endif
-		saved_state64(iss)->x[reg] = value;
+		saved_state64(iss)->x[reg] = (uint64_t)value;
 	}
 }
+
 
 static inline uint32_t
 get_saved_state_cpsr(const arm_saved_state_t *iss)
@@ -813,7 +852,7 @@ set_saved_state_cpsr(arm_saved_state_t *iss, uint32_t cpsr)
 static inline register_t
 get_saved_state_far(const arm_saved_state_t *iss)
 {
-	return is_saved_state32(iss) ? const_saved_state32(iss)->far : const_saved_state64(iss)->far;
+	return (register_t)(is_saved_state32(iss) ? const_saved_state32(iss)->far : const_saved_state64(iss)->far);
 }
 
 static inline void
@@ -822,7 +861,7 @@ set_saved_state_far(arm_saved_state_t *iss, register_t far)
 	if (is_saved_state32(iss)) {
 		saved_state32(iss)->far = CAST_ASSERT_SAFE(uint32_t, far);
 	} else {
-		saved_state64(iss)->far = far;
+		saved_state64(iss)->far = (uint64_t)far;
 	}
 }
 
@@ -927,6 +966,12 @@ typedef struct arm_neon_saved_state arm_neon_saved_state_t;
 #define ns_32 uns.ns_32
 #define ns_64 uns.ns_64
 
+struct arm_kernel_neon_saved_state {
+	uint64_t d[8];
+	uint32_t fpcr;
+};
+typedef struct arm_kernel_neon_saved_state arm_kernel_neon_saved_state_t;
+
 static inline boolean_t
 is_neon_saved_state32(const arm_neon_saved_state_t *state)
 {
@@ -961,6 +1006,12 @@ struct arm_context {
 	struct arm_neon_saved_state ns;
 };
 typedef struct arm_context arm_context_t;
+
+struct arm_kernel_context {
+	struct arm_kernel_saved_state ss;
+	struct arm_kernel_neon_saved_state ns;
+};
+typedef struct arm_kernel_context arm_kernel_context_t;
 
 extern void saved_state_to_thread_state64(const arm_saved_state_t*, arm_thread_state64_t*);
 extern void thread_state64_to_saved_state(const arm_thread_state64_t*, arm_saved_state_t*);

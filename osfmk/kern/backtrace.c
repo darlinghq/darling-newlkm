@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2016-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -31,6 +31,7 @@
 
 #include <kern/assert.h>
 #include <kern/backtrace.h>
+#include <kern/cambria_layout.h>
 #include <kern/thread.h>
 #include <sys/errno.h>
 #include <vm/vm_map.h>
@@ -44,12 +45,17 @@
 #include <ptrauth.h>
 #endif
 
+#if XNU_MONITOR
+#define IN_PPLSTK_BOUNDS(__addr) \
+	(((uintptr_t)(__addr) >= (uintptr_t)pmap_stacks_start) && \
+	((uintptr_t)(__addr) < (uintptr_t)pmap_stacks_end))
+#endif
 
 unsigned int __attribute__((noinline))
 backtrace(uintptr_t *bt, unsigned int max_frames, bool *was_truncated_out)
 {
 	return backtrace_frame(bt, max_frames, __builtin_frame_address(0),
-	    was_truncated_out);
+	           was_truncated_out);
 }
 
 /*
@@ -83,6 +89,9 @@ backtrace_frame(uintptr_t *bt, unsigned int max_frames, void *start_frame,
 	((uintptr_t)(__addr) < (uintptr_t)top))
 
 	in_valid_stack = IN_STK_BOUNDS(fp);
+#if XNU_MONITOR
+	in_valid_stack |= IN_PPLSTK_BOUNDS(fp);
+#endif /* XNU_MONITOR */
 
 	if (!in_valid_stack) {
 		fp = NULL;
@@ -98,6 +107,9 @@ backtrace_frame(uintptr_t *bt, unsigned int max_frames, void *start_frame,
 		 * have set this up, so bounds check, as well.
 		 */
 		in_valid_stack = IN_STK_BOUNDS(next_fp);
+#if XNU_MONITOR
+		in_valid_stack |= IN_PPLSTK_BOUNDS(next_fp);
+#endif /* XNU_MONITOR */
 
 		if (next_fp == NULL || !in_valid_stack) {
 			break;
@@ -112,7 +124,25 @@ backtrace_frame(uintptr_t *bt, unsigned int max_frames, void *start_frame,
 
 		/* stacks grow down; backtracing should be moving to higher addresses */
 		if (next_fp <= fp) {
+#if XNU_MONITOR
+			bool fp_in_pplstack = IN_PPLSTK_BOUNDS(fp);
+			bool fp_in_kstack = IN_STK_BOUNDS(fp);
+			bool next_fp_in_pplstack = IN_PPLSTK_BOUNDS(fp);
+			bool next_fp_in_kstack = IN_STK_BOUNDS(fp);
+
+			/*
+			 * This check is verbose; it is basically checking whether
+			 * we are switching between the kernel stack and the cpu
+			 * stack.  If so, we ignore the fact that fp has switched
+			 * directions (as it is a symptom of switching stacks).
+			 */
+			if (((fp_in_pplstack) && (next_fp_in_kstack)) ||
+			    ((fp_in_kstack) && (next_fp_in_pplstack))) {
+				break;
+			}
+#else /* XNU_MONITOR */
 			break;
+#endif /* !XNU_MONITOR */
 		}
 		fp = next_fp;
 	}
@@ -239,20 +269,20 @@ backtrace_interrupted(uintptr_t *bt, unsigned int max_frames,
 	}
 
 	return backtrace_frame(bt + 1, max_frames - 1, (void *)fp,
-	    was_truncated_out) + 1;
+	           was_truncated_out) + 1;
 }
 
-int
+unsigned int
 backtrace_user(uintptr_t *bt, unsigned int max_frames,
-    unsigned int *frames_out, bool *user_64_out, bool *was_truncated_out)
+    int *error_out, bool *user_64_out, bool *was_truncated_out)
 {
 	return backtrace_thread_user(current_thread(), bt, max_frames,
-	    frames_out, user_64_out, was_truncated_out);
+	           error_out, user_64_out, was_truncated_out, true);
 }
 
-int
+unsigned int
 backtrace_thread_user(void *thread, uintptr_t *bt, unsigned int max_frames,
-    unsigned int *frames_out, bool *user_64_out, bool *was_truncated_out)
+    int *error_out, bool *user_64_out, bool *was_truncated_out, __unused bool faults_permitted)
 {
 	bool user_64;
 	uintptr_t pc = 0, fp = 0, next_fp = 0;
@@ -263,7 +293,7 @@ backtrace_thread_user(void *thread, uintptr_t *bt, unsigned int max_frames,
 
 	assert(bt != NULL);
 	assert(max_frames > 0);
-	assert(frames_out != NULL);
+	assert((max_frames == 1) || (faults_permitted == true));
 
 #if defined(__x86_64__)
 
@@ -271,7 +301,6 @@ backtrace_thread_user(void *thread, uintptr_t *bt, unsigned int max_frames,
 #define INVALID_USER_FP(FP) ((FP) == 0 || !IS_USERADDR64_CANONICAL((FP)))
 
 	x86_saved_state_t *state = get_user_regs(thread);
-
 	if (!state) {
 		return EINVAL;
 	}
@@ -287,9 +316,6 @@ backtrace_thread_user(void *thread, uintptr_t *bt, unsigned int max_frames,
 
 #elif defined(__arm64__)
 
-	/* ARM expects stack frames to be aligned to 16 bytes */
-#define INVALID_USER_FP(FP) ((FP) == 0 || ((FP) & 0x3UL) != 0UL)
-
 	struct arm_saved_state *state = get_user_regs(thread);
 	if (!state) {
 		return EINVAL;
@@ -298,6 +324,12 @@ backtrace_thread_user(void *thread, uintptr_t *bt, unsigned int max_frames,
 	user_64 = is_saved_state64(state);
 	pc = get_saved_state_pc(state);
 	fp = get_saved_state_fp(state);
+
+
+	/* ARM expects stack frames to be aligned to 16 bytes */
+#define INVALID_USER_FP(FP) ((FP) == 0 || ((FP) & 0x3UL) != 0UL)
+
+
 
 #elif defined(__arm__)
 
@@ -405,8 +437,10 @@ out:
 	if (user_64_out) {
 		*user_64_out = user_64;
 	}
+	if (error_out) {
+		*error_out = err;
+	}
 
-	*frames_out = frame_index;
-	return err;
+	return frame_index;
 #undef INVALID_USER_FP
 }

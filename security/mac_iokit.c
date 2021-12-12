@@ -60,17 +60,16 @@
 #include <bsd/security/audit/audit.h>
 #include <bsd/sys/malloc.h>
 #include <vm/vm_kern.h>
-#include <kern/kalloc.h>
 
 #include <security/mac_framework.h>
 #include <security/mac_internal.h>
 
 int
-mac_iokit_check_device(char *devtype, struct mac_module_data *mdata)
+mac_iokit_check_open_service(kauth_cred_t cred, io_object_t service, unsigned int user_client_type)
 {
 	int error;
 
-	MAC_CHECK(iokit_check_device, devtype, mdata);
+	MAC_CHECK(iokit_check_open_service, cred, service, user_client_type);
 	return error;
 }
 

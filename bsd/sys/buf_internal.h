@@ -167,7 +167,7 @@ extern vm_offset_t buf_kernel_addrperm;
 
 /*
  * These flags are kept in b_lflags...
- * buf_mtxp must be held before examining/updating
+ * buf_mtx must be held before examining/updating
  */
 #define BL_BUSY         0x00000001      /* I/O in progress. */
 #define BL_WANTED       0x00000002      /* Process wants this buffer. */
@@ -273,6 +273,7 @@ extern vm_offset_t buf_kernel_addrperm;
 #define BA_STRATEGY_TRACKED_IO  0x00002000 /* tracked by spec_strategy */
 #define BA_IO_TIER_UPGRADE      0x00004000 /* effective I/O tier is higher than BA_IO_TIER */
 #define BA_IO_SCHEDULED         0x00008000 /* buf is associated with a mount point that is io scheduled */
+#define BA_EXPEDITED_META_IO    0x00010000 /* metadata I/O which needs a high I/O tier */
 
 #define GET_BUFATTR_IO_TIER(bap)        ((bap->ba_flags & BA_IO_TIER_MASK) >> BA_IO_TIER_SHIFT)
 #define SET_BUFATTR_IO_TIER(bap, tier)                                          \
@@ -291,14 +292,16 @@ extern struct buf *buf_headers;         /* The buffer headers. */
 /*
  * Definitions for the buffer free lists.
  */
-#define BQUEUES         6               /* number of free buffer queues */
 
-#define BQ_LOCKED       0               /* super-blocks &c */
-#define BQ_LRU          1               /* lru, useful buffers */
-#define BQ_AGE          2               /* rubbish */
-#define BQ_EMPTY        3               /* buffer headers with no memory */
-#define BQ_META         4               /* buffer containing metadata */
-#define BQ_LAUNDRY      5               /* buffers that need cleaning */
+enum bq_opts {
+	BQ_LOCKED   = 0,  /* super-blocks &c */
+	BQ_LRU      = 1,  /* lru, useful buffers */
+	BQ_AGE      = 2,  /* rubbish */
+	BQ_EMPTY    = 3,  /* buffer headers with no memory */
+	BQ_META     = 4,  /* buffer containing metadata */
+	BQ_LAUNDRY  = 5,  /* buffers that need cleaning */
+	BQUEUES     = 6   /* number of free buffer queues */
+};
 
 
 __BEGIN_DECLS
@@ -314,7 +317,7 @@ void    buf_list_unlock(void);
 
 void    cluster_init(void);
 
-int     count_busy_buffers(void);
+uint32_t     count_busy_buffers(void);
 
 int buf_flushdirtyblks_skipinfo(vnode_t, int, int, const char *);
 void buf_wait_for_shadow_io(vnode_t, daddr64_t);
@@ -340,8 +343,8 @@ struct bufstats {
 	long    bufs_miss;                      /* not incore. not in VM */
 	long    bufs_sleeps;            /* buffer starvation */
 	long    bufs_eblk;                      /* Calls to geteblk */
-	long    bufs_iobufmax;          /* Max. number of IO buffers used */
-	long    bufs_iobufinuse;        /* number of IO buffers in use */
+	uint32_t    bufs_iobufmax;          /* Max. number of IO buffers used */
+	uint32_t    bufs_iobufinuse;        /* number of IO buffers in use */
 	long    bufs_iobufsleeps;       /* IO buffer starvation */
 	long    bufs_iobufinuse_vdev;   /* number of IO buffers in use by
 	                                 *  diskimages */

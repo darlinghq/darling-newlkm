@@ -16,6 +16,8 @@
 #include <darwintest.h>
 #include <darwintest_utils.h>
 
+#include "test_utils.h"
+
 T_GLOBAL_META(
 	T_META_NAMESPACE("xnu.vm"),
 	T_META_CHECK_LEAKS(false)
@@ -76,25 +78,6 @@ static char *child_exit_why[] = {
 	"invalid memsize argument to child",
 	"malloc() failed",
 };
-
-/*
- * Corpse collection only happens in development kernels.
- * So we need this to detect if the test is relevant.
- */
-static boolean_t
-is_development_kernel(void)
-{
-	int ret;
-	int dev = 0;
-	size_t dev_size = sizeof(dev);
-
-	ret = sysctlbyname("kern.development", &dev, &dev_size, NULL, 0);
-	if (ret != 0) {
-		return FALSE;
-	}
-
-	return dev != 0;
-}
 
 /*
  * Set/Get the sysctl used to determine if corpse collection occurs.
@@ -366,7 +349,7 @@ memorystatus_vm_map_fork_parent(int test_variant)
 	 */
 	wait_for_free_mem(active_limit_mb);
 
-#if defined(__x86_64__)
+#if TARGET_OS_OSX
 	/*
 	 * vm_map_fork() is always allowed on desktop.
 	 */
@@ -458,12 +441,12 @@ memorystatus_vm_map_fork_parent(int test_variant)
  * We test "not allowed first", then "allowed". If it were the other way around, the corpse from the "allowed"
  * test would likely cause memory pressure and jetsam would likely kill the "not allowed" test.
  */
-T_DECL(memorystatus_vm_map_fork_test_not_allowed, "test that corpse generation was not allowed")
+T_DECL(memorystatus_vm_map_fork_test_not_allowed, "test that corpse generation was not allowed", T_META_ASROOT(true))
 {
 	memorystatus_vm_map_fork_parent(TEST_NOT_ALLOWED);
 }
 
-T_DECL(memorystatus_vm_map_fork_test_allowed, "test corpse generation allowed")
+T_DECL(memorystatus_vm_map_fork_test_allowed, "test corpse generation allowed", T_META_ASROOT(true))
 {
 	memorystatus_vm_map_fork_parent(TEST_ALLOWED);
 }

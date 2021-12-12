@@ -116,9 +116,7 @@
 #include <kern/waitq.h>
 #include <libkern/section_keywords.h>
 
-static lck_grp_t        *tty_lck_grp;
-static lck_grp_attr_t   *tty_lck_grp_attr;
-static lck_attr_t      *tty_lck_attr;
+static LCK_GRP_DECLARE(tty_lck_grp, "tty");
 
 __private_extern__ int ttnread(struct tty *tp);
 static void     ttyecho(int c, struct tty *tp);
@@ -137,6 +135,9 @@ static void     ttydeallocate(struct tty *tp);
 
 static int isctty(proc_t p, struct tty  *tp);
 static int isctty_sp(proc_t p, struct tty  *tp, struct session *sessp);
+
+__private_extern__ void termios32to64(struct termios32 *in, struct user_termios *out);
+__private_extern__ void termios64to32(struct user_termios *in, struct termios32 *out);
 
 /*
  * Table with character classes and parity. The 8th bit indicates parity,
@@ -226,7 +227,7 @@ static u_char const char_type[] = {
 #define I_HIGH_WATER    (TTYHOG - 2 * 256)      /* XXX */
 #define I_LOW_WATER     ((TTYHOG - 2 * 256) * 7 / 8)    /* XXX */
 
-static void
+__private_extern__ void
 termios32to64(struct termios32 *in, struct user_termios *out)
 {
 	out->c_iflag = (user_tcflag_t)in->c_iflag;
@@ -241,45 +242,19 @@ termios32to64(struct termios32 *in, struct user_termios *out)
 	out->c_ospeed = (user_speed_t)in->c_ospeed;
 }
 
-static void
+__private_extern__ void
 termios64to32(struct user_termios *in, struct termios32 *out)
 {
-	out->c_iflag = (tcflag_t)in->c_iflag;
-	out->c_oflag = (tcflag_t)in->c_oflag;
-	out->c_cflag = (tcflag_t)in->c_cflag;
-	out->c_lflag = (tcflag_t)in->c_lflag;
+	out->c_iflag = (uint32_t)in->c_iflag;
+	out->c_oflag = (uint32_t)in->c_oflag;
+	out->c_cflag = (uint32_t)in->c_cflag;
+	out->c_lflag = (uint32_t)in->c_lflag;
 
 	/* bcopy is OK, since this type is ILP32/LP64 size invariant */
 	bcopy(in->c_cc, out->c_cc, sizeof(in->c_cc));
 
-	out->c_ispeed = (speed_t)in->c_ispeed;
-	out->c_ospeed = (speed_t)in->c_ospeed;
-}
-
-
-/*
- * tty_init
- *
- * Initialize the tty line discipline subsystem.
- *
- * Parameters:	void
- *
- * Returns:	void
- *
- * Locks:	No ttys can be allocated and no tty locks can be used
- *		until after this function is called
- *
- * Notes:	The intent of this is to set up a log group attribute,
- *		lock group, and loc atribute for subsequent per-tty locks.
- *		This function is called early in bsd_init(), prior to the
- *		console device initialization.
- */
-void
-tty_init(void)
-{
-	tty_lck_grp_attr = lck_grp_attr_alloc_init();
-	tty_lck_grp = lck_grp_alloc_init("tty", tty_lck_grp_attr);
-	tty_lck_attr = lck_attr_alloc_init();
+	out->c_ispeed = (uint32_t)MIN(in->c_ispeed, UINT32_MAX);
+	out->c_ospeed = (uint32_t)MIN(in->c_ospeed, UINT32_MAX);
 }
 
 
@@ -935,44 +910,6 @@ ttyoutput(int c, struct tty *tp)
 }
 
 /*
- * Sets the tty state to not allow any more changes of foreground process
- * group. This is required to be done so that a subsequent revoke on a vnode
- * is able to always successfully complete.
- *
- * Locks :   Assumes tty_lock held on entry
- */
-void
-ttysetpgrphup(struct tty *tp)
-{
-	TTY_LOCK_OWNED(tp);     /* debug assert */
-	SET(tp->t_state, TS_PGRPHUP);
-	/*
-	 * Also wake up sleeping readers which may or may not belong to the
-	 * current foreground process group.
-	 *
-	 * This forces any non-fg readers (which entered read when
-	 * that process group was in the fg) to return with EIO (if they're
-	 * catching SIGTTIN or with SIGTTIN). The ones which do belong to the fg
-	 * process group will promptly go back to sleep and get a SIGHUP shortly
-	 * This would normally happen as part of the close in revoke but if
-	 * there is a sleeping reader from a non-fg process group we never get
-	 * to the close because the sleeping reader holds an iocount on the
-	 * vnode of the terminal which is going to get revoked->reclaimed.
-	 */
-	wakeup(TSA_HUP_OR_INPUT(tp));
-}
-
-/*
- * Locks : Assumes tty lock held on entry
- */
-void
-ttyclrpgrphup(struct tty *tp)
-{
-	TTY_LOCK_OWNED(tp);     /* debug assert */
-	CLR(tp->t_state, TS_PGRPHUP);
-}
-
-/*
  * ttioctl
  *
  * Identical to ttioctl_locked, only the lock is not held
@@ -1163,9 +1100,8 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 	case TIOCSCONS: {
 		/* Set current console device to this line */
 		data = (caddr_t) &bogusData;
-
-		/* No break - Fall through to BSD code */
 	}
+		OS_FALLTHROUGH;
 	case TIOCCONS: {                        /* become virtual console */
 		if (*(int *)data) {
 			if (constty && constty != tp &&
@@ -1510,19 +1446,7 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 			error = EPERM;
 			goto out;
 		}
-		/*
-		 * The session leader is going away and is possibly going to revoke
-		 * the terminal, we can't change the process group when that is the
-		 * case.
-		 */
-		if (ISSET(tp->t_state, TS_PGRPHUP)) {
-			if (sessp != SESSION_NULL) {
-				session_rele(sessp);
-			}
-			pg_rele(pgrp);
-			error = EPERM;
-			goto out;
-		}
+
 		proc_list_lock();
 		oldpg = tp->t_pgrp;
 		tp->t_pgrp = pgrp;
@@ -1534,7 +1458,7 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 		 * process group.
 		 *
 		 * ttwakeup() isn't called because the readers aren't getting
-		 * woken up becuse there is something to read but to force
+		 * woken up because there is something to read but to force
 		 * the re-evaluation of their foreground process group status.
 		 *
 		 * Ordinarily leaving these readers waiting wouldn't be an issue
@@ -1582,10 +1506,17 @@ ttioctl_locked(struct tty *tp, u_long cmd, caddr_t data, int flag, proc_t p)
 		*(int *)data = tp->t_timeout / hz;
 		break;
 	case TIOCREVOKE:
-		if (ISSET(tp->t_state, TS_PGRPHUP)) {
-			tp->t_gen++;
-			wakeup(TSA_HUP_OR_INPUT(tp));
-		}
+		SET(tp->t_state, TS_REVOKE);
+		tp->t_gen++;
+		/*
+		 * At this time, only this wait channel is woken up as only
+		 * ttread has been problematic. It is possible we may need
+		 * to add wake up other tty wait addresses as well.
+		 */
+		wakeup(TSA_HUP_OR_INPUT(tp));
+		break;
+	case TIOCREVOKECLEAR:
+		CLR(tp->t_state, TS_REVOKE);
 		break;
 	default:
 		error = ttcompat(tp, cmd, data, flag, p);
@@ -2088,9 +2019,10 @@ loop:
 	}
 
 	/*
-	 * Signal the process if it's in the background.
+	 * Signal the process if it's in the background. If the terminal is
+	 * getting revoked, everybody is in the background.
 	 */
-	if (isbackground(p, tp)) {
+	if (isbackground(p, tp) || ISSET(tp->t_state, TS_REVOKE)) {
 		if ((p->p_sigignore & sigmask(SIGTTIN)) ||
 		    (ut->uu_sigmask & sigmask(SIGTTIN)) ||
 		    p->p_lflag & P_LPPWAIT) {
@@ -2185,20 +2117,13 @@ loop:
 				goto read;
 			}
 			microuptime(&timecopy);
-			if (!has_etime) {
-				/* first character, start timer */
+			if (!has_etime || qp->c_cc > last_cc) {
+				/* first character or got a character, start timer */
 				has_etime = 1;
 
 				etime.tv_sec = t / 1000000;
-				etime.tv_usec = (t - (etime.tv_sec * 1000000));
-				timeradd(&etime, &timecopy, &etime);
-
-				slp = t;
-			} else if (qp->c_cc > last_cc) {
-				/* got a character, restart timer */
-
-				etime.tv_sec = t / 1000000;
-				etime.tv_usec = (t - (etime.tv_sec * 1000000));
+				etime.tv_usec =
+				    (__darwin_suseconds_t)(t - (etime.tv_sec * 1000000));
 				timeradd(&etime, &timecopy, &etime);
 
 				slp = t;
@@ -2220,7 +2145,8 @@ loop:
 				has_etime = 1;
 
 				etime.tv_sec = t / 1000000;
-				etime.tv_usec = (t - (etime.tv_sec * 1000000));
+				etime.tv_usec =
+				    (__darwin_suseconds_t)(t - (etime.tv_sec * 1000000));
 				timeradd(&etime, &timecopy, &etime);
 
 				slp = t;
@@ -2279,8 +2205,13 @@ read:
 	for (;;) {
 		char ibuf[IBUFSIZ];
 		int icc;
+		ssize_t size = uio_resid(uio);
+		if (size < 0) {
+			error = ERANGE;
+			break;
+		}
 
-		icc = MIN(uio_resid(uio), IBUFSIZ);
+		icc = (int)MIN(size, IBUFSIZ);
 		icc = q_to_b(qp, (u_char *)ibuf, icc);
 		if (icc <= 0) {
 			if (first) {
@@ -2515,7 +2446,12 @@ loop:
 		 * leftover from last time.
 		 */
 		if (cc == 0) {
-			cc = MIN(uio_resid(uio), OBUFSIZ);
+			ssize_t size = uio_resid(uio);
+			if (size < 0) {
+				error = ERANGE;
+				break;
+			}
+			cc = (int)MIN((size_t)size, OBUFSIZ);
 			cp = obuf;
 			error = uiomove(cp, cc, uio);
 			if (error) {
@@ -2536,8 +2472,8 @@ loop:
 			if (!ISSET(tp->t_oflag, OPOST)) {
 				ce = cc;
 			} else {
-				ce = cc - scanc((u_int)cc, (u_char *)cp,
-				    char_type, CCLASSMASK);
+				ce = (int)((size_t)cc - scanc((size_t)cc,
+				    (u_char *)cp, char_type, CCLASSMASK));
 				/*
 				 * If ce is zero, then we're processing
 				 * a special character through ttyoutput.
@@ -2911,7 +2847,7 @@ ttspeedtab(int speed, struct speedtab *table)
 void
 ttsetwater(struct tty *tp)
 {
-	int cps;
+	speed_t cps;
 	unsigned int x;
 
 	TTY_LOCK_OWNED(tp);     /* debug assert */
@@ -2919,7 +2855,9 @@ ttsetwater(struct tty *tp)
 #define CLAMP(x, h, l)  ((x) > h ? h : ((x) < l) ? l : (x))
 
 	cps = tp->t_ospeed / 10;
-	tp->t_lowat = x = CLAMP(cps / 2, TTMAXLOWAT, TTMINLOWAT);
+	static_assert(TTMAXLOWAT <= UINT_MAX, "max low water fits in unsigned int");
+	static_assert(TTMINLOWAT <= UINT_MAX, "min low water fits in unsigned int");
+	tp->t_lowat = x = (unsigned int)CLAMP(cps / 2, TTMAXLOWAT, TTMINLOWAT);
 	x += cps;
 	x = CLAMP(x, TTMAXHIWAT, TTMINHIWAT);
 	tp->t_hiwat = roundup(x, CBSIZE);
@@ -3202,6 +3140,10 @@ ttysleep(struct tty *tp, void *chan, int pri, const char *wmesg, int timo)
 
 	TTY_LOCK_OWNED(tp);
 
+	if (tp->t_state & TS_REVOKE) {
+		return ERESTART;
+	}
+
 	gen = tp->t_gen;
 	/* Use of msleep0() avoids conversion timo/timespec/timo */
 	error = msleep0(chan, &tp->t_lock, pri, wmesg, timo, (int (*)(int))0);
@@ -3228,14 +3170,14 @@ ttymalloc(void)
 {
 	struct tty *tp;
 
-	MALLOC(tp, struct tty *, sizeof(struct tty), M_TTYS, M_WAITOK | M_ZERO);
+	tp = kheap_alloc(KM_TTYS, sizeof(struct tty), Z_WAITOK | Z_ZERO);
 	if (tp != NULL) {
 		/* XXX: default to TTYCLSIZE(1024) chars for now */
 		clalloc(&tp->t_rawq, TTYCLSIZE, 1);
 		clalloc(&tp->t_canq, TTYCLSIZE, 1);
 		/* output queue doesn't need quoting */
 		clalloc(&tp->t_outq, TTYCLSIZE, 0);
-		lck_mtx_init(&tp->t_lock, tty_lck_grp, tty_lck_attr);
+		lck_mtx_init(&tp->t_lock, &tty_lck_grp, LCK_ATTR_NULL);
 		klist_init(&tp->t_rsel.si_note);
 		klist_init(&tp->t_wsel.si_note);
 		tp->t_refcnt = 1;
@@ -3293,8 +3235,8 @@ ttydeallocate(struct tty *tp)
 	clfree(&tp->t_rawq);
 	clfree(&tp->t_canq);
 	clfree(&tp->t_outq);
-	lck_mtx_destroy(&tp->t_lock, tty_lck_grp);
-	FREE(tp, M_TTYS);
+	lck_mtx_destroy(&tp->t_lock, &tty_lck_grp);
+	kheap_free(KM_TTYS, tp, sizeof(struct tty));
 }
 
 
@@ -3473,7 +3415,7 @@ tty_set_knote_hook(struct knote *kn)
 	uth = get_bsdthread_info(current_thread());
 
 	ctx = vfs_context_current();
-	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data;
+	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data;
 
 	/*
 	 * Reserve a link element to avoid potential allocation under

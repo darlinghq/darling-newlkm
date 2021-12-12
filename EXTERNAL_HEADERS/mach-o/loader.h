@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2010 Apple Inc.  All Rights Reserved.
+ * Copyright (c) 1999-2019 Apple Inc.  All Rights Reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -120,6 +120,7 @@ struct mach_header_64 {
 #define	MH_DSYM		0xa		/* companion file with only debug */
 					/*  sections */
 #define	MH_KEXT_BUNDLE	0xb		/* x86_64 kexts */
+#define	MH_FILESET	0xc		/* set of mach-o's */
 
 /* Constants for the flags field of the mach_header */
 #define	MH_NOUNDEFS	0x1		/* the object file has no undefined
@@ -209,6 +210,22 @@ struct mach_header_64 {
 
 #define MH_APP_EXTENSION_SAFE 0x02000000 /* The code was linked for use in an
 					    application extension. */
+
+#define	MH_NLIST_OUTOFSYNC_WITH_DYLDINFO 0x04000000 /* The external symbols
+					   listed in the nlist symbol table do
+					   not include all the symbols listed in
+					   the dyld info. */
+
+#define	MH_SIM_SUPPORT 0x08000000	/* Allow LC_MIN_VERSION_MACOS and
+					   LC_BUILD_VERSION load commands with
+					   the platforms macOS, iOSMac,
+					   iOSSimulator, tvOSSimulator and
+					   watchOSSimulator. */
+
+#define MH_DYLIB_IN_CACHE 0x80000000	/* Only for use on dylibs. When this bit
+					   is set, the dylib is part of the dyld
+					   shared cache, rather than loose in
+					   the filesystem. */
 
 /*
  * The load commands directly follow the mach_header.  The total size of all
@@ -302,6 +319,11 @@ struct load_command {
 #define LC_LINKER_OPTIMIZATION_HINT 0x2E /* optimization hints in MH_OBJECT files */
 #define LC_VERSION_MIN_TVOS 0x2F /* build for AppleTV min OS version */
 #define LC_VERSION_MIN_WATCHOS 0x30 /* build for Watch min OS version */
+#define LC_NOTE 0x31 /* arbitrary data included within a Mach-O file */
+#define LC_BUILD_VERSION 0x32 /* build for platform min OS version */
+#define LC_DYLD_EXPORTS_TRIE (0x33 | LC_REQ_DYLD) /* used with linkedit_data_command, payload is trie */
+#define LC_DYLD_CHAINED_FIXUPS (0x34 | LC_REQ_DYLD) /* used with linkedit_data_command */
+#define LC_FILESET_ENTRY      (0x35 | LC_REQ_DYLD) /* used with fileset_entry_command */
 
 /*
  * A variable length string in a load command is represented by an lc_str
@@ -379,6 +401,9 @@ struct segment_command_64 { /* for 64-bit architectures */
 				       first page of the segment is not
 				       protected.  All other pages of the
 				       segment are protected. */
+#define SG_READ_ONLY    0x10 /* This segment is made read-only after fixups */
+
+
 
 /*
  * A segment is made up of zero or more sections.  Non-MH_OBJECT files have
@@ -504,6 +529,8 @@ struct section_64 { /* for 64-bit architectures */
 #define S_THREAD_LOCAL_INIT_FUNCTION_POINTERS    0x15  /* functions to call
 							  to initialize TLV
 							  values */
+#define S_INIT_FUNC_OFFSETS                      0x16  /* 32-bit offsets to
+							  initializers */
 
 /*
  * Constants for the section attributes part of the flags field of a section
@@ -596,6 +623,9 @@ struct section_64 { /* for 64-bit architectures */
 					/* editor.  Created with -seglinkedit */
 					/* option to ld(1) for MH_EXECUTE and */
 					/* FVMLIB file types only */
+
+#define SEG_LINKINFO	"__LINKINFO"	/* the segment overlapping with linkedit */
+					/* containing linking information */
 
 #define SEG_UNIXSTACK	"__UNIXSTACK"	/* the unix stack segment */
 
@@ -765,14 +795,14 @@ struct dylinker_command {
  * Thread commands contain machine-specific data structures suitable for
  * use in the thread state primitives.  The machine specific data structures
  * follow the struct thread_command as follows.
- * Each flavor of machine specific data structure is preceded by an unsigned
- * long constant for the flavor of that data structure, an uint32_t
- * that is the count of longs of the size of the state data structure and then
+ * Each flavor of machine specific data structure is preceded by an uint32_t
+ * constant for the flavor of that data structure, an uint32_t that is the
+ * count of uint32_t's of the size of the state data structure and then
  * the state data structure follows.  This triple may be repeated for many
  * flavors.  The constants for the flavors, counts and state data structure
  * definitions are expected to be in the header file <machine/thread_status.h>.
  * These machine specific data structures sizes must be multiples of
- * 4 bytes  The cmdsize reflects the total size of the thread_command
+ * 4 bytes.  The cmdsize reflects the total size of the thread_command
  * and all of the sizes of the constants for the flavors, counts and state
  * data structures.
  *
@@ -786,7 +816,7 @@ struct thread_command {
 	uint32_t	cmd;		/* LC_THREAD or  LC_UNIXTHREAD */
 	uint32_t	cmdsize;	/* total size of this command */
 	/* uint32_t flavor		   flavor of thread state */
-	/* uint32_t count		   count of longs in thread state */
+	/* uint32_t count		   count of uint32_t's in thread state */
 	/* struct XXX_thread_state state   thread state for this flavor */
 	/* ... */
 };
@@ -1162,11 +1192,22 @@ struct rpath_command {
 struct linkedit_data_command {
     uint32_t	cmd;		/* LC_CODE_SIGNATURE, LC_SEGMENT_SPLIT_INFO,
                                    LC_FUNCTION_STARTS, LC_DATA_IN_CODE,
-				   LC_DYLIB_CODE_SIGN_DRS or
-				   LC_LINKER_OPTIMIZATION_HINT. */
+				   LC_DYLIB_CODE_SIGN_DRS,
+				   LC_LINKER_OPTIMIZATION_HINT,
+				   LC_DYLD_EXPORTS_TRIE, or
+				   LC_DYLD_CHAINED_FIXUPS. */
     uint32_t	cmdsize;	/* sizeof(struct linkedit_data_command) */
     uint32_t	dataoff;	/* file offset of data in __LINKEDIT segment */
     uint32_t	datasize;	/* file size of data in __LINKEDIT segment  */
+};
+
+struct fileset_entry_command {
+    uint32_t        cmd;        /* LC_FILESET_ENTRY */
+    uint32_t        cmdsize;    /* includes id string */
+    uint64_t        vmaddr;     /* memory address of the dylib */
+    uint64_t        fileoff;    /* file offset of the dylib */
+    union lc_str    entry_id;   /* contained entry id */
+    uint32_t        reserved;   /* entry_id is 32-bits long, so this is the reserved padding */
 };
 
 /*
@@ -1203,12 +1244,50 @@ struct encryption_info_command_64 {
  */
 struct version_min_command {
     uint32_t	cmd;		/* LC_VERSION_MIN_MACOSX or
-				   LC_VERSION_MIN_IPHONEOS
-				   LC_VERSION_MIN_WATCHOS */
+				   LC_VERSION_MIN_IPHONEOS or
+				   LC_VERSION_MIN_WATCHOS or
+				   LC_VERSION_MIN_TVOS */
     uint32_t	cmdsize;	/* sizeof(struct min_version_command) */
     uint32_t	version;	/* X.Y.Z is encoded in nibbles xxxx.yy.zz */
     uint32_t	sdk;		/* X.Y.Z is encoded in nibbles xxxx.yy.zz */
 };
+
+/*
+ * The build_version_command contains the min OS version on which this
+ * binary was built to run for its platform.  The list of known platforms and
+ * tool values following it.
+ */
+struct build_version_command {
+    uint32_t	cmd;		/* LC_BUILD_VERSION */
+    uint32_t	cmdsize;	/* sizeof(struct build_version_command) plus */
+                                /* ntools * sizeof(struct build_tool_version) */
+    uint32_t	platform;	/* platform */
+    uint32_t	minos;		/* X.Y.Z is encoded in nibbles xxxx.yy.zz */
+    uint32_t	sdk;		/* X.Y.Z is encoded in nibbles xxxx.yy.zz */
+    uint32_t	ntools;		/* number of tool entries following this */
+};
+
+struct build_tool_version {
+    uint32_t	tool;		/* enum for the tool */
+    uint32_t	version;	/* version number of the tool */
+};
+
+/* Known values for the platform field above. */
+#define PLATFORM_MACOS 1
+#define PLATFORM_IOS 2
+#define PLATFORM_TVOS 3
+#define PLATFORM_WATCHOS 4
+#define PLATFORM_BRIDGEOS 5
+#define PLATFORM_MACCATALYST 6
+#define PLATFORM_IOSSIMULATOR 7
+#define PLATFORM_TVOSSIMULATOR 8
+#define PLATFORM_WATCHOSSIMULATOR 9
+#define PLATFORM_DRIVERKIT 10
+
+/* Known values for the tool field above. */
+#define TOOL_CLANG 1
+#define TOOL_SWIFT 2
+#define TOOL_LD	3
 
 /*
  * The dyld_info_command contains the file offsets and sizes of 
@@ -1351,6 +1430,7 @@ struct dyld_info_command {
 #define BIND_SPECIAL_DYLIB_SELF					 0
 #define BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE			-1
 #define BIND_SPECIAL_DYLIB_FLAT_LOOKUP				-2
+#define BIND_SPECIAL_DYLIB_WEAK_LOOKUP				-3
 
 #define BIND_SYMBOL_FLAGS_WEAK_IMPORT				0x1
 #define BIND_SYMBOL_FLAGS_NON_WEAK_DEFINITION			0x8
@@ -1370,6 +1450,9 @@ struct dyld_info_command {
 #define BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB			0xA0
 #define BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED			0xB0
 #define BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB		0xC0
+#define	BIND_OPCODE_THREADED					0xD0
+#define	BIND_SUBOPCODE_THREADED_SET_BIND_ORDINAL_TABLE_SIZE_ULEB 0x00
+#define	BIND_SUBOPCODE_THREADED_APPLY				 0x01
 
 
 /*
@@ -1379,6 +1462,7 @@ struct dyld_info_command {
 #define EXPORT_SYMBOL_FLAGS_KIND_MASK				0x03
 #define EXPORT_SYMBOL_FLAGS_KIND_REGULAR			0x00
 #define EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL			0x01
+#define EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE			0x02
 #define EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION			0x04
 #define EXPORT_SYMBOL_FLAGS_REEXPORT				0x08
 #define EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER			0x10
@@ -1487,6 +1571,18 @@ struct tlv_descriptor
 	void*		(*thunk)(struct tlv_descriptor*);
 	unsigned long	key;
 	unsigned long	offset;
+};
+
+/*
+ * LC_NOTE commands describe a region of arbitrary data included in a Mach-O
+ * file.  Its initial use is to record extra data in MH_CORE files.
+ */
+struct note_command {
+    uint32_t	cmd;		/* LC_NOTE */
+    uint32_t	cmdsize;	/* sizeof(struct note_command) */
+    char	data_owner[16];	/* owner name for this LC_NOTE */
+    uint64_t	offset;		/* file offset of this data */
+    uint64_t	size;		/* length of data region */
 };
 
 #endif /* _MACHO_LOADER_H_ */

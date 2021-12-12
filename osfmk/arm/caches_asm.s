@@ -224,7 +224,7 @@ cudr_loop:
 	bx		lr
 
 /*
- *	void CleanPoC_DcacheRegion(vm_offset_t va, unsigned length)
+ *	void CleanPoC_DcacheRegion(vm_offset_t va, size_t length)
  *
  *		Clean d-cache region to Point of Coherency
  */
@@ -239,6 +239,7 @@ LEXT(CleanPoC_DcacheRegion_Force)
 	add		r1, r1, r2
 	sub		r1, r1, #1
 	mov		r1, r1, LSR #MMU_CLINE				// Set cache line counter
+	dsb
 ccdr_loop:
 	mcr		p15, 0, r0, c7, c10, 1				// Clean dcache line to PoC
 	add		r0, r0, #1<<MMU_CLINE				// Get next cache aligned addr

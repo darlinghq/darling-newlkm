@@ -34,11 +34,6 @@
  *			alarm clock facility.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/message.h>
 #include <kern/host.h>
 #include <kern/processor.h>
@@ -50,10 +45,6 @@
 #include <kern/misc_protos.h>
 #include <ipc/ipc_port.h>
 #include <ipc/ipc_space.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 /*
  *	Routine:	ipc_clock_init
@@ -114,7 +105,7 @@ convert_port_to_clock(
 		if (ip_active(port) &&
 		    ((ip_kotype(port) == IKOT_CLOCK) ||
 		    (ip_kotype(port) == IKOT_CLOCK_CTRL))) {
-			clock = (clock_t) port->ip_kobject;
+			clock = (clock_t)ip_get_kobject(port);
 		}
 		ip_unlock(port);
 	}
@@ -140,7 +131,7 @@ convert_port_to_clock_ctrl(
 		ip_lock(port);
 		if (ip_active(port) &&
 		    (ip_kotype(port) == IKOT_CLOCK_CTRL)) {
-			clock = (clock_t) port->ip_kobject;
+			clock = (clock_t) ip_get_kobject(port);
 		}
 		ip_unlock(port);
 	}
@@ -204,7 +195,7 @@ port_name_to_clock(
 		return clock;
 	}
 	if (ip_kotype(port) == IKOT_CLOCK) {
-		clock = (clock_t) port->ip_kobject;
+		clock = (clock_t) ip_get_kobject(port);
 	}
 	ip_unlock(port);
 	return clock;

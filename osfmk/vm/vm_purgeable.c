@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2019-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -736,13 +736,13 @@ vm_purgeable_object_find_and_lock(
 		 */
 		owner = object->vo_owner;
 		if (owner != NULL && owner != VM_OBJECT_OWNER_DISOWNED) {
-#if CONFIG_EMBEDDED
+#if !XNU_TARGET_OS_OSX
 #if CONFIG_JETSAM
 			object_task_importance = proc_get_memstat_priority((struct proc *)get_bsdtask_info(owner), TRUE);
 #endif /* CONFIG_JETSAM */
-#else /* CONFIG_EMBEDDED */
+#else /* !XNU_TARGET_OS_OSX */
 			object_task_importance = task_importance_estimate(owner);
-#endif /* CONFIG_EMBEDDED */
+#endif /* !XNU_TARGET_OS_OSX */
 		}
 
 		if (object_task_importance < best_object_task_importance) {
@@ -1679,7 +1679,7 @@ vm_object_owner_compressed_update(
 	case VM_PURGABLE_DENY:
 		/* not purgeable: must be ledger-tagged */
 		assert(object->vo_ledger_tag != VM_LEDGER_TAG_NONE);
-	/* fallthru */
+		OS_FALLTHROUGH;
 	case VM_PURGABLE_NONVOLATILE:
 		if (delta > 0) {
 			ledger_credit(owner->ledger,

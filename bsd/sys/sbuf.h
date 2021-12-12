@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2000 Poul-Henning Kamp and Dag-Erling Coïdan Smørgrav
+ * Copyright (c) 2000 Poul-Henning Kamp and Dag-Erling Co√Ødan Sm√∏rgrav
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,6 +33,7 @@
 
 #include <sys/_types.h>
 #include <stdarg.h>
+#include <stddef.h>
 
 /*
  * Structure definition
@@ -53,9 +54,7 @@ struct sbuf {
 };
 
 __BEGIN_DECLS
-/*
- * API functions
- */
+#ifdef KERNEL_PRIVATE
 struct sbuf     *sbuf_new(struct sbuf *, char *, int, int);
 void             sbuf_clear(struct sbuf *);
 int              sbuf_setpos(struct sbuf *, int);
@@ -73,13 +72,8 @@ char            *sbuf_data(struct sbuf *);
 int              sbuf_len(struct sbuf *);
 int              sbuf_done(struct sbuf *);
 void             sbuf_delete(struct sbuf *);
-
-#ifdef KERNEL
-struct uio;
-struct sbuf     *sbuf_uionew(struct sbuf *, struct uio *, int *);
-int              sbuf_bcopyin(struct sbuf *, const void *, size_t);
-int              sbuf_copyin(struct sbuf *, const void *, size_t);
 #endif
+
 __END_DECLS
 
 #endif

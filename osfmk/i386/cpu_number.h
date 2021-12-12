@@ -66,18 +66,8 @@
 
 #ifdef  KERNEL_PRIVATE
 
-#ifndef __DARLING__
 /* Use a function to do this less directly. */
 extern int      cpu_number(void);
-#endif
-
-#ifdef MACH_KERNEL_PRIVATE
-#include <i386/cpu_data.h>
-
-/* Get the cpu number directly from the pre-processor data area */
-#define cpu_number()    get_cpu_number()
-
-#endif  /* !MACH_KERNEL_PRIVATE */
 
 #endif  /* KERNEL_PRIVATE */
 

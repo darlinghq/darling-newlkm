@@ -63,11 +63,6 @@
  *	Functions to manipulate IPC port sets.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/port.h>
 #include <mach/kern_return.h>
 #include <mach/message.h>
@@ -82,10 +77,7 @@
 
 #include <vm/vm_map.h>
 #include <libkern/section_keywords.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
+#include <pthread/priority_private.h>
 
 /*
  *	Routine:	ipc_pset_alloc
@@ -184,12 +176,10 @@ ipc_pset_alloc_special(
 	assert(space->is_table == IE_NULL);
 	assert(!is_active(space));
 
-	pset = ips_object_to_pset(io_alloc(IOT_PORT_SET));
+	pset = ips_object_to_pset(io_alloc(IOT_PORT_SET, Z_WAITOK | Z_ZERO));
 	if (pset == IPS_NULL) {
 		return IPS_NULL;
 	}
-
-	bzero((char *)pset, sizeof(*pset));
 
 	io_lock_init(ips_to_object(pset));
 	pset->ips_references = 1;
@@ -423,8 +413,7 @@ static int
 filt_machport_adjust_qos(struct knote *kn, ipc_kmsg_t first)
 {
 	if (kn->kn_sfflags & MACH_RCV_MSG) {
-		int qos = _pthread_priority_thread_qos(first->ikm_qos_override);
-		return FILTER_ADJUST_EVENT_QOS(qos);
+		return FILTER_ADJUST_EVENT_QOS(first->ikm_qos_override);
 	}
 	return 0;
 }
@@ -1000,7 +989,7 @@ filt_machportevent(struct knote *kn, long hint __assert_only)
 	int result = 0;
 
 	/* mqueue locked by caller */
-	assert(imq_held(mqueue));
+	imq_held(mqueue);
 	assert(hint != NOTE_REVOKE);
 	if (imq_is_valid(mqueue)) {
 		assert(!imq_is_set(mqueue));
@@ -1215,8 +1204,8 @@ filt_machportprocess(struct knote *kn, struct kevent_qos_s *kev)
 	 * QoS values in the continuation save area on successful receive.
 	 */
 	if (kev->fflags == MACH_MSG_SUCCESS) {
-		kev->ext[2] = ((uint64_t)self->ith_qos << 32) |
-		    (uint64_t)self->ith_qos_override;
+		kev->ext[2] = ((uint64_t)self->ith_ppriority << 32) |
+		    _pthread_priority_make_from_thread_qos(self->ith_qos_override, 0, 0);
 	}
 
 	return FILTER_ACTIVE;

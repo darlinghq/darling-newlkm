@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -176,11 +176,11 @@ check_again:
 
 	/* see comments in sock_setupcall() */
 	if (callback != NULL) {
-#if CONFIG_EMBEDDED
+#if (defined(__arm__) || defined(__arm64__))
 		sock_setupcalls_locked(new_so, callback, cookie, callback, cookie, 0);
-#else
+#else /* (defined(__arm__) || defined(__arm64__)) */
 		sock_setupcalls_locked(new_so, callback, cookie, NULL, NULL, 0);
-#endif /* !CONFIG_EMBEDDED */
+#endif /* (defined(__arm__) || defined(__arm64__)) */
 	}
 
 	if (sa != NULL && from != NULL) {
@@ -237,7 +237,7 @@ sock_bind(socket_t sock, const struct sockaddr *to)
 	}
 
 	if (to->sa_len > sizeof(ss)) {
-		MALLOC(sa, struct sockaddr *, to->sa_len, M_SONAME, M_WAITOK);
+		sa = kheap_alloc(KHEAP_TEMP, to->sa_len, Z_WAITOK);
 		if (sa == NULL) {
 			return ENOBUFS;
 		}
@@ -250,7 +250,7 @@ sock_bind(socket_t sock, const struct sockaddr *to)
 	error = sobindlock(sock, sa, 1);        /* will lock socket */
 
 	if (sa != NULL && want_free == TRUE) {
-		FREE(sa, M_SONAME);
+		kheap_free(KHEAP_TEMP, sa, sa->sa_len);
 	}
 
 	return error;
@@ -270,8 +270,8 @@ sock_connect(socket_t sock, const struct sockaddr *to, int flags)
 	}
 
 	if (to->sa_len > sizeof(ss)) {
-		MALLOC(sa, struct sockaddr *, to->sa_len, M_SONAME,
-		    (flags & MSG_DONTWAIT) ? M_NOWAIT : M_WAITOK);
+		sa = kheap_alloc(KHEAP_TEMP, to->sa_len,
+		    (flags & MSG_DONTWAIT) ? Z_NOWAIT : Z_WAITOK);
 		if (sa == NULL) {
 			return ENOBUFS;
 		}
@@ -323,7 +323,7 @@ out:
 	socket_unlock(sock, 1);
 
 	if (sa != NULL && want_free == TRUE) {
-		FREE(sa, M_SONAME);
+		kheap_free(KHEAP_TEMP, sa, sa->sa_len);
 	}
 
 	return error;
@@ -475,9 +475,8 @@ sogetaddr_locked(struct socket *so, struct sockaddr **psa, int peer)
 
 	if (error == 0 && *psa == NULL) {
 		error = ENOMEM;
-	} else if (error != 0 && *psa != NULL) {
+	} else if (error != 0) {
 		FREE(*psa, M_SONAME);
-		*psa = NULL;
 	}
 	return error;
 }
@@ -501,9 +500,7 @@ sock_getaddr(socket_t sock, struct sockaddr **psa, int peer)
 void
 sock_freeaddr(struct sockaddr *sa)
 {
-	if (sa != NULL) {
-		FREE(sa, M_SONAME);
-	}
+	FREE(sa, M_SONAME);
 }
 
 errno_t
@@ -525,7 +522,7 @@ sock_getsockopt(socket_t sock, int level, int optname, void *optval,
 	sopt.sopt_p = kernproc;
 	error = sogetoptlock(sock, &sopt, 1);   /* will lock socket */
 	if (error == 0) {
-		*optlen = sopt.sopt_valsize;
+		*optlen = (uint32_t)sopt.sopt_valsize;
 	}
 	return error;
 }
@@ -559,11 +556,10 @@ sock_setsockopt(socket_t sock, int level, int optname, const void *optval,
  * This follows the recommended mappings between DSCP code points
  * and WMM access classes.
  */
-static u_int32_t so_tc_from_dscp(u_int8_t dscp);
-static u_int32_t
-so_tc_from_dscp(u_int8_t dscp)
+static uint32_t
+so_tc_from_dscp(uint8_t dscp)
 {
-	u_int32_t tc;
+	uint32_t tc;
 
 	if (dscp >= 0x30 && dscp <= 0x3f) {
 		tc = SO_TC_VO;
@@ -610,7 +606,7 @@ sock_settclassopt(socket_t sock, const void *optval, size_t optlen)
 	 * Set the socket traffic class based on the passed DSCP code point
 	 * regardless of the scope of the destination
 	 */
-	sotc = so_tc_from_dscp((*(const int *)optval) >> 2);
+	sotc = so_tc_from_dscp((uint8_t)((*(const int *)optval) >> 2));
 
 	sopt.sopt_dir = SOPT_SET;
 	sopt.sopt_val = CAST_USER_ADDR_T(&sotc);
@@ -722,7 +718,7 @@ sock_receive_internal(socket_t sock, struct msghdr *msg, mbuf_t *data,
 	uio_t auio;
 	struct mbuf *control = NULL;
 	int error = 0;
-	int length = 0;
+	user_ssize_t length = 0;
 	struct sockaddr *fromsa = NULL;
 	char uio_buf[UIO_SIZEOF((msg != NULL) ? msg->msg_iovlen : 0)];
 
@@ -799,7 +795,7 @@ sock_receive_internal(socket_t sock, struct msghdr *msg, mbuf_t *data,
 				m = m->m_next;
 			}
 			msg->msg_controllen =
-			    (uintptr_t)ctlbuf - (uintptr_t)msg->msg_control;
+			    (socklen_t)((uintptr_t)ctlbuf - (uintptr_t)msg->msg_control);
 		}
 	}
 
@@ -807,9 +803,7 @@ cleanup:
 	if (control != NULL) {
 		m_freem(control);
 	}
-	if (fromsa != NULL) {
-		FREE(fromsa, M_SONAME);
-	}
+	FREE(fromsa, M_SONAME);
 	return error;
 }
 
@@ -844,7 +838,7 @@ sock_send_internal(socket_t sock, const struct msghdr *msg, mbuf_t data,
 	uio_t auio = NULL;
 	struct mbuf *control = NULL;
 	int error = 0;
-	int datalen = 0;
+	user_ssize_t datalen = 0;
 	char uio_buf[UIO_SIZEOF((msg != NULL ? msg->msg_iovlen : 1))];
 
 	if (sock == NULL) {
@@ -1312,11 +1306,11 @@ sock_setupcall(socket_t sock, sock_upcall callback, void *context)
 	 * the read and write callbacks and their respective parameters.
 	 */
 	socket_lock(sock, 1);
-#if CONFIG_EMBEDDED
+#if (defined(__arm__) || defined(__arm64__))
 	sock_setupcalls_locked(sock, callback, context, callback, context, 0);
-#else
+#else /* (defined(__arm__) || defined(__arm64__)) */
 	sock_setupcalls_locked(sock, callback, context, NULL, NULL, 0);
-#endif /* !CONFIG_EMBEDDED */
+#endif /* (defined(__arm__) || defined(__arm64__)) */
 	socket_unlock(sock, 1);
 
 	return 0;
@@ -1342,7 +1336,7 @@ sock_setupcalls(socket_t sock, sock_upcall rcallback, void *rcontext,
 
 void
 sock_catchevents_locked(socket_t sock, sock_evupcall ecallback, void *econtext,
-    u_int32_t emask)
+    long emask)
 {
 	socket_lock_assert_owned(sock);
 
@@ -1352,7 +1346,7 @@ sock_catchevents_locked(socket_t sock, sock_evupcall ecallback, void *econtext,
 	if (ecallback != NULL) {
 		sock->so_event = ecallback;
 		sock->so_eventarg = econtext;
-		sock->so_eventmask = emask;
+		sock->so_eventmask = (uint32_t)emask;
 	} else {
 		sock->so_event = sonullevent;
 		sock->so_eventarg = NULL;
@@ -1362,7 +1356,7 @@ sock_catchevents_locked(socket_t sock, sock_evupcall ecallback, void *econtext,
 
 errno_t
 sock_catchevents(socket_t sock, sock_evupcall ecallback, void *econtext,
-    u_int32_t emask)
+    long emask)
 {
 	if (sock == NULL) {
 		return EINVAL;

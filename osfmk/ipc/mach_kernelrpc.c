@@ -26,11 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_vm_server.h>
@@ -42,10 +37,17 @@
 #include <kern/ipc_tt.h>
 #include <kern/kalloc.h>
 #include <vm/vm_protos.h>
+#include <kdp/kdp_dyld.h>
 
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
+kern_return_t
+mach_port_get_attributes(
+	ipc_space_t             space,
+	mach_port_name_t        name,
+	int                     flavor,
+	mach_port_info_t        info,
+	mach_msg_type_number_t  *count);
+
+extern lck_mtx_t g_dyldinfo_mtx;
 
 int
 _kernelrpc_mach_vm_allocate_trap(struct _kernelrpc_mach_vm_allocate_trap_args *args)
@@ -198,25 +200,6 @@ done:
 }
 
 int
-_kernelrpc_mach_port_destroy_trap(struct _kernelrpc_mach_port_destroy_args *args)
-{
-	task_t task = port_name_to_task(args->target);
-	int rv = MACH_SEND_INVALID_DEST;
-
-	if (task != current_task()) {
-		goto done;
-	}
-
-	rv = mach_port_destroy(task->itk_space, args->name);
-
-done:
-	if (task) {
-		task_deallocate(task);
-	}
-	return rv;
-}
-
-int
 _kernelrpc_mach_port_deallocate_trap(struct _kernelrpc_mach_port_deallocate_args *args)
 {
 	task_t task = port_name_to_task(args->target);
@@ -301,7 +284,7 @@ _kernelrpc_mach_port_insert_right_trap(struct _kernelrpc_mach_port_insert_right_
 	}
 
 	rv = ipc_object_copyin(task->itk_space, args->poly, args->polyPoly,
-	    (ipc_object_t *)&port, 0, NULL, IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND);
+	    (ipc_object_t *)&port, 0, NULL, IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND);
 	if (rv != KERN_SUCCESS) {
 		goto done;
 	}
@@ -322,7 +305,7 @@ done:
 int
 _kernelrpc_mach_port_get_attributes_trap(struct _kernelrpc_mach_port_get_attributes_args *args)
 {
-	task_inspect_t task = port_name_to_task_inspect(args->target);
+	task_read_t task = port_name_to_task_read_no_eval(args->target);
 	int rv = MACH_SEND_INVALID_DEST;
 	mach_msg_type_number_t count;
 
@@ -332,17 +315,12 @@ _kernelrpc_mach_port_get_attributes_trap(struct _kernelrpc_mach_port_get_attribu
 
 	// MIG does not define the type or size of the mach_port_info_t out array
 	// anywhere, so derive them from the field in the generated reply struct
-#define MACH_PORT_INFO_OUT (((__Reply__mach_port_get_attributes_t*)NULL)->port_info_out)
+#define MACH_PORT_INFO_OUT (((__Reply__mach_port_get_attributes_from_user_t*)NULL)->port_info_out)
 #define MACH_PORT_INFO_STACK_LIMIT 80 // current size is 68 == 17 * sizeof(integer_t)
 	_Static_assert(sizeof(MACH_PORT_INFO_OUT) < MACH_PORT_INFO_STACK_LIMIT,
 	    "mach_port_info_t has grown significantly, reevaluate stack usage");
 	const mach_msg_type_number_t max_count = (sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0]));
-#if defined(__DARLING__) && !defined(__clang__)
-	// GCC doesn't accept the variable above as a compile-time constant
-	typeof(MACH_PORT_INFO_OUT[0]) info[sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0])];
-#else
 	typeof(MACH_PORT_INFO_OUT[0]) info[max_count];
-#endif
 
 	/*
 	 * zero out our stack buffer because not all flavors of
@@ -563,10 +541,8 @@ _kernelrpc_mach_port_request_notification_trap(
 		// thread-argument-passing and its value should not be garbage
 		current_thread()->ith_knote = ITH_KNOTE_NULL;
 		rv = ipc_object_copyout(task->itk_space, ip_to_object(previous),
-		    MACH_MSG_TYPE_PORT_SEND_ONCE, NULL, NULL, &previous_name);
+		    MACH_MSG_TYPE_PORT_SEND_ONCE, IPC_OBJECT_COPYOUT_FLAGS_NONE, NULL, NULL, &previous_name);
 		if (rv != KERN_SUCCESS) {
-			ipc_object_destroy(ip_to_object(previous),
-			    MACH_MSG_TYPE_PORT_SEND_ONCE);
 			goto done;
 		}
 	}
@@ -587,51 +563,49 @@ host_create_mach_voucher_trap(struct host_create_mach_voucher_args *args)
 	ipc_voucher_t new_voucher = IV_NULL;
 	ipc_port_t voucher_port = IPC_PORT_NULL;
 	mach_port_name_t voucher_name = 0;
-	kern_return_t kr = 0;
+	kern_return_t kr = KERN_SUCCESS;
 
 	if (host == HOST_NULL) {
 		return MACH_SEND_INVALID_DEST;
 	}
-
 	if (args->recipes_size < 0) {
 		return KERN_INVALID_ARGUMENT;
-	} else if (args->recipes_size > MACH_VOUCHER_ATTR_MAX_RAW_RECIPE_ARRAY_SIZE) {
+	}
+	if (args->recipes_size > MACH_VOUCHER_ATTR_MAX_RAW_RECIPE_ARRAY_SIZE) {
 		return MIG_ARRAY_TOO_LARGE;
 	}
 
-	if (args->recipes_size < MACH_VOUCHER_TRAP_STACK_LIMIT) {
-		/* keep small recipes on the stack for speed */
-		uint8_t krecipes[args->recipes_size];
-		if (copyin(CAST_USER_ADDR_T(args->recipes), (void *)krecipes, args->recipes_size)) {
-			kr = KERN_MEMORY_ERROR;
-			goto done;
-		}
-		kr = host_create_mach_voucher(host, krecipes, args->recipes_size, &new_voucher);
-	} else {
-		uint8_t *krecipes = kalloc((vm_size_t)args->recipes_size);
-		if (!krecipes) {
-			kr = KERN_RESOURCE_SHORTAGE;
-			goto done;
-		}
+	/* keep small recipes on the stack for speed */
+	uint8_t buf[MACH_VOUCHER_TRAP_STACK_LIMIT];
+	uint8_t *krecipes = buf;
 
-		if (copyin(CAST_USER_ADDR_T(args->recipes), (void *)krecipes, args->recipes_size)) {
-			kfree(krecipes, (vm_size_t)args->recipes_size);
-			kr = KERN_MEMORY_ERROR;
-			goto done;
+	if (args->recipes_size > MACH_VOUCHER_TRAP_STACK_LIMIT) {
+		krecipes = kheap_alloc(KHEAP_TEMP, args->recipes_size, Z_WAITOK);
+		if (krecipes == NULL) {
+			return KERN_RESOURCE_SHORTAGE;
 		}
-
-		kr = host_create_mach_voucher(host, krecipes, args->recipes_size, &new_voucher);
-		kfree(krecipes, (vm_size_t)args->recipes_size);
 	}
 
-	if (kr == 0) {
-		voucher_port = convert_voucher_to_port(new_voucher);
-		voucher_name = ipc_port_copyout_send(voucher_port, current_space());
-
-		kr = copyout(&voucher_name, args->voucher, sizeof(voucher_name));
+	if (copyin(CAST_USER_ADDR_T(args->recipes), (void *)krecipes, args->recipes_size)) {
+		kr = KERN_MEMORY_ERROR;
+		goto done;
 	}
+
+	kr = host_create_mach_voucher(host, krecipes, args->recipes_size, &new_voucher);
+	if (kr != KERN_SUCCESS) {
+		goto done;
+	}
+
+	voucher_port = convert_voucher_to_port(new_voucher);
+	voucher_name = ipc_port_copyout_send(voucher_port, current_space());
+
+	kr = copyout(&voucher_name, args->voucher, sizeof(voucher_name));
 
 done:
+	if (args->recipes_size > MACH_VOUCHER_TRAP_STACK_LIMIT) {
+		kheap_free(KHEAP_TEMP, krecipes, args->recipes_size);
+	}
+
 	return kr;
 }
 
@@ -655,51 +629,224 @@ mach_voucher_extract_attr_recipe_trap(struct mach_voucher_extract_attr_recipe_ar
 		return MACH_SEND_INVALID_DEST;
 	}
 
+	/* keep small recipes on the stack for speed */
+	uint8_t buf[MACH_VOUCHER_TRAP_STACK_LIMIT];
+	uint8_t *krecipe = buf;
 	mach_msg_type_number_t max_sz = sz;
 
-	if (sz < MACH_VOUCHER_TRAP_STACK_LIMIT) {
-		/* keep small recipes on the stack for speed */
-		uint8_t krecipe[sz];
-		bzero(krecipe, sz);
-		if (copyin(CAST_USER_ADDR_T(args->recipe), (void *)krecipe, sz)) {
-			kr = KERN_MEMORY_ERROR;
-			goto done;
-		}
-		kr = mach_voucher_extract_attr_recipe(voucher, args->key,
-		    (mach_voucher_attr_raw_recipe_t)krecipe, &sz);
-		assert(sz <= max_sz);
-
-		if (kr == KERN_SUCCESS && sz > 0) {
-			kr = copyout(krecipe, CAST_USER_ADDR_T(args->recipe), sz);
-		}
-	} else {
-		uint8_t *krecipe = kalloc((vm_size_t)max_sz);
+	if (max_sz > MACH_VOUCHER_TRAP_STACK_LIMIT) {
+		krecipe = kheap_alloc(KHEAP_TEMP, max_sz, Z_WAITOK);
 		if (!krecipe) {
-			kr = KERN_RESOURCE_SHORTAGE;
-			goto done;
+			return KERN_RESOURCE_SHORTAGE;
 		}
-
-		if (copyin(CAST_USER_ADDR_T(args->recipe), (void *)krecipe, sz)) {
-			kfree(krecipe, (vm_size_t)max_sz);
-			kr = KERN_MEMORY_ERROR;
-			goto done;
-		}
-
-		kr = mach_voucher_extract_attr_recipe(voucher, args->key,
-		    (mach_voucher_attr_raw_recipe_t)krecipe, &sz);
-		assert(sz <= max_sz);
-
-		if (kr == KERN_SUCCESS && sz > 0) {
-			kr = copyout(krecipe, CAST_USER_ADDR_T(args->recipe), sz);
-		}
-		kfree(krecipe, (vm_size_t)max_sz);
 	}
 
+	if (copyin(CAST_USER_ADDR_T(args->recipe), (void *)krecipe, max_sz)) {
+		kr = KERN_MEMORY_ERROR;
+		goto done;
+	}
+
+	kr = mach_voucher_extract_attr_recipe(voucher, args->key,
+	    (mach_voucher_attr_raw_recipe_t)krecipe, &sz);
+	assert(sz <= max_sz);
+
+	if (kr == KERN_SUCCESS && sz > 0) {
+		kr = copyout(krecipe, CAST_USER_ADDR_T(args->recipe), sz);
+	}
 	if (kr == KERN_SUCCESS) {
 		kr = copyout(&sz, args->recipe_size, sizeof(sz));
 	}
 
+
 done:
+	if (max_sz > MACH_VOUCHER_TRAP_STACK_LIMIT) {
+		kheap_free(KHEAP_TEMP, krecipe, max_sz);
+	}
+
 	ipc_voucher_release(voucher);
+	return kr;
+}
+
+/*
+ * Mach Trap: task_dyld_process_info_notify_get_trap
+ *
+ * Return an array of active dyld notifier port names for current_task(). User
+ * is responsible for allocating the memory for the mach port names array
+ * and deallocating the port names inside the array returned.
+ *
+ * Does not consume any reference.
+ *
+ * Args:
+ *     names_addr: Address for mach port names array.          (In param only)
+ *     names_count_addr: Number of active dyld notifier ports. (In-Out param)
+ *         In:  Number of slots available for copyout in caller
+ *         Out: Actual number of ports copied out
+ *
+ * Returns:
+ *
+ *     KERN_SUCCESS: A valid namesCnt is returned. (Can be zero)
+ *     KERN_INVALID_ARGUMENT: Arguments are invalid.
+ *     KERN_MEMORY_ERROR: Memory copyio operations failed.
+ *     KERN_NO_SPACE: User allocated memory for port names copyout is insufficient.
+ *
+ *     Other error code see task_info().
+ */
+kern_return_t
+task_dyld_process_info_notify_get_trap(struct task_dyld_process_info_notify_get_trap_args *args)
+{
+	struct task_dyld_info dyld_info;
+	mach_msg_type_number_t info_count = TASK_DYLD_INFO_COUNT;
+	mach_port_name_t copyout_names[DYLD_MAX_PROCESS_INFO_NOTIFY_COUNT];
+	ipc_port_t copyout_ports[DYLD_MAX_PROCESS_INFO_NOTIFY_COUNT];
+	ipc_port_t release_ports[DYLD_MAX_PROCESS_INFO_NOTIFY_COUNT];
+	uint32_t copyout_count = 0, release_count = 0, active_count = 0;
+	mach_vm_address_t ports_addr; /* a user space address */
+	mach_port_name_t new_name;
+	natural_t user_names_count = 0;
+	ipc_port_t sright;
+	kern_return_t kr;
+	ipc_port_t *portp;
+	ipc_entry_t entry;
+
+	if ((mach_port_name_array_t)args->names_addr == NULL || (natural_t *)args->names_count_addr == NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	kr = copyin((vm_map_address_t)args->names_count_addr, &user_names_count, sizeof(natural_t));
+	if (kr) {
+		return KERN_MEMORY_FAILURE;
+	}
+
+	if (user_names_count == 0) {
+		return KERN_NO_SPACE;
+	}
+
+	kr = task_info(current_task(), TASK_DYLD_INFO, (task_info_t)&dyld_info, &info_count);
+	if (kr) {
+		return kr;
+	}
+
+	if (dyld_info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_32) {
+		ports_addr = (mach_vm_address_t)(dyld_info.all_image_info_addr +
+		    offsetof(struct user32_dyld_all_image_infos, notifyMachPorts));
+	} else {
+		ports_addr = (mach_vm_address_t)(dyld_info.all_image_info_addr +
+		    offsetof(struct user64_dyld_all_image_infos, notifyMachPorts));
+	}
+
+	lck_mtx_lock(&g_dyldinfo_mtx);
+	itk_lock(current_task());
+
+	if (current_task()->itk_dyld_notify == NULL) {
+		itk_unlock(current_task());
+		(void)copyoutmap_atomic32(current_task()->map, MACH_PORT_NULL, (vm_map_address_t)ports_addr); /* reset magic */
+		lck_mtx_unlock(&g_dyldinfo_mtx);
+
+		kr = copyout(&copyout_count, (vm_map_address_t)args->names_count_addr, sizeof(natural_t));
+		return kr ? KERN_MEMORY_ERROR : KERN_SUCCESS;
+	}
+
+	for (int slot = 0; slot < DYLD_MAX_PROCESS_INFO_NOTIFY_COUNT; slot++) {
+		portp = &current_task()->itk_dyld_notify[slot];
+		if (*portp == IPC_PORT_NULL) {
+			continue;
+		} else {
+			sright = ipc_port_copy_send(*portp);
+			if (IP_VALID(sright)) {
+				copyout_ports[active_count++] = sright; /* donates */
+				sright = IPC_PORT_NULL;
+			} else {
+				release_ports[release_count++] = *portp; /* donates */
+				*portp = IPC_PORT_NULL;
+			}
+		}
+	}
+
+	task_dyld_process_info_update_helper(current_task(), active_count,
+	    (vm_map_address_t)ports_addr, release_ports, release_count);
+	/* itk_lock, g_dyldinfo_mtx are unlocked upon return */
+
+	for (int i = 0; i < active_count; i++) {
+		sright = copyout_ports[i]; /* donates */
+		copyout_ports[i] = IPC_PORT_NULL;
+
+		assert(IP_VALID(sright));
+		ip_reference(sright);
+		/*
+		 * Below we consume each send right in copyout_ports, and if copyout_send
+		 * succeeds, replace it with a port ref; otherwise release the port ref.
+		 *
+		 * We can reuse copyout_ports array for this purpose since
+		 * copyout_count <= active_count.
+		 */
+		new_name = ipc_port_copyout_send(sright, current_space()); /* consumes */
+		if (MACH_PORT_VALID(new_name)) {
+			copyout_names[copyout_count] = new_name;
+			copyout_ports[copyout_count] = sright; /* now holds port ref */
+			copyout_count++;
+		} else {
+			ip_release(sright);
+		}
+	}
+
+	assert(copyout_count <= active_count);
+
+	if (user_names_count < copyout_count) {
+		kr = KERN_NO_SPACE;
+		goto copyout_failed;
+	}
+
+	/* copyout to caller's local copy */
+	kr = copyout(copyout_names, (vm_map_address_t)args->names_addr,
+	    copyout_count * sizeof(mach_port_name_t));
+	if (kr) {
+		kr = KERN_MEMORY_ERROR;
+		goto copyout_failed;
+	}
+
+	kr = copyout(&copyout_count, (vm_map_address_t)args->names_count_addr, sizeof(natural_t));
+	if (kr) {
+		kr = KERN_MEMORY_ERROR;
+		goto copyout_failed;
+	}
+
+	/* now, release port refs on copyout_ports */
+	for (int i = 0; i < copyout_count; i++) {
+		sright = copyout_ports[i];
+		assert(IP_VALID(sright));
+		ip_release(sright);
+	}
+
+	return KERN_SUCCESS;
+
+
+copyout_failed:
+	/*
+	 * No locks are held beyond this point.
+	 *
+	 * Release port refs on copyout_ports, and deallocate ports that we copied out
+	 * earlier.
+	 */
+	for (int i = 0; i < copyout_count; i++) {
+		sright = copyout_ports[i];
+		assert(IP_VALID(sright));
+
+		if (ipc_right_lookup_write(current_space(), copyout_names[i], &entry)) {
+			/* userspace has deallocated the name we copyout */
+			ip_release(sright);
+			continue;
+		}
+		/* space is locked and active */
+		if (entry->ie_object == ip_to_object(sright) ||
+		    IE_BITS_TYPE(entry->ie_bits) == MACH_PORT_TYPE_DEAD_NAME) {
+			(void)ipc_right_dealloc(current_space(), copyout_names[i], entry); /* unlocks space */
+		} else {
+			is_write_unlock(current_space());
+		}
+
+		/* space is unlocked */
+		ip_release(sright);
+	}
+
 	return kr;
 }

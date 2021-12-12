@@ -30,11 +30,6 @@
  *
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <kern/sync_sema.h>
 #include <kern/sync_lock.h>
 #include <kern/ipc_kobject.h>
@@ -48,9 +43,6 @@
 #include <mach/mach_port_server.h>
 #include <mach/port.h>
 
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 /*
  *	Routine:	port_name_to_semaphore
@@ -116,7 +108,7 @@ convert_port_to_semaphore(ipc_port_t port)
 		 */
 		if (ip_kotype(port) == IKOT_SEMAPHORE) {
 			require_ip_active(port);
-			semaphore = (semaphore_t) port->ip_kobject;
+			semaphore = (semaphore_t) ip_get_kobject(port);
 			semaphore_reference(semaphore);
 			return semaphore;
 		}
@@ -148,7 +140,7 @@ convert_semaphore_to_port(semaphore_t semaphore)
 	 * semaphore_notify if this is the first send right
 	 */
 	if (!ipc_kobject_make_send_lazy_alloc_port(&semaphore->port,
-	    (ipc_kobject_t) semaphore, IKOT_SEMAPHORE)) {
+	    (ipc_kobject_t) semaphore, IKOT_SEMAPHORE, IPC_KOBJECT_ALLOC_NONE, false, 0)) {
 		semaphore_dereference(semaphore);
 	}
 	return semaphore->port;
@@ -177,7 +169,7 @@ semaphore_notify(mach_msg_header_t *msg)
 	require_ip_active(port);
 	assert(IKOT_SEMAPHORE == ip_kotype(port));
 
-	semaphore_dereference((semaphore_t)port->ip_kobject);
+	semaphore_dereference((semaphore_t) ip_get_kobject(port));
 }
 
 lock_set_t

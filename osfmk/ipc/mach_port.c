@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -70,11 +70,6 @@
  *	Exported kernel calls.  See mach/mach_port.defs.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach_debug.h>
 
 #include <mach/port.h>
@@ -85,9 +80,7 @@
 #include <mach/vm_prot.h>
 #include <mach/vm_map.h>
 #include <kern/task.h>
-#include <kern/counters.h>
 #include <kern/thread.h>
-#include <kern/kalloc.h>
 #include <kern/exc_guard.h>
 #include <mach/mach_port_server.h>
 #include <vm/vm_map.h>
@@ -103,14 +96,19 @@
 #include <ipc/ipc_kmsg.h>
 #include <kern/misc_protos.h>
 #include <security/mac_mach_internal.h>
+#include <kern/work_interval.h>
+#include <kern/policy_internal.h>
 
 #if IMPORTANCE_INHERITANCE
 #include <ipc/ipc_importance.h>
 #endif
 
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
+kern_return_t mach_port_get_attributes(ipc_space_t space, mach_port_name_t name,
+    int flavor, mach_port_info_t info, mach_msg_type_number_t  *count);
+kern_return_t mach_port_get_context(ipc_space_t space, mach_port_name_t name,
+    mach_vm_address_t *context);
+kern_return_t mach_port_get_set_status(ipc_space_t space, mach_port_name_t name,
+    mach_port_name_t **members, mach_msg_type_number_t *membersCnt);
 
 /* Zeroed template of qos flags */
 
@@ -929,7 +927,7 @@ mach_port_get_refs(
 		switch (right) {
 		case MACH_PORT_RIGHT_SEND_ONCE:
 			assert(urefs == 1);
-		/* fall-through */
+			OS_FALLTHROUGH;
 
 		case MACH_PORT_RIGHT_PORT_SET:
 		case MACH_PORT_RIGHT_RECEIVE:
@@ -1244,6 +1242,25 @@ mach_port_get_context(
 	return KERN_SUCCESS;
 }
 
+kern_return_t
+mach_port_get_context_from_user(
+	mach_port_t             port,
+	mach_port_name_t        name,
+	mach_vm_address_t       *context)
+{
+	kern_return_t kr;
+
+	ipc_space_t space = convert_port_to_space_check_type(port, NULL, TASK_FLAVOR_READ, FALSE);
+
+	if (space == IPC_SPACE_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	kr = mach_port_get_context(space, name, context);
+
+	ipc_space_release(space);
+	return kr;
+}
 
 /*
  *	Routine:	mach_port_set_context [kernel call]
@@ -1416,17 +1433,36 @@ mach_port_get_set_status(
 		    (vm_map_size_t)size_used, TRUE, &memory);
 		assert(kr == KERN_SUCCESS);
 
-#ifndef __DARLING__ // Our kmem_free cannot free parts of a block
 		if (vm_size_used != size) {
 			kmem_free(ipc_kernel_map,
 			    addr + vm_size_used, size - vm_size_used);
 		}
-#endif
 	}
 
 	*members = (mach_port_name_t *) memory;
 	*membersCnt = actual;
 	return KERN_SUCCESS;
+}
+
+kern_return_t
+mach_port_get_set_status_from_user(
+	mach_port_t                     port,
+	mach_port_name_t                name,
+	mach_port_name_t                **members,
+	mach_msg_type_number_t          *membersCnt)
+{
+	kern_return_t kr;
+
+	ipc_space_t space = convert_port_to_space_check_type(port, NULL, TASK_FLAVOR_READ, FALSE);
+
+	if (space == IPC_SPACE_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	kr = mach_port_get_set_status(space, name, members, membersCnt);
+
+	ipc_space_release(space);
+	return kr;
 }
 
 /*
@@ -1639,8 +1675,12 @@ mach_port_request_notification(
 		}
 		/* port is locked and active */
 
-		/* you cannot register for port death notifications on a kobject */
-		if (ip_kotype(port) != IKOT_NONE) {
+		/*
+		 * you cannot register for port death notifications on a kobject,
+		 * kolabel or special reply port
+		 */
+		if (ip_is_kobject(port) || ip_is_kolabeled(port) ||
+		    port->ip_specialreply) {
 			ip_unlock(port);
 			return KERN_INVALID_RIGHT;
 		}
@@ -1803,7 +1843,8 @@ mach_port_extract_right(
 	}
 
 	kr = ipc_object_copyin(space, name, msgt_name, (ipc_object_t *) poly, 0, NULL,
-	    IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND);
+	    (space == current_space() && msgt_name == MACH_MSG_TYPE_COPY_SEND) ?
+	    IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND : IPC_OBJECT_COPYIN_FLAGS_SOFT_FAIL_IMMOVABLE_SEND);
 
 	if (kr == KERN_SUCCESS) {
 		*polyPoly = ipc_object_copyin_type(msgt_name);
@@ -1863,8 +1904,6 @@ mach_port_get_status_helper(
 	}
 	return;
 }
-
-
 
 kern_return_t
 mach_port_get_attributes(
@@ -1985,6 +2024,28 @@ mach_port_get_attributes(
 	}
 
 	return KERN_SUCCESS;
+}
+
+kern_return_t
+mach_port_get_attributes_from_user(
+	mach_port_t             port,
+	mach_port_name_t        name,
+	int                     flavor,
+	mach_port_info_t        info,
+	mach_msg_type_number_t  *count)
+{
+	kern_return_t kr;
+
+	ipc_space_t space = convert_port_to_space_check_type(port, NULL, TASK_FLAVOR_READ, FALSE);
+
+	if (space == IPC_SPACE_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	kr = mach_port_get_attributes(space, name, flavor, info, count);
+
+	ipc_space_release(space);
+	return kr;
 }
 
 kern_return_t
@@ -2412,6 +2473,30 @@ mach_port_guard_exception(
 	thread_guard_violation(t, code, subcode, fatal);
 }
 
+/*
+ * Temporary wrapper for immovable mach port guard exception.
+ *
+ * Condition: !(ip_is_control(port) && !immovable_control_port_enabled)
+ */
+void
+mach_port_guard_exception_immovable(
+	mach_port_name_t        name,
+	mach_port_t             port,
+	uint64_t                portguard)
+{
+	if (ip_is_control(port) && immovable_control_port_enabled) {
+		mach_port_guard_exception(name, 0, portguard,
+		    ipc_control_port_options & IPC_CONTROL_PORT_OPTIONS_IMMOVABLE_HARD ?
+		    kGUARD_EXC_IMMOVABLE : kGUARD_EXC_IMMOVABLE_NON_FATAL);
+	} else if (!ip_is_control(port)) {
+		/* always fatal exception for non-control port violation */
+		mach_port_guard_exception(name, 0, portguard, kGUARD_EXC_IMMOVABLE);
+	} else {
+		/* ip_is_control(port) && !immovable_control_port_enabled */
+		panic("mach_port_guard_exception_immovable: condition does not hold.");
+	}
+}
+
 
 /*
  *	Routine:	mach_port_guard_ast
@@ -2444,6 +2529,7 @@ mach_port_guard_ast(thread_t t,
 	case kGUARD_EXC_INCORRECT_GUARD:
 	case kGUARD_EXC_IMMOVABLE:
 	case kGUARD_EXC_STRICT_REPLY:
+	case kGUARD_EXC_MSG_FILTERED:
 		task_exception_notify(EXC_GUARD, code, subcode);
 		task_bsdtask_kill(task);
 		break;
@@ -2519,6 +2605,30 @@ mach_port_construct(
 
 	if (options->flags & MPO_INSERT_SEND_RIGHT) {
 		init_flags |= IPC_PORT_INIT_MAKE_SEND_RIGHT;
+	}
+
+	if (options->flags & MPO_FILTER_MSG) {
+		init_flags |= IPC_PORT_INIT_FILTER_MESSAGE;
+	}
+
+	if (options->flags & MPO_TG_BLOCK_TRACKING) {
+		/* Check the task role to allow only TASK_GRAPHICS_SERVER to set this option */
+		if (proc_get_effective_task_policy(current_task(),
+		    TASK_POLICY_ROLE) != TASK_GRAPHICS_SERVER) {
+			return KERN_DENIED;
+		}
+
+		/*
+		 * Check the work interval port passed in to make sure it is the render server type.
+		 * Since the creation of the render server work interval is privileged, this check
+		 * acts as a guard to make sure only the render server is setting the thread group
+		 * blocking behavior on the port.
+		 */
+		mach_port_name_t wi_port_name = options->work_interval_port;
+		if (work_interval_port_type_render_server(wi_port_name) == false) {
+			return KERN_INVALID_ARGUMENT;
+		}
+		init_flags |= IPC_PORT_INIT_TG_BLOCK_TRACKING;
 	}
 
 	/* Allocate a new port in the IPC space */

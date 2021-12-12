@@ -63,7 +63,11 @@
 
 #ifndef _NETINET_IN_SYSTM_H_
 #define _NETINET_IN_SYSTM_H_
+
+#ifndef DRIVERKIT
 #include <sys/appleapiopts.h>
+#endif /* DRIVERKIT */
+
 #include <sys/_types.h>
 
 /*
@@ -87,6 +91,8 @@ typedef __uint32_t n_time;              /* ms since 00:00 GMT, byte rev */
 #ifdef BSD_KERNEL_PRIVATE
 #define ABS(v) (((v) > 0) ? (v) : -(v))
 
+#ifndef DRIVERKIT
 u_int32_t iptime(void);
+#endif /* DRIVERKIT */
 #endif /* BSD_KERNEL_PRIVATE */
 #endif /* _NETINET_IN_SYSTM_H_ */

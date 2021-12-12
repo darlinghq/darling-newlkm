@@ -117,14 +117,12 @@ kpersona_alloc_syscall(user_addr_t infop, user_addr_t idp, user_addr_t path)
 	}
 
 	if (path) {
-		MALLOC_ZONE(pna_path, caddr_t, MAXPATHLEN, M_NAMEI, M_WAITOK | M_ZERO);
-		if (pna_path == NULL) {
-			return ENOMEM;
-		}
+		pna_path = zalloc_flags(ZV_NAMEI, Z_WAITOK | Z_ZERO);
+
 		size_t pathlen;
 		error = copyinstr(path, (void *)pna_path, MAXPATHLEN, &pathlen);
 		if (error) {
-			FREE_ZONE(pna_path, MAXPATHLEN, M_NAMEI);
+			zfree(ZV_NAMEI, pna_path);
 			return error;
 		}
 	}
@@ -133,7 +131,7 @@ kpersona_alloc_syscall(user_addr_t infop, user_addr_t idp, user_addr_t path)
 	persona = persona_alloc(id, login, kinfo.persona_type, pna_path, &error);
 	if (!persona) {
 		if (pna_path != NULL) {
-			FREE_ZONE(pna_path, MAXPATHLEN, M_NAMEI);
+			zfree(ZV_NAMEI, pna_path);
 		}
 		return error;
 	}
@@ -349,9 +347,9 @@ kpersona_info_syscall(user_addr_t idp, user_addr_t infop)
 	kinfo.persona_id = persona->pna_id;
 	kinfo.persona_type = persona->pna_type;
 	kinfo.persona_gid = persona_get_gid(persona);
-	unsigned ngroups = 0;
+	size_t ngroups = 0;
 	persona_get_groups(persona, &ngroups, kinfo.persona_groups, NGROUPS);
-	kinfo.persona_ngroups = ngroups;
+	kinfo.persona_ngroups = (uint32_t)ngroups;
 	kinfo.persona_gmuid = persona_get_gmuid(persona);
 
 	/*
@@ -395,9 +393,9 @@ kpersona_pidinfo_syscall(user_addr_t idp, user_addr_t infop)
 	kinfo.persona_id = persona->pna_id;
 	kinfo.persona_type = persona->pna_type;
 	kinfo.persona_gid = persona_get_gid(persona);
-	unsigned ngroups = 0;
+	size_t ngroups = 0;
 	persona_get_groups(persona, &ngroups, kinfo.persona_groups, NGROUPS);
-	kinfo.persona_ngroups = ngroups;
+	kinfo.persona_ngroups = (uint32_t)ngroups;
 	kinfo.persona_gmuid = persona_get_gmuid(persona);
 
 	strncpy(kinfo.persona_name, persona->pna_login, MAXLOGNAME);
@@ -435,8 +433,8 @@ kpersona_find_syscall(user_addr_t infop, user_addr_t idp, user_addr_t idlenp)
 	login = kinfo.persona_name[0] ? kinfo.persona_name : NULL;
 
 	if (u_idlen > 0) {
-		MALLOC(persona, struct persona **, sizeof(*persona) * u_idlen,
-		    M_TEMP, M_WAITOK | M_ZERO);
+		persona = kheap_alloc(KHEAP_TEMP, sizeof(*persona) * u_idlen,
+		    Z_WAITOK | Z_ZERO);
 		if (!persona) {
 			error = ENOMEM;
 			goto out;
@@ -444,7 +442,7 @@ kpersona_find_syscall(user_addr_t infop, user_addr_t idp, user_addr_t idlenp)
 	}
 
 	k_idlen = u_idlen;
-	error = persona_find_all(login, kinfo.persona_id, kinfo.persona_type, persona, &k_idlen);
+	error = persona_find_all(login, kinfo.persona_id, (persona_type_t)kinfo.persona_type, persona, &k_idlen);
 	if (error) {
 		goto out;
 	}
@@ -467,7 +465,7 @@ out:
 		for (size_t i = 0; i < u_idlen; i++) {
 			persona_put(persona[i]);
 		}
-		FREE(persona, M_TEMP);
+		kheap_free(KHEAP_TEMP, persona, sizeof(*persona) * u_idlen);
 	}
 
 	(void)copyout(&k_idlen, idlenp, sizeof(u_idlen));

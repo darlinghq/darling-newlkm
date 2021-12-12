@@ -142,8 +142,13 @@ typedef struct ipc_port         *ipc_port_t;
 
 #define IPC_PORT_NULL           ((ipc_port_t) NULL)
 #define IPC_PORT_DEAD           ((ipc_port_t)~0UL)
-#define IPC_PORT_VALID(port) \
-	((port) != IPC_PORT_NULL && (port) != IPC_PORT_DEAD)
+#define IPC_PORT_VALID(port)    ipc_port_valid(port)
+
+static inline boolean_t
+ipc_port_valid(ipc_port_t port)
+{
+	return port != IPC_PORT_DEAD && port;
+}
 
 typedef ipc_port_t              mach_port_t;
 
@@ -268,7 +273,6 @@ typedef mach_port_type_t *mach_port_type_array_t;
 #define MACH_PORT_TYPE_PORT_SET     MACH_PORT_TYPE(MACH_PORT_RIGHT_PORT_SET)
 #define MACH_PORT_TYPE_DEAD_NAME    MACH_PORT_TYPE(MACH_PORT_RIGHT_DEAD_NAME)
 #define MACH_PORT_TYPE_LABELH       MACH_PORT_TYPE(MACH_PORT_RIGHT_LABELH) /* obsolete */
-
 
 #ifdef MACH_KERNEL_PRIVATE
 /* Holder used to have a receive right - remembered to filter exceptions */
@@ -402,6 +406,9 @@ typedef struct mach_port_qos {
 #define MPO_STRICT              0x20    /* Apply strict guarding for port */
 #define MPO_DENAP_RECEIVER      0x40    /* Mark the port as App de-nap receiver */
 #define MPO_IMMOVABLE_RECEIVE   0x80    /* Mark the port as immovable; protected by the guard context */
+#define MPO_FILTER_MSG          0x100   /* Allow message filtering */
+#define MPO_TG_BLOCK_TRACKING   0x200   /* Track blocking relationship for thread group during sync IPC */
+
 /*
  * Structure to define optional attributes for a newly
  * constructed port.
@@ -409,7 +416,10 @@ typedef struct mach_port_qos {
 typedef struct mach_port_options {
 	uint32_t                flags;          /* Flags defining attributes for port */
 	mach_port_limits_t      mpl;            /* Message queue limit for port */
-	uint64_t                reserved[2];    /* Reserved */
+	union {
+		uint64_t                reserved[2];           /* Reserved */
+		mach_port_name_t        work_interval_port;    /* Work interval port */
+	};
 }mach_port_options_t;
 
 typedef mach_port_options_t *mach_port_options_ptr_t;
@@ -430,6 +440,7 @@ enum mach_port_guard_exception_codes {
 	kGUARD_EXC_INCORRECT_GUARD           = 1u << 4,
 	kGUARD_EXC_IMMOVABLE                 = 1u << 5,
 	kGUARD_EXC_STRICT_REPLY              = 1u << 6,
+	kGUARD_EXC_MSG_FILTERED              = 1u << 7,
 	/* start of [optionally] non-fatal guards */
 	kGUARD_EXC_INVALID_RIGHT         = 1u << 8,
 	kGUARD_EXC_INVALID_NAME          = 1u << 9,
@@ -444,9 +455,16 @@ enum mach_port_guard_exception_codes {
 	kGUARD_EXC_SEND_INVALID_RIGHT    = 1u << 18,
 	kGUARD_EXC_RCV_INVALID_NAME      = 1u << 19,
 	kGUARD_EXC_RCV_GUARDED_DESC      = 1u << 20, /* should never be fatal; for development only */
+	kGUARD_EXC_MOD_REFS_NON_FATAL    = 1u << 21,
+	kGUARD_EXC_IMMOVABLE_NON_FATAL   = 1u << 22,
 };
 
-#define MAX_FATAL_kGUARD_EXC_CODE (1u << 6)
+#define MAX_FATAL_kGUARD_EXC_CODE (1u << 7)
+
+/*
+ * Mach port guard flags.
+ */
+#define MPG_FLAGS_NONE                             (0x00ull)
 
 /*
  * These flags are used as bits in the subcode of kGUARD_EXC_STRICT_REPLY exceptions.
@@ -457,6 +475,16 @@ enum mach_port_guard_exception_codes {
 #define MPG_FLAGS_STRICT_REPLY_NO_BANK_ATTR        (0x08ull << 56)
 #define MPG_FLAGS_STRICT_REPLY_MISMATCHED_PERSONA  (0x10ull << 56)
 #define MPG_FLAGS_STRICT_REPLY_MASK                (0xffull << 56)
+
+/*
+ * These flags are used as bits in the subcode of kGUARD_EXC_MOD_REFS exceptions.
+ */
+#define MPG_FLAGS_MOD_REFS_PINNED_DEALLOC          (0x01ull << 56)
+
+/*
+ * These flags are used as bits in the subcode of kGUARD_EXC_IMMOVABLE exceptions.
+ */
+#define MPG_FLAGS_IMMOVABLE_PINNED                 (0x01ull << 56)
 
 /*
  * Flags for mach_port_guard_with_flags. These flags extend

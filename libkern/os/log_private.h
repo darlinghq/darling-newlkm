@@ -27,7 +27,6 @@
 #include <os/log.h>
 #include <firehose/tracepoint_private.h>
 #include <sys/queue.h>
-#include <os/availability.h>
 
 __BEGIN_DECLS
 
@@ -89,34 +88,6 @@ typedef struct oslog_stream_buf_entry_s {
 	oslog_stream_link_type_t type;
 	struct firehose_tracepoint_s metadata[];
 } *oslog_stream_buf_entry_t;
-
-typedef struct os_log_pack_s {
-    uint64_t        olp_continuous_time;
-    struct timespec olp_wall_time;
-    const void     *olp_mh;
-    const void     *olp_pc;
-    const char     *olp_format;
-    uint8_t         olp_data[];
-} os_log_pack_s, *os_log_pack_t;
-
-// from https://github.com/apple/swift/blob/master/stdlib/public/Darwin/os/os.m
-API_AVAILABLE(macosx(10.12.4), ios(10.3), tvos(10.2), watchos(3.2))
-size_t
-_os_log_pack_size(size_t os_log_format_buffer_size);
-
-API_AVAILABLE(macosx(10.12.4), ios(10.3), tvos(10.2), watchos(3.2))
-uint8_t *
-_os_log_pack_fill(os_log_pack_t pack, size_t size, int saved_errno, const void *dso, const char *fmt);
-
-API_AVAILABLE(macosx(10.12.4), ios(10.3), tvos(10.2), watchos(3.2))
-void
-os_log_pack_send(os_log_pack_t pack, os_log_t log, os_log_type_t type);
-
-// needed for libc
-// not entirely sure how these should be defined
-#define os_log_pack_size(fmt, ...) _os_log_pack_size(sizeof(fmt))
-// this one is definitely wrong (it's missing the va_args)
-#define os_log_pack_fill(pack, size, errno, fmt, ...) _os_log_pack_fill(pack, size, errno, NULL, fmt)
 
 __END_DECLS
 

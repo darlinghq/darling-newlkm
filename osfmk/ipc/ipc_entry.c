@@ -63,11 +63,6 @@
  *	Primitive functions to manipulate translation entries.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach_debug.h>
 
 #include <mach/kern_return.h>
@@ -85,10 +80,6 @@
 #include <ipc/ipc_port.h>
 #include <string.h>
 #include <sys/kdebug.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 /*
  *	Routine:	ipc_entry_lookup
@@ -233,34 +224,6 @@ ipc_entry_claim(
 }
 
 /*
- *	Routine:	ipc_entry_get
- *	Purpose:
- *		Tries to allocate an entry out of the space.
- *	Conditions:
- *		The space is write-locked and active throughout.
- *		An object may be locked.  Will not allocate memory.
- *	Returns:
- *		KERN_SUCCESS		A free entry was found.
- *		KERN_NO_SPACE		No entry allocated.
- */
-
-kern_return_t
-ipc_entry_get(
-	ipc_space_t             space,
-	mach_port_name_t        *namep,
-	ipc_entry_t             *entryp)
-{
-	kern_return_t kr;
-
-	kr = ipc_entries_hold(space, 1);
-	if (KERN_SUCCESS != kr) {
-		return kr;
-	}
-
-	return ipc_entry_claim(space, namep, entryp);
-}
-
-/*
  *	Routine:	ipc_entry_alloc
  *	Purpose:
  *		Allocate an entry out of the space.
@@ -290,9 +253,9 @@ ipc_entry_alloc(
 			return KERN_INVALID_TASK;
 		}
 
-		kr = ipc_entry_get(space, namep, entryp);
+		kr = ipc_entries_hold(space, 1);
 		if (kr == KERN_SUCCESS) {
-			return kr;
+			return ipc_entry_claim(space, namep, entryp);
 		}
 
 		kr = ipc_entry_grow_table(space, ITS_SIZE_NONE);
@@ -418,7 +381,6 @@ ipc_entry_alloc_name(
 		 */
 		kern_return_t kr;
 		kr = ipc_entry_grow_table(space, index + 1);
-		assert(kr != KERN_NO_SPACE);
 		if (kr != KERN_SUCCESS) {
 			/* space is unlocked */
 			return kr;
@@ -568,11 +530,6 @@ ipc_entry_grow_table(
 	uint64_t rescan_count = 0;
 #endif
 	assert(is_active(space));
-#ifdef __DARLING__
-	lck_spin_unlock(&space->is_lock_data);
-	mutex_lock(&space->is_mutex_lock);
-	lck_spin_lock(&space->is_lock_data);
-#endif
 
 	if (is_growing(space)) {
 		/*
@@ -650,11 +607,7 @@ ipc_entry_grow_table(
 		is_write_lock(space);
 		is_done_growing(space);
 		is_write_unlock(space);
-#ifdef __DARLING__
-		mutex_unlock(&space->is_mutex_lock);
-#else
 		thread_wakeup((event_t) space);
-#endif
 		return KERN_RESOURCE_SHORTAGE;
 	}
 
@@ -740,11 +693,7 @@ rescan:
 
 		is_done_growing(space);
 		is_write_unlock(space);
-#ifdef __DARLING__
-		mutex_unlock(&space->is_mutex_lock);
-#else
 		thread_wakeup((event_t) space);
-#endif
 		it_entries_free(its, table);
 		is_write_lock(space);
 		return KERN_SUCCESS;
@@ -791,11 +740,7 @@ rescan:
 	is_done_growing(space);
 	is_write_unlock(space);
 
-#ifdef __DARLING__
-	mutex_unlock(&space->is_mutex_lock);
-#else
 	thread_wakeup((event_t) space);
-#endif
 
 	/*
 	 *	Now we need to free the old table.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2013-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,11 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/mach_types.h>
 #include <mach/notify.h>
 #include <ipc/ipc_types.h>
@@ -41,7 +36,6 @@
 #include <kern/ipc_tt.h>
 #include <kern/mach_param.h>
 #include <kern/misc_protos.h>
-#include <kern/kalloc.h>
 #include <kern/zalloc.h>
 #include <kern/queue.h>
 #include <kern/task.h>
@@ -51,10 +45,6 @@
 
 #include <mach/mach_voucher_attr_control.h>
 #include <mach/machine/sdt.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 extern int      proc_pid(void *);
 extern int      proc_selfpid(void);
@@ -79,26 +69,16 @@ static boolean_t ipc_importance_delayed_drop_call_requested = FALSE;
 /*
  * Importance Voucher Attribute Manager
  */
+static LCK_SPIN_DECLARE_ATTR(ipc_importance_lock_data, &ipc_lck_grp, &ipc_lck_attr);
 
-static lck_spin_t ipc_importance_lock_data;     /* single lock for now */
-
-
-#define ipc_importance_lock_init() \
-	lck_spin_init(&ipc_importance_lock_data, &ipc_lck_grp, &ipc_lck_attr)
-#define ipc_importance_lock_destroy() \
-	lck_spin_destroy(&ipc_importance_lock_data, &ipc_lck_grp)
 #define ipc_importance_lock() \
 	lck_spin_lock_grp(&ipc_importance_lock_data, &ipc_lck_grp)
 #define ipc_importance_lock_try() \
 	lck_spin_try_lock_grp(&ipc_importance_lock_data, &ipc_lck_grp)
 #define ipc_importance_unlock() \
 	lck_spin_unlock(&ipc_importance_lock_data)
-#ifdef __DARLING__
-#define ipc_importance_assert_held()
-#else
 #define ipc_importance_assert_held() \
 	lck_spin_assert(&ipc_importance_lock_data, LCK_ASSERT_OWNED)
-#endif
 
 #if IIE_REF_DEBUG
 #define incr_ref_counter(x) (os_atomic_inc(&(x), relaxed))
@@ -164,13 +144,14 @@ ipc_importance_counter_init(ipc_importance_elem_t elem)
 #endif
 
 #if DEVELOPMENT || DEBUG
-static queue_head_t global_iit_alloc_queue;
+static queue_head_t global_iit_alloc_queue =
+    QUEUE_HEAD_INITIALIZER(global_iit_alloc_queue);
 #endif
 
-/* TODO: remove this varibale when interactive daemon audit is complete */
-boolean_t ipc_importance_interactive_receiver = FALSE;
-
-static zone_t ipc_importance_task_zone;
+static ZONE_DECLARE(ipc_importance_task_zone, "ipc task importance",
+    sizeof(struct ipc_importance_task), ZC_NOENCRYPT);
+static ZONE_DECLARE(ipc_importance_inherit_zone, "ipc importance inherit",
+    sizeof(struct ipc_importance_inherit), ZC_NOENCRYPT);
 static zone_t ipc_importance_inherit_zone;
 
 static ipc_voucher_attr_control_t ipc_importance_control;
@@ -616,9 +597,7 @@ ipc_importance_task_check_transition(
 	boolean_t boost = (IIT_UPDATE_HOLD == type);
 	boolean_t before_boosted, after_boosted;
 
-#ifndef __DARLING__
 	ipc_importance_assert_held();
-#endif
 
 	if (!ipc_importance_task_is_any_receiver_type(task_imp)) {
 		return FALSE;
@@ -1102,9 +1081,7 @@ ipc_importance_task_propagate_assertion_locked(
 	queue_init(&updates);
 	queue_init(&propagate);
 
-#ifndef __DARLING__
 	ipc_importance_assert_held();
-#endif
 
 	/*
 	 * If we're going to update the policy for the provided task,
@@ -1962,7 +1939,7 @@ retry:
 	first_pass = FALSE;
 
 	/* Need to make one - may race with others (be prepared to drop) */
-	task_elem = (ipc_importance_task_t)zalloc(ipc_importance_task_zone);
+	task_elem = zalloc_flags(ipc_importance_task_zone, Z_WAITOK | Z_ZERO);
 	if (IIT_NULL == task_elem) {
 		goto retry;
 	}
@@ -1970,21 +1947,6 @@ retry:
 	task_elem->iit_bits = IIE_TYPE_TASK | 2; /* one for task, one for return/made */
 	task_elem->iit_made = (made) ? 1 : 0;
 	task_elem->iit_task = task; /* take actual ref when we're sure */
-	task_elem->iit_updateq = NULL;
-	task_elem->iit_receiver = 0;
-	task_elem->iit_denap = 0;
-	task_elem->iit_donor = 0;
-	task_elem->iit_live_donor = 0;
-	task_elem->iit_updatepolicy = 0;
-	task_elem->iit_reserved = 0;
-	task_elem->iit_filelocks = 0;
-	task_elem->iit_updatetime = 0;
-	task_elem->iit_transitions = 0;
-	task_elem->iit_assertcnt = 0;
-	task_elem->iit_externcnt = 0;
-	task_elem->iit_externdrop = 0;
-	task_elem->iit_legacy_externcnt = 0;
-	task_elem->iit_legacy_externdrop = 0;
 #if IIE_REF_DEBUG
 	ipc_importance_counter_init(&task_elem->iit_elem);
 #endif
@@ -2035,6 +1997,16 @@ task_importance_update_owner_info(task_t task)
 }
 #endif
 
+static int
+task_importance_task_get_pid(ipc_importance_task_t iit)
+{
+#if DEVELOPMENT || DEBUG
+	return (int)iit->iit_bsd_pid;
+#else
+	return task_pid(iit->iit_task);
+#endif
+}
+
 /*
  *	Routine:	ipc_importance_reset_locked
  *	Purpose:
@@ -2071,13 +2043,6 @@ ipc_importance_reset_locked(ipc_importance_task_t task_imp, boolean_t donor)
 	task_imp->iit_legacy_externcnt = 0;
 	task_imp->iit_legacy_externdrop = 0;
 	after_donor = ipc_importance_task_is_donor(task_imp);
-
-#if DEVELOPMENT || DEBUG
-	if (task_imp->iit_assertcnt > 0 && task_imp->iit_live_donor) {
-		printf("Live donor task %s[%d] still has %d importance assertions after reset\n",
-		    task_imp->iit_procname, task_imp->iit_bsd_pid, task_imp->iit_assertcnt);
-	}
-#endif
 
 	/* propagate a downstream drop if there was a change in donor status */
 	if (after_donor != before_donor) {
@@ -2240,6 +2205,7 @@ ipc_importance_check_circularity(
 	ipc_port_t base;
 	struct turnstile *send_turnstile = TURNSTILE_NULL;
 	struct task_watchport_elem *watchport_elem = NULL;
+	bool took_base_ref = false;
 
 	assert(port != IP_NULL);
 	assert(dest != IP_NULL);
@@ -2301,23 +2267,7 @@ ipc_importance_check_circularity(
 
 	ipc_port_multiple_lock(); /* massive serialization */
 
-	/*
-	 *	Search for the end of the chain (a port not in transit),
-	 *	acquiring locks along the way.
-	 */
-
-	for (;;) {
-		ip_lock(base);
-
-		if (!ip_active(base) ||
-		    (base->ip_receiver_name != MACH_PORT_NULL) ||
-		    (base->ip_destination == IP_NULL)) {
-			break;
-		}
-
-		base = base->ip_destination;
-	}
-
+	took_base_ref = ipc_port_destination_chain_lock(dest, &base);
 	/* all ports in chain from dest to base, inclusive, are locked */
 
 	if (port == base) {
@@ -2330,6 +2280,7 @@ ipc_importance_check_circularity(
 		require_ip_active(port);
 		assert(port->ip_receiver_name == MACH_PORT_NULL);
 		assert(port->ip_destination == IP_NULL);
+		assert(!took_base_ref);
 
 		base = dest;
 		while (base != IP_NULL) {
@@ -2477,6 +2428,9 @@ not_circular:
 	}
 
 	ip_unlock(base);
+	if (took_base_ref) {
+		ip_release(base);
+	}
 
 	/* All locks dropped, call turnstile_update_inheritor_complete for source port's turnstile */
 	if (send_turnstile) {
@@ -2595,7 +2549,7 @@ ipc_importance_send(
 		ipc_voucher_t voucher;
 
 		assert(ip_kotype(kmsg->ikm_voucher) == IKOT_VOUCHER);
-		voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
+		voucher = (ipc_voucher_t)ip_get_kobject(kmsg->ikm_voucher);
 
 		/* check to see if the voucher has an importance attribute */
 		val_count = MACH_VOUCHER_ATTR_VALUE_MAX_NESTED;
@@ -2671,14 +2625,12 @@ portupdate:
 		ip_lock(port);
 	}
 
-#ifndef __DARLING__
 	ipc_importance_assert_held();
-#endif
 
 #if IMPORTANCE_TRACE
 	if (kdebug_enable) {
 		mach_msg_max_trailer_t *dbgtrailer = (mach_msg_max_trailer_t *)
-		    ((vm_offset_t)kmsg->ikm_header + round_msg(kmsg->ikm_header->msgh_size));
+		    ((vm_offset_t)kmsg->ikm_header + mach_round_msg(kmsg->ikm_header->msgh_size));
 		unsigned int sender_pid = dbgtrailer->msgh_audit.val[5];
 		mach_msg_id_t imp_msgh_id = kmsg->ikm_header->msgh_id;
 		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, (IMPORTANCE_CODE(IMP_MSG, IMP_MSG_SEND)) | DBG_FUNC_START,
@@ -3193,7 +3145,7 @@ ipc_importance_receive(
 	task_t task_self = current_task();
 	unsigned int sender_pid = ((mach_msg_max_trailer_t *)
 	    ((vm_offset_t)kmsg->ikm_header +
-	    round_msg(kmsg->ikm_header->msgh_size)))->msgh_audit.val[5];
+	    mach_round_msg(kmsg->ikm_header->msgh_size)))->msgh_audit.val[5];
 #endif
 
 	/* convert to a voucher with an inherit importance attribute? */
@@ -3209,7 +3161,7 @@ ipc_importance_receive(
 
 		/* set up recipe to copy the old voucher */
 		if (IP_VALID(kmsg->ikm_voucher)) {
-			ipc_voucher_t sent_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
+			ipc_voucher_t sent_voucher = (ipc_voucher_t)ip_get_kobject(kmsg->ikm_voucher);
 
 			recipe->key = MACH_VOUCHER_ATTR_KEY_ALL;
 			recipe->command = MACH_VOUCHER_ATTR_COPY;
@@ -3311,7 +3263,8 @@ ipc_importance_receive(
 		 * will trigger the probe in ipc_importance_task_externalize_assertion()
 		 * above and have impresult==1 here.
 		 */
-		DTRACE_BOOST5(receive_boost, task_t, task_self, int, task_pid(task_self), int, sender_pid, int, 1, int, task_self->task_imp_base->iit_assertcnt);
+		DTRACE_BOOST5(receive_boost, task_t, task_self, int, task_pid(task_self),
+		    int, sender_pid, int, 1, int, task_self->task_imp_base->iit_assertcnt);
 	}
 #endif /* IMPORTANCE_TRACE */
 }
@@ -3638,59 +3591,61 @@ ipc_importance_extract_content(
 	mach_voucher_attr_content_t                     out_content,
 	mach_voucher_attr_content_size_t                *in_out_content_size)
 {
-	mach_voucher_attr_content_size_t size = 0;
 	ipc_importance_elem_t elem;
 	unsigned int i;
+
+	char *buf = (char *)out_content;
+	mach_voucher_attr_content_size_t size = *in_out_content_size;
+	mach_voucher_attr_content_size_t pos = 0;
+	__unused int pid;
 
 	IMPORTANCE_ASSERT_MANAGER(manager);
 	IMPORTANCE_ASSERT_KEY(key);
 
 	/* the first non-default value provides the data */
-	for (i = 0; i < value_count && *in_out_content_size > 0; i++) {
+	for (i = 0; i < value_count; i++) {
 		elem = (ipc_importance_elem_t)values[i];
 		if (IIE_NULL == elem) {
 			continue;
 		}
 
-		snprintf((char *)out_content, *in_out_content_size, "Importance for pid ");
-		size = (mach_voucher_attr_content_size_t)strlen((char *)out_content);
+		pos += scnprintf(buf + pos, size - pos, "Importance for ");
 
 		for (;;) {
 			ipc_importance_inherit_t inherit = III_NULL;
 			ipc_importance_task_t task_imp;
-			task_t task;
-			int t_pid;
 
 			if (IIE_TYPE_TASK == IIE_TYPE(elem)) {
 				task_imp = (ipc_importance_task_t)elem;
-				task = task_imp->iit_task;
-				t_pid = (TASK_NULL != task) ?
-				    task_pid(task) : -1;
-				snprintf((char *)out_content + size, *in_out_content_size - size, "%d", t_pid);
 			} else {
 				inherit = (ipc_importance_inherit_t)elem;
 				task_imp = inherit->iii_to_task;
-				task = task_imp->iit_task;
-				t_pid = (TASK_NULL != task) ?
-				    task_pid(task) : -1;
-				snprintf((char *)out_content + size, *in_out_content_size - size,
-				    "%d (%d of %d boosts) %s from pid ", t_pid,
-				    III_EXTERN(inherit), inherit->iii_externcnt,
-				    (inherit->iii_donating) ? "donated" : "linked");
 			}
-
-			size = (mach_voucher_attr_content_size_t)strlen((char *)out_content);
+#if DEVELOPMENT || DEBUG
+			pos += scnprintf(buf + pos, size - pos, "%s[%d]",
+			    task_imp->iit_procname, task_imp->iit_bsd_pid);
+#else
+			ipc_importance_lock();
+			pid = task_importance_task_get_pid(task_imp);
+			ipc_importance_unlock();
+			pos += scnprintf(buf + pos, size - pos, "pid %d", pid);
+#endif /* DEVELOPMENT || DEBUG */
 
 			if (III_NULL == inherit) {
 				break;
 			}
-
+			pos += scnprintf(buf + pos, size - pos,
+			    " (%d of %d boosts) %s from ",
+			    III_EXTERN(inherit), inherit->iii_externcnt,
+			    (inherit->iii_donating) ? "donated" : "linked");
 			elem = inherit->iii_from_elem;
 		}
-		size++; /* account for NULL */
+
+		pos++; /* account for terminating \0 */
+		break;
 	}
 	*out_command = MACH_VOUCHER_ATTR_NOOP; /* cannot be used to regenerate value */
-	*in_out_content_size = size;
+	*in_out_content_size = pos;
 	return KERN_SUCCESS;
 }
 
@@ -3850,33 +3805,7 @@ ipc_importance_manager_release(
 void
 ipc_importance_init(void)
 {
-	natural_t ipc_importance_max = (task_max + thread_max) * 2;
-	char temp_buf[26];
 	kern_return_t kr;
-
-	if (PE_parse_boot_argn("imp_interactive_receiver", temp_buf, sizeof(temp_buf))) {
-		ipc_importance_interactive_receiver = TRUE;
-	}
-
-	ipc_importance_task_zone = zinit(sizeof(struct ipc_importance_task),
-	    ipc_importance_max * sizeof(struct ipc_importance_task),
-	    sizeof(struct ipc_importance_task),
-	    "ipc task importance");
-	zone_change(ipc_importance_task_zone, Z_NOENCRYPT, TRUE);
-
-	ipc_importance_inherit_zone = zinit(sizeof(struct ipc_importance_inherit),
-	    ipc_importance_max * sizeof(struct ipc_importance_inherit),
-	    sizeof(struct ipc_importance_inherit),
-	    "ipc importance inherit");
-	zone_change(ipc_importance_inherit_zone, Z_NOENCRYPT, TRUE);
-
-
-#if DEVELOPMENT || DEBUG
-	queue_init(&global_iit_alloc_queue);
-#endif
-
-	/* initialize global locking */
-	ipc_importance_lock_init();
 
 	kr = ipc_register_well_known_mach_voucher_attr_manager(&ipc_importance_manager,
 	    (mach_voucher_attr_value_handle_t)0,
@@ -3907,7 +3836,6 @@ ipc_importance_thread_call_init(void)
 	}
 }
 
-#ifndef __DARLING__
 /*
  * Routing: task_importance_list_pids
  * Purpose: list pids where task in donating importance.
@@ -3941,14 +3869,7 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 		target_pid = -1;
 
 		if (temp_inherit->iii_donating) {
-#if DEVELOPMENT || DEBUG
-			target_pid = temp_inherit->iii_to_task->iit_bsd_pid;
-#else
-			temp_task = temp_inherit->iii_to_task->iit_task;
-			if (temp_task != TASK_NULL) {
-				target_pid = task_pid(temp_task);
-			}
-#endif
+			target_pid = task_importance_task_get_pid(temp_inherit->iii_to_task);
 		}
 
 		if (target_pid != -1 && previous_pid != target_pid) {
@@ -3976,19 +3897,12 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 			continue;
 		}
 
-		if (IIE_TYPE_TASK == IIE_TYPE(elem) &&
-		    (((ipc_importance_task_t)elem)->iit_task != TASK_NULL)) {
-			target_pid = task_pid(((ipc_importance_task_t)elem)->iit_task);
+		if (IIE_TYPE_TASK == IIE_TYPE(elem)) {
+			ipc_importance_task_t temp_iit = (ipc_importance_task_t)elem;
+			target_pid = task_importance_task_get_pid(temp_iit);
 		} else {
 			temp_inherit = (ipc_importance_inherit_t)elem;
-#if DEVELOPMENT || DEBUG
-			target_pid = temp_inherit->iii_to_task->iit_bsd_pid;
-#else
-			temp_task = temp_inherit->iii_to_task->iit_task;
-			if (temp_task != TASK_NULL) {
-				target_pid = task_pid(temp_task);
-			}
-#endif
+			target_pid = task_importance_task_get_pid(temp_inherit->iii_to_task);
 		}
 
 		if (target_pid != -1 && previous_pid != target_pid) {
@@ -4000,4 +3914,3 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 
 	return pidcount;
 }
-#endif

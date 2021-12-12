@@ -69,17 +69,13 @@
  * Version 2.0.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
 
 #include <mach/port.h>
 #include <mach/message.h>
 #include <mach/sync_policy.h>
 
 #include <kern/assert.h>
-#include <kern/counters.h>
+#include <kern/counter.h>
 #include <kern/sched_prim.h>
 #include <kern/ipc_kobject.h>
 #include <kern/ipc_mig.h>       /* XXX - for mach_msg_receive_continue */
@@ -104,11 +100,6 @@
 #endif
 
 #include <sys/event.h>
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#include <darling/debug_print.h>
-#endif
 
 extern char     *proc_name_address(void *p);
 
@@ -197,7 +188,6 @@ imq_reserve_and_lock(ipc_mqueue_t mq, uint64_t *reserved_prepost)
 void
 imq_release_and_unlock(ipc_mqueue_t mq, uint64_t reserved_prepost)
 {
-	assert(imq_held(mq));
 	waitq_unlock(&mq->imq_wait_queue);
 	waitq_prepost_release_reserve(reserved_prepost);
 }
@@ -601,7 +591,6 @@ ipc_mqueue_send(
 
 		if (wresult == THREAD_WAITING) {
 			wresult = thread_block(THREAD_CONTINUE_NULL);
-			counter(c_ipc_mqueue_send_block++);
 		}
 
 		/* Call turnstile complete with interlock held */
@@ -652,10 +641,10 @@ ipc_mqueue_send(
  *		The message queue is not locked.
  *		The caller holds a reference on the message queue.
  */
-extern void
+void
 ipc_mqueue_override_send(
 	ipc_mqueue_t        mqueue,
-	mach_msg_priority_t override)
+	mach_msg_qos_t      qos_ovr)
 {
 	boolean_t __unused full_queue_empty = FALSE;
 
@@ -666,7 +655,7 @@ ipc_mqueue_override_send(
 	if (imq_full(mqueue)) {
 		ipc_kmsg_t first = ipc_kmsg_queue_first(&mqueue->imq_messages);
 
-		if (first && ipc_kmsg_override_qos(&mqueue->imq_messages, first, override)) {
+		if (first && ipc_kmsg_override_qos(&mqueue->imq_messages, first, qos_ovr)) {
 			ipc_object_t object = imq_to_object(mqueue);
 			assert(io_otype(object) == IOT_PORT);
 			ipc_port_t port = ip_object_to_port(object);
@@ -687,11 +676,7 @@ ipc_mqueue_override_send(
 	if (full_queue_empty) {
 		ipc_port_t port = ip_from_mq(mqueue);
 		int dst_pid = 0;
-		if (ip_active(port) && !port->ip_tempowner &&
-		    port->ip_receiver_name && port->ip_receiver &&
-		    port->ip_receiver != ipc_space_kernel) {
-			dst_pid = task_pid(port->ip_receiver->is_task);
-		}
+		dst_pid = ipc_port_get_receiver_task(port, NULL);
 	}
 #endif
 }
@@ -713,7 +698,7 @@ ipc_mqueue_release_msgcount(ipc_mqueue_t port_mq, ipc_mqueue_t set_mq)
 {
 	struct turnstile *send_turnstile = port_send_turnstile(ip_from_mq(port_mq));
 	(void)set_mq;
-	assert(imq_held(port_mq));
+	imq_held(port_mq);
 	assert(port_mq->imq_msgcount > 1 || ipc_kmsg_queue_empty(&port_mq->imq_messages));
 
 	port_mq->imq_msgcount--;
@@ -978,8 +963,9 @@ ipc_mqueue_receive_results(wait_result_t saved_wait_result)
 			if (option & MACH_RCV_LARGE) {
 				return;
 			}
-
+			return;
 		case MACH_MSG_SUCCESS:
+			return;
 		case MACH_PEEK_READY:
 			return;
 
@@ -1045,10 +1031,6 @@ ipc_mqueue_receive(
 	}
 
 	if (wresult == THREAD_WAITING) {
-		counter((interruptible == THREAD_ABORTSAFE) ?
-		    c_ipc_mqueue_receive_block_user++ :
-		    c_ipc_mqueue_receive_block_kernel++);
-
 		if (self->ith_continuation) {
 			thread_block(ipc_mqueue_receive_continue);
 		}
@@ -1109,11 +1091,6 @@ ipc_mqueue_receive_on_thread(
 	int                     interruptible,
 	thread_t                thread)
 {
-#if defined (__DARLING__)
-	debug_msg("- ipc_mqueue_receive_on_thread (mqueue: 0x%p, option: 0x%x, rcv_timeout: %d) called\n",
-		mqueue, option, (int)rcv_timeout);
-#endif
-
 	wait_result_t           wresult;
 	uint64_t                deadline;
 	struct turnstile        *rcv_turnstile = TURNSTILE_NULL;
@@ -1438,7 +1415,7 @@ ipc_mqueue_peek_locked(ipc_mqueue_t mq,
 	if (msg_trailerp != NULL) {
 		memcpy(msg_trailerp,
 		    (mach_msg_max_trailer_t *)((vm_offset_t)kmsg->ikm_header +
-		    round_msg(kmsg->ikm_header->msgh_size)),
+		    mach_round_msg(kmsg->ikm_header->msgh_size)),
 		    sizeof(mach_msg_max_trailer_t));
 	}
 	if (kmsgp != NULL) {
@@ -1501,7 +1478,7 @@ void
 ipc_mqueue_release_peek_ref(ipc_mqueue_t mq)
 {
 	assert(!imq_is_set(mq));
-	assert(imq_held(mq));
+	imq_held(mq);
 
 	/*
 	 * clear any preposts this mq may have generated
@@ -1731,7 +1708,7 @@ ipc_mqueue_destroy_locked(ipc_mqueue_t mqueue)
  *		Changes a message queue limit; the maximum number
  *		of messages which may be queued.
  *	Conditions:
- *		Nothing locked.
+ *		Port is locked.
  */
 
 void
@@ -1769,7 +1746,7 @@ ipc_mqueue_set_qlimit(
 			mqueue->imq_msgcount++;  /* give it to the awakened thread */
 		}
 	}
-	mqueue->imq_qlimit = qlimit;
+	mqueue->imq_qlimit = (uint16_t)qlimit;
 	imq_unlock(mqueue);
 }
 

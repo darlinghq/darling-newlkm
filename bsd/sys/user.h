@@ -178,6 +178,7 @@ struct uthread {
 		} uus_workq_park_data;                   /* saved for parked workq threads */
 
 		struct _ulock_wait_data {
+			struct ull *ull;
 			thread_t owner_thread;
 			thread_t old_owner;
 			int32_t *retval;
@@ -330,6 +331,9 @@ struct uthread {
 
 	/* Document Tracking struct used to track a "tombstone" for a document */
 	struct doc_tombstone *t_tombstone;
+
+	/* Field to be used by filesystems */
+	uint64_t t_fs_private;
 
 	struct os_reason *uu_exit_reason;
 };

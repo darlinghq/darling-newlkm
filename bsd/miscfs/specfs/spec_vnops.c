@@ -95,9 +95,14 @@
 #include <kern/waitq.h>
 
 #include <pexpert/pexpert.h>
+#include <IOKit/IOBSD.h>
 
 #include <sys/kdebug.h>
 #include <libkern/section_keywords.h>
+
+#if CONFIG_IO_COMPRESSION_STATS
+#include <vfs/vfs_io_compression_stats.h>
+#endif /* CONFIG_IO_COMPRESSION_STATS */
 
 /* XXX following three prototypes should be in a header file somewhere */
 extern dev_t    chrtoblk(dev_t dev);
@@ -105,6 +110,10 @@ extern boolean_t        iskmemdev(dev_t dev);
 extern int bpfkqfilter(dev_t dev, struct knote *kn);
 extern int ptsd_kqfilter(dev_t, struct knote *);
 extern int ptmx_kqfilter(dev_t, struct knote *);
+#if CONFIG_PHYS_WRITE_ACCT
+uint64_t kernel_pm_writes;    // to track the sync writes occuring during power management transitions
+#endif /* CONFIG_PHYS_WRITE_ACCT */
+
 
 struct vnode *speclisth[SPECHSZ];
 
@@ -295,6 +304,8 @@ set_fsblocksize(struct vnode *vp)
 int
 spec_open(struct vnop_open_args *ap)
 {
+	static const char *OPEN_MOUNTED_ENTITLEMENT = "com.apple.private.vfs.open-mounted";
+
 	struct proc *p = vfs_context_proc(ap->a_context);
 	kauth_cred_t cred = vfs_context_ucred(ap->a_context);
 	struct vnode *vp = ap->a_vp;
@@ -366,7 +377,7 @@ spec_open(struct vnop_open_args *ap)
 
 					vnode_lock(vp);
 
-					vp->v_un.vu_specinfo->si_isssd = isssd;
+					vp->v_un.vu_specinfo->si_isssd = isssd ? 1 : 0;
 					vp->v_un.vu_specinfo->si_devbsdunit = devbsdunit;
 					vp->v_un.vu_specinfo->si_throttle_mask = throttle_mask;
 					vp->v_un.vu_specinfo->si_throttleable = 1;
@@ -399,8 +410,10 @@ spec_open(struct vnop_open_args *ap)
 		 * Do not allow opens of block devices that are
 		 * currently mounted.
 		 */
-		if ((error = vfs_mountedon(vp))) {
-			return error;
+		if (!IOTaskHasEntitlement(current_task(), OPEN_MOUNTED_ENTITLEMENT)) {
+			if ((error = vfs_mountedon(vp))) {
+				return error;
+			}
 		}
 
 		devsw_lock(dev, S_IFBLK);
@@ -464,9 +477,9 @@ spec_read(struct vnop_read_args *ap)
 	struct uio *uio = ap->a_uio;
 	struct buf *bp;
 	daddr64_t bn, nextbn;
-	long bsize, bscale;
+	long bscale;
 	int devBlockSize = 0;
-	int n, on;
+	size_t bsize, n, on;
 	int error = 0;
 	dev_t dev;
 
@@ -578,9 +591,9 @@ spec_read(struct vnop_read_args *ap)
 				buf_brelse(bp);
 				return error;
 			}
-			n = min((unsigned)(n  - on), uio_resid(uio));
+			n = MIN((n  - on), (size_t)uio_resid(uio));
 
-			error = uiomove((char *)buf_dataptr(bp) + on, n, uio);
+			error = uiomove((char *)buf_dataptr(bp) + on, (int)n, uio);
 			if (n + on == bsize) {
 				buf_markaged(bp);
 			}
@@ -606,10 +619,10 @@ spec_write(struct vnop_write_args *ap)
 	struct uio *uio = ap->a_uio;
 	struct buf *bp;
 	daddr64_t bn;
-	int bsize, blkmask, bscale;
+	int blkmask, bscale;
 	int io_sync;
 	int devBlockSize = 0;
-	int n, on;
+	size_t bsize, n, on;
 	int error = 0;
 	dev_t dev;
 
@@ -705,7 +718,7 @@ spec_write(struct vnop_write_args *ap)
 			bn = (daddr64_t)((uio->uio_offset / devBlockSize) & ~blkmask);
 			on = uio->uio_offset % bsize;
 
-			n = min((unsigned)(bsize - on), uio_resid(uio));
+			n = MIN((bsize - on), (size_t)uio_resid(uio));
 
 			/*
 			 * Use buf_getblk() as an optimization IFF:
@@ -725,9 +738,9 @@ spec_write(struct vnop_write_args *ap)
 			}
 
 			if (n == bsize) {
-				bp = buf_getblk(vp, bn, bsize, 0, 0, BLK_WRITE);
+				bp = buf_getblk(vp, bn, (int)bsize, 0, 0, BLK_WRITE);
 			} else {
-				error = (int)buf_bread(vp, bn, bsize, NOCRED, &bp);
+				error = (int)buf_bread(vp, bn, (int)bsize, NOCRED, &bp);
 			}
 
 			/* Translate downstream error for upstream, if needed */
@@ -738,9 +751,9 @@ spec_write(struct vnop_write_args *ap)
 				buf_brelse(bp);
 				return error;
 			}
-			n = min(n, bsize - buf_resid(bp));
+			n = MIN(n, bsize - buf_resid(bp));
 
-			error = uiomove((char *)buf_dataptr(bp) + on, n, uio);
+			error = uiomove((char *)buf_dataptr(bp) + on, (int)n, uio);
 			if (error) {
 				buf_brelse(bp);
 				return error;
@@ -934,9 +947,7 @@ SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_tier3_io_period_ssd_msecs, CTLFLAG_
 SYSCTL_INT(_debug, OID_AUTO, lowpri_throttle_enabled, CTLFLAG_RW | CTLFLAG_LOCKED, &lowpri_throttle_enabled, 0, "");
 
 
-static lck_grp_t        *throttle_lock_grp;
-static lck_attr_t       *throttle_lock_attr;
-static lck_grp_attr_t   *throttle_lock_grp_attr;
+static LCK_GRP_DECLARE(throttle_lock_grp, "throttle I/O");
 
 
 /*
@@ -988,7 +999,7 @@ throttle_info_rel(struct _throttle_io_info_t *info)
 	if ((info->throttle_refcnt == 0) && (info->throttle_alloc)) {
 		DEBUG_ALLOC_THROTTLE_INFO("Freeing info = %p\n", info);
 
-		lck_mtx_destroy(&info->throttle_lock, throttle_lock_grp);
+		lck_mtx_destroy(&info->throttle_lock, &throttle_lock_grp);
 		FREE(info, M_TEMP);
 	}
 	return oldValue;
@@ -1151,7 +1162,7 @@ throttle_timer_start(struct _throttle_io_info_t *info, boolean_t update_io_count
 			}
 			elapsed = min_target;
 			timevalsub(&elapsed, &now);
-			target_msecs = elapsed.tv_sec * 1000 + elapsed.tv_usec / 1000;
+			target_msecs = (int)(elapsed.tv_sec * 1000 + elapsed.tv_usec / 1000);
 
 			if (target_msecs <= 0) {
 				/*
@@ -1285,7 +1296,7 @@ throttle_add_to_list(struct _throttle_io_info_t *info, uthread_t ut, int mylevel
 		TAILQ_INSERT_HEAD(&info->throttle_uthlist[mylevel], ut, uu_throttlelist);
 	}
 
-	ut->uu_on_throttlelist = mylevel;
+	ut->uu_on_throttlelist = (int8_t)mylevel;
 
 	if (start_timer == TRUE) {
 		/* we may need to start or rearm the timer */
@@ -1403,24 +1414,14 @@ throttle_init(void)
 #if CONFIG_IOSCHED
 	int     iosched;
 #endif
-	/*
-	 * allocate lock group attribute and group
-	 */
-	throttle_lock_grp_attr = lck_grp_attr_alloc_init();
-	throttle_lock_grp = lck_grp_alloc_init("throttle I/O", throttle_lock_grp_attr);
 
 	/* Update throttle parameters based on device tree configuration */
 	throttle_init_throttle_window();
 
-	/*
-	 * allocate the lock attribute
-	 */
-	throttle_lock_attr = lck_attr_alloc_init();
-
 	for (i = 0; i < LOWPRI_MAX_NUM_DEV; i++) {
 		info = &_throttle_io_info[i];
 
-		lck_mtx_init(&info->throttle_lock, throttle_lock_grp, throttle_lock_attr);
+		lck_mtx_init(&info->throttle_lock, &throttle_lock_grp, LCK_ATTR_NULL);
 		info->throttle_timer_call = thread_call_allocate((thread_call_func_t)throttle_timer, (thread_call_param_t)info);
 
 		for (level = 0; level <= THROTTLE_LEVEL_END; level++) {
@@ -1538,7 +1539,7 @@ throttle_info_create(void)
 	DEBUG_ALLOC_THROTTLE_INFO("Creating info = %p\n", info, info );
 	info->throttle_alloc = TRUE;
 
-	lck_mtx_init(&info->throttle_lock, throttle_lock_grp, throttle_lock_attr);
+	lck_mtx_init(&info->throttle_lock, &throttle_lock_grp, LCK_ATTR_NULL);
 	info->throttle_timer_call = thread_call_allocate((thread_call_func_t)throttle_timer, (thread_call_param_t)info);
 
 	for (level = 0; level <= THROTTLE_LEVEL_END; level++) {
@@ -1605,7 +1606,13 @@ throttle_info_ref_by_mask(uint64_t throttle_mask, throttle_info_handle_t *thrott
 	int     dev_index;
 	struct _throttle_io_info_t *info;
 
-	if (throttle_info_handle == NULL) {
+	/*
+	 * The 'throttle_mask' is not expected to be 0 otherwise num_trailing_0()
+	 * would return value of 64 and this will cause '_throttle_io_info' to
+	 * go out of bounds as '_throttle_io_info' is only LOWPRI_MAX_NUM_DEV (64)
+	 * elements long.
+	 */
+	if (throttle_info_handle == NULL || throttle_mask == 0) {
 		return EINVAL;
 	}
 
@@ -2112,6 +2119,12 @@ throttle_get_thread_effective_io_policy()
 	return proc_get_effective_thread_policy(current_thread(), TASK_POLICY_IO);
 }
 
+int
+throttle_thread_io_tier_above_metadata(void)
+{
+	return throttle_get_thread_effective_io_policy() < IOSCHED_METADATA_TIER;
+}
+
 void
 throttle_info_reset_window(uthread_t ut)
 {
@@ -2418,6 +2431,10 @@ throttle_lowpri_window(void)
 int upl_get_cached_tier(void *);
 #endif
 
+#if CONFIG_PHYS_WRITE_ACCT
+extern thread_t pm_sync_thread;
+#endif /* CONFIG_PHYS_WRITE_ACCT */
+
 int
 spec_strategy(struct vnop_strategy_args *ap)
 {
@@ -2436,14 +2453,20 @@ spec_strategy(struct vnop_strategy_args *ap)
 	boolean_t upgrade = FALSE;
 	int code = 0;
 
-#if !CONFIG_EMBEDDED
+#if CONFIG_DELAY_IDLE_SLEEP
 	proc_t curproc = current_proc();
-#endif /* !CONFIG_EMBEDDED */
+#endif /* CONFIG_DELAY_IDLE_SLEEP */
 
 	bp = ap->a_bp;
 	bdev = buf_device(bp);
 	mp = buf_vnode(bp)->v_mount;
 	bap = &bp->b_attr;
+
+#if CONFIG_PHYS_WRITE_ACCT
+	if (current_thread() == pm_sync_thread) {
+		OSAddAtomic64(buf_count(bp), (SInt64 *)&(kernel_pm_writes));
+	}
+#endif /* CONFIG_PHYS_WRITE_ACCT */
 
 #if CONFIG_IOSCHED
 	if (bp->b_flags & B_CLUSTER) {
@@ -2490,20 +2513,27 @@ spec_strategy(struct vnop_strategy_args *ap)
 
 #if CONFIG_IOSCHED
 	/*
-	 * For I/O Scheduling, we currently do not have a way to track and expedite metadata I/Os.
-	 * To ensure we dont get into priority inversions due to metadata I/Os, we use the following rules:
-	 * For metadata reads, ceil all I/Os to IOSCHED_METADATA_TIER & mark them passive if the I/O tier was upgraded
-	 * For metadata writes, unconditionally mark them as IOSCHED_METADATA_TIER and passive
+	 * For metadata reads, ceil the I/O tier to IOSCHED_METADATA_EXPEDITED_TIER if they are expedited, otherwise
+	 * ceil it to IOSCHED_METADATA_TIER. Mark them passive if the I/O tier was upgraded.
+	 * For metadata writes, set the I/O tier to IOSCHED_METADATA_EXPEDITED_TIER if they are expedited. Otherwise
+	 * set it to IOSCHED_METADATA_TIER. In addition, mark them as passive.
 	 */
 	if (bap->ba_flags & BA_META) {
 		if ((mp && (mp->mnt_ioflags & MNT_IOFLAGS_IOSCHED_SUPPORTED)) || (bap->ba_flags & BA_IO_SCHEDULED)) {
 			if (bp->b_flags & B_READ) {
-				if (io_tier > IOSCHED_METADATA_TIER) {
+				if ((bap->ba_flags & BA_EXPEDITED_META_IO) && (io_tier > IOSCHED_METADATA_EXPEDITED_TIER)) {
+					io_tier = IOSCHED_METADATA_EXPEDITED_TIER;
+					passive = 1;
+				} else if (io_tier > IOSCHED_METADATA_TIER) {
 					io_tier = IOSCHED_METADATA_TIER;
 					passive = 1;
 				}
 			} else {
-				io_tier = IOSCHED_METADATA_TIER;
+				if (bap->ba_flags & BA_EXPEDITED_META_IO) {
+					io_tier = IOSCHED_METADATA_EXPEDITED_TIER;
+				} else {
+					io_tier = IOSCHED_METADATA_TIER;
+				}
 				passive = 1;
 			}
 		}
@@ -2517,11 +2547,11 @@ spec_strategy(struct vnop_strategy_args *ap)
 		bap->ba_flags |= BA_PASSIVE;
 	}
 
-#if !CONFIG_EMBEDDED
+#if CONFIG_DELAY_IDLE_SLEEP
 	if ((curproc != NULL) && ((curproc->p_flag & P_DELAYIDLESLEEP) == P_DELAYIDLESLEEP)) {
 		bap->ba_flags |= BA_DELAYIDLESLEEP;
 	}
-#endif /* !CONFIG_EMBEDDED */
+#endif /* CONFIG_DELAY_IDLE_SLEEP */
 
 	bflags = bp->b_flags;
 
@@ -2566,6 +2596,9 @@ spec_strategy(struct vnop_strategy_args *ap)
 		    buf_kernel_addrperm_addr(bp), bdev, buf_blkno(bp), buf_count(bp), 0);
 	}
 
+#if CONFIG_IO_COMPRESSION_STATS
+	io_compression_stats(bp);
+#endif /* CONFIG_IO_COMPRESSION_STATS */
 	thread_update_io_stats(current_thread(), buf_count(bp), code);
 
 	if (mp != NULL) {
@@ -2697,15 +2730,6 @@ spec_close(struct vnop_close_args *ap)
 				session_unlock(sessp);
 
 				if (tp != TTY_NULL) {
-					/*
-					 * We may have won a race with a proc_exit
-					 * of the session leader, the winner
-					 * clears the flag (even if not set)
-					 */
-					tty_lock(tp);
-					ttyclrpgrphup(tp);
-					tty_unlock(tp);
-
 					ttyfree(tp);
 				}
 				devsw_lock(dev, S_IFCHR);
@@ -2904,7 +2928,7 @@ spec_knote_select_and_link(struct knote *kn)
 	uth = get_bsdthread_info(current_thread());
 
 	ctx = vfs_context_current();
-	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data;
+	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data;
 
 	int error = vnode_getwithvid(vp, vnode_vid(vp));
 	if (error != 0) {
@@ -3016,10 +3040,10 @@ filt_spec_common(struct knote *kn, struct kevent_qos_s *kev, int selres)
 	int ret;
 
 	if (kn->kn_vnode_use_ofst) {
-		if (kn->kn_fp->f_fglob->fg_offset >= (uint32_t)selres) {
+		if (kn->kn_fp->fp_glob->fg_offset >= (uint32_t)selres) {
 			data = 0;
 		} else {
-			data = ((uint32_t)selres) - kn->kn_fp->f_fglob->fg_offset;
+			data = ((uint32_t)selres) - kn->kn_fp->fp_glob->fg_offset;
 		}
 	} else {
 		data = selres;
@@ -3040,7 +3064,7 @@ filt_specattach(struct knote *kn, __unused struct kevent_qos_s *kev)
 	vnode_t vp;
 	dev_t dev;
 
-	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data; /* Already have iocount, and vnode is alive */
+	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data; /* Already have iocount, and vnode is alive */
 
 	assert(vnode_ischr(vp));
 
@@ -3135,7 +3159,7 @@ filt_specprocess(struct knote *kn, struct kevent_qos_s *kev)
 
 	uth = get_bsdthread_info(current_thread());
 	ctx = vfs_context_current();
-	vp = (vnode_t)kn->kn_fp->f_fglob->fg_data;
+	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data;
 
 	error = vnode_getwithvid(vp, vnode_vid(vp));
 	if (error != 0) {

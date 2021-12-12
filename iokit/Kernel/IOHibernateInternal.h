@@ -27,10 +27,16 @@
  */
 
 #include <stdint.h>
+#include <IOKit/IOHibernatePrivate.h>
 
 #ifdef __cplusplus
 
-enum { kIOHibernateAESKeySize = 128 };  /* bits */
+
+enum { kIOHibernateAESKeySize = 16 };  /* bytes */
+
+// srcBuffer has to be big enough for a source page, the WKDM
+// compressed output, and a scratch page needed by WKDM
+#define HIBERNATION_SRC_BUFFER_SIZE (2 * page_size + WKdm_SCRATCH_BUF_SIZE_INTERNAL)
 
 struct IOHibernateVars {
 	hibernate_page_list_t *             page_list;
@@ -53,8 +59,8 @@ struct IOHibernateVars {
 	uint8_t                             haveFastBoot;
 	uint8_t                             saveBootAudioVolume;
 	uint8_t                             hwEncrypt;
-	uint8_t                             wiredCryptKey[kIOHibernateAESKeySize / 8];
-	uint8_t                             cryptKey[kIOHibernateAESKeySize / 8];
+	uint8_t                             wiredCryptKey[kIOHibernateAESKeySize];
+	uint8_t                             cryptKey[kIOHibernateAESKeySize];
 	size_t                              volumeCryptKeySize;
 	uint8_t                             volumeCryptKey[64];
 };
@@ -64,7 +70,7 @@ typedef struct IOHibernateVars IOHibernateVars;
 
 enum{
 	kIOHibernateTagSignature = 0x53000000,
-	kIOHibernateTagLength    = 0x00001fff,
+	kIOHibernateTagLength    = 0x00007fff,
 };
 
 #ifdef __cplusplus
@@ -73,10 +79,18 @@ extern "C"
 uint32_t
 hibernate_sum_page(uint8_t *buf, uint32_t ppnum);
 
+#if defined(__i386__) || defined(__x86_64__)
 extern vm_offset_t segHIBB;
 extern unsigned long segSizeHIB;
-extern vm_offset_t segDATAB;
-extern unsigned long segSizeDATA;
+#elif defined(__arm64__)
+extern vm_offset_t sectHIBTEXTB;
+extern unsigned long sectSizeHIBTEXT;
+#endif
 
 extern ppnum_t gIOHibernateHandoffPages[];
-extern uint32_t gIOHibernateHandoffPageCount;
+extern const uint32_t gIOHibernateHandoffPageCount;
+
+// max address that can fit in a ppnum_t
+#define IO_MAX_PAGE_ADDR        (((uint64_t) UINT_MAX) << PAGE_SHIFT)
+// atop() returning ppnum_t
+#define atop_64_ppnum(x) ((ppnum_t)((uint64_t)(x) >> PAGE_SHIFT))

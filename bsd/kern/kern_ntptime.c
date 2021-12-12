@@ -187,20 +187,18 @@ static l_fp time_freq;
 static int64_t time_adjtime;
 static int updated;
 
-static lck_spin_t * ntp_lock;
-static lck_grp_t * ntp_lock_grp;
-static lck_attr_t * ntp_lock_attr;
-static lck_grp_attr_t   *ntp_lock_grp_attr;
+static LCK_GRP_DECLARE(ntp_lock_grp, "ntp_lock");
+static LCK_SPIN_DECLARE(ntp_lock, &ntp_lock_grp);
 
 #define NTP_LOCK(enable) \
 	        enable =  ml_set_interrupts_enabled(FALSE); \
-	        lck_spin_lock(ntp_lock);
+	        lck_spin_lock(&ntp_lock);
 
 #define NTP_UNLOCK(enable) \
-	        lck_spin_unlock(ntp_lock);\
+	        lck_spin_unlock(&ntp_lock);\
 	        ml_set_interrupts_enabled(enable);
 
-#define NTP_ASSERT_LOCKED()     LCK_SPIN_ASSERT(ntp_lock, LCK_ASSERT_OWNED)
+#define NTP_ASSERT_LOCKED()     LCK_SPIN_ASSERT(&ntp_lock, LCK_ASSERT_OWNED)
 
 static timer_call_data_t ntp_loop_update;
 static uint64_t ntp_loop_deadline;
@@ -278,11 +276,11 @@ ntp_gettime(struct proc *p, struct ntp_gettime_args *uap, __unused int32_t *retv
 		error = copyout(&user_ntv, uap->ntvp, sizeof(user_ntv));
 	} else {
 		struct user32_ntptimeval user_ntv = {};
-		user_ntv.time.tv_sec = ntv.time.tv_sec;
-		user_ntv.time.tv_nsec = ntv.time.tv_nsec;
-		user_ntv.maxerror = ntv.maxerror;
-		user_ntv.esterror = ntv.esterror;
-		user_ntv.tai = ntv.tai;
+		user_ntv.time.tv_sec = (user32_long_t)ntv.time.tv_sec;
+		user_ntv.time.tv_nsec = (user32_long_t)ntv.time.tv_nsec;
+		user_ntv.maxerror = (user32_long_t)ntv.maxerror;
+		user_ntv.esterror = (user32_long_t)ntv.esterror;
+		user_ntv.tai = (user32_long_t)ntv.tai;
 		user_ntv.time_state = ntv.time_state;
 		error = copyout(&user_ntv, uap->ntvp, sizeof(user_ntv));
 	}
@@ -309,14 +307,14 @@ ntp_adjtime(struct proc *p, struct ntp_adjtime_args *uap, int32_t *retval)
 		struct user64_timex user_ntv;
 		error = copyin(uap->tp, &user_ntv, sizeof(user_ntv));
 		ntv.modes = user_ntv.modes;
-		ntv.offset = user_ntv.offset;
-		ntv.freq = user_ntv.freq;
-		ntv.maxerror = user_ntv.maxerror;
-		ntv.esterror = user_ntv.esterror;
+		ntv.offset = (long)user_ntv.offset;
+		ntv.freq = (long)user_ntv.freq;
+		ntv.maxerror = (long)user_ntv.maxerror;
+		ntv.esterror = (long)user_ntv.esterror;
 		ntv.status = user_ntv.status;
-		ntv.constant = user_ntv.constant;
-		ntv.precision = user_ntv.precision;
-		ntv.tolerance = user_ntv.tolerance;
+		ntv.constant = (long)user_ntv.constant;
+		ntv.precision = (long)user_ntv.precision;
+		ntv.tolerance = (long)user_ntv.tolerance;
 	} else {
 		struct user32_timex user_ntv;
 		error = copyin(uap->tp, &user_ntv, sizeof(user_ntv));
@@ -458,7 +456,11 @@ ntp_adjtime(struct proc *p, struct ntp_adjtime_args *uap, int32_t *retval)
 		} else {
 			user_ntv.offset = L_GINT(time_offset) / 1000;
 		}
-		user_ntv.freq = L_GINT((time_freq / 1000LL) << 16);
+		if (time_freq > 0) {
+			user_ntv.freq = L_GINT(((int64_t)(time_freq / 1000LL)) << 16);
+		} else {
+			user_ntv.freq = -L_GINT(((int64_t)(-(time_freq) / 1000LL)) << 16);
+		}
 		user_ntv.maxerror = time_maxerror;
 		user_ntv.esterror = time_esterror;
 		user_ntv.status = time_status;
@@ -483,15 +485,19 @@ ntp_adjtime(struct proc *p, struct ntp_adjtime_args *uap, int32_t *retval)
 		} else {
 			user_ntv.offset = L_GINT(time_offset) / 1000;
 		}
-		user_ntv.freq = L_GINT((time_freq / 1000LL) << 16);
-		user_ntv.maxerror = time_maxerror;
-		user_ntv.esterror = time_esterror;
-		user_ntv.status = time_status;
-		user_ntv.constant = time_constant;
-		if (time_status & STA_NANO) {
-			user_ntv.precision = time_precision;
+		if (time_freq > 0) {
+			user_ntv.freq = L_GINT((time_freq / 1000LL) << 16);
 		} else {
-			user_ntv.precision = time_precision / 1000;
+			user_ntv.freq = -L_GINT((-(time_freq) / 1000LL) << 16);
+		}
+		user_ntv.maxerror = (user32_long_t)time_maxerror;
+		user_ntv.esterror = (user32_long_t)time_esterror;
+		user_ntv.status = time_status;
+		user_ntv.constant = (user32_long_t)time_constant;
+		if (time_status & STA_NANO) {
+			user_ntv.precision = (user32_long_t)time_precision;
+		} else {
+			user_ntv.precision = (user32_long_t)(time_precision / 1000);
 		}
 		user_ntv.tolerance = MAXFREQ * SCALE_PPM;
 
@@ -559,7 +565,7 @@ ntp_update_second(int64_t *adjustment, clock_sec_t secs)
 		} else if (time_adjtime < -500) {
 			tickrate = -500;
 		} else {
-			tickrate = time_adjtime;
+			tickrate = (int)time_adjtime;
 		}
 		time_adjtime -= tickrate;
 		L_LINT(ftemp, tickrate * 1000);
@@ -683,7 +689,7 @@ kern_adjtime(struct timeval *delta)
 #endif
 	NTP_UNLOCK(enable);
 
-	atv.tv_sec = ltr / (int64_t)USEC_PER_SEC;
+	atv.tv_sec = (__darwin_time_t)(ltr / (int64_t)USEC_PER_SEC);
 	atv.tv_usec = ltr % (int64_t)USEC_PER_SEC;
 	if (atv.tv_usec < 0) {
 		atv.tv_usec += (suseconds_t)USEC_PER_SEC;
@@ -719,7 +725,7 @@ adjtime(struct proc *p, struct adjtime_args *uap, __unused int32_t *retval)
 	if (IS_64BIT_PROCESS(p)) {
 		struct user64_timeval user_atv;
 		error = copyin(uap->delta, &user_atv, sizeof(user_atv));
-		atv.tv_sec = user_atv.tv_sec;
+		atv.tv_sec = (__darwin_time_t)user_atv.tv_sec;
 		atv.tv_usec = user_atv.tv_usec;
 	} else {
 		struct user32_timeval user_atv;
@@ -741,7 +747,7 @@ adjtime(struct proc *p, struct adjtime_args *uap, __unused int32_t *retval)
 			error = copyout(&user_atv, uap->olddelta, sizeof(user_atv));
 		} else {
 			struct user32_timeval user_atv = {};
-			user_atv.tv_sec = atv.tv_sec;
+			user_atv.tv_sec = (user32_time_t)atv.tv_sec;
 			user_atv.tv_usec = atv.tv_usec;
 			error = copyout(&user_atv, uap->olddelta, sizeof(user_atv));
 		}
@@ -823,17 +829,5 @@ init_ntp_loop(void)
 void
 ntp_init(void)
 {
-	L_CLR(time_offset);
-	L_CLR(time_freq);
-
-	ntp_lock_grp_attr = lck_grp_attr_alloc_init();
-	ntp_lock_grp =  lck_grp_alloc_init("ntp_lock", ntp_lock_grp_attr);
-	ntp_lock_attr = lck_attr_alloc_init();
-	ntp_lock = lck_spin_alloc_init(ntp_lock_grp, ntp_lock_attr);
-
-	updated = 0;
-
 	init_ntp_loop();
 }
-
-SYSINIT(ntpclocks, SI_SUB_CLOCKS, SI_ORDER_MIDDLE, ntp_init, NULL);

@@ -93,9 +93,16 @@ extern void ipc_task_reset(
 extern void ipc_task_terminate(
 	task_t          task);
 
+__options_decl(ipc_thread_init_options_t, uint32_t, {
+	IPC_THREAD_INIT_NONE      = 0x00,
+	IPC_THREAD_INIT_PINNED    = 0x01,
+	IPC_THREAD_INIT_IMMOVABLE = 0x02,
+});
+
 /* Initialize a thread's IPC state */
 extern void ipc_thread_init(
-	thread_t        thread);
+	thread_t        thread,
+	ipc_thread_init_options_t options);
 
 extern void ipc_thread_init_exc_actions(
 	thread_t        thread);
@@ -123,27 +130,71 @@ extern ipc_port_t retrieve_task_self_fast(
 extern ipc_port_t retrieve_thread_self_fast(
 	thread_t        thread);
 
+/* Check port's type, and convert to correct task type */
+extern task_t convert_port_to_task_check_type(
+	ipc_port_t           port,
+	ipc_kobject_type_t  *kotype,
+	mach_task_flavor_t   at_most,
+	int                  eval_check);
+
+/* Check port's type, and convert to correct thread type */
+extern thread_t convert_port_to_thread_check_type(
+	ipc_port_t           port,
+	ipc_kobject_type_t  *kotype,
+	mach_thread_flavor_t at_most,
+	int                  eval_check);
+
+/* Check port's type, and convert to correct ipc_space type */
+extern ipc_space_t convert_port_to_space_check_type(
+	ipc_port_t           port,
+	ipc_kobject_type_t  *kotype,
+	mach_task_flavor_t   at_most,
+	int                  eval_check);
+
 /* Convert from a port to a task name */
 extern task_name_t convert_port_to_task_name(
+	ipc_port_t      port);
+
+/* Convert from a port to a task for task_policy_set(). */
+extern task_policy_set_t convert_port_to_task_policy_set(
+	ipc_port_t      port);
+
+/* Convert from a port to a task for task_policy_get(). */
+extern task_policy_get_t convert_port_to_task_policy_get(
 	ipc_port_t      port);
 
 /* Convert from a port to a task inspect */
 extern task_inspect_t convert_port_to_task_inspect(
 	ipc_port_t      port);
 
+/* Convert from a port to a task read */
+extern task_read_t convert_port_to_task_read(
+	ipc_port_t      port);
+
 /* Convert from a port to a task */
 extern task_t convert_port_to_task(
+	ipc_port_t      port);
+
+/* Convert from a port to a pinned task */
+extern task_t convert_port_to_task_pinned(
 	ipc_port_t      port);
 
 extern task_t
 convert_port_to_task_with_exec_token(
 	ipc_port_t              port,
-	uint32_t                *exec_token);
+	uint32_t                *exec_token,
+	boolean_t               eval);
 
 extern task_t port_name_to_task(
 	mach_port_name_t name);
 
-extern task_t port_name_to_task_inspect(
+extern task_read_t port_name_to_task_read(
+	mach_port_name_t name);
+
+extern task_read_t port_name_to_task_read_no_eval(
+	mach_port_name_t name);
+
+extern task_t port_name_to_task_name(
 	mach_port_name_t name);
 
 extern host_t port_name_to_host(
@@ -157,6 +208,10 @@ extern ipc_space_t convert_port_to_space(
 	ipc_port_t      port);
 
 /* Convert from a port to a space inspection right */
+extern ipc_space_read_t convert_port_to_space_read(
+	ipc_port_t      port);
+
+/* Convert from a port to a space inspection right */
 extern ipc_space_inspect_t convert_port_to_space_inspect(
 	ipc_port_t      port);
 
@@ -167,12 +222,24 @@ extern boolean_t ref_space_port_locked(
 extern vm_map_t convert_port_to_map(
 	ipc_port_t      port);
 
+/* Convert from a port to a map read */
+extern vm_map_read_t convert_port_to_map_read(
+	ipc_port_t      port);
+
+/* Convert from a port to a map inspect */
+extern vm_map_inspect_t convert_port_to_map_inspect(
+	ipc_port_t      port);
+
 /* Convert from a port to a thread */
 extern thread_t convert_port_to_thread(
 	ipc_port_t              port);
 
 /* Convert from a port to a thread inspect */
 extern thread_inspect_t convert_port_to_thread_inspect(
+	ipc_port_t              port);
+
+/* Convert from a port to a thread read */
+extern thread_read_t convert_port_to_thread_read(
 	ipc_port_t              port);
 
 __options_decl(port_to_thread_options_t, uint32_t, {
@@ -189,7 +256,16 @@ extern thread_t port_name_to_thread(
 extern void space_deallocate(
 	ipc_space_t             space);
 
+extern void space_read_deallocate(
+	ipc_space_read_t             space);
+
 extern void space_inspect_deallocate(
 	ipc_space_inspect_t     space);
+
+#if MACH_KERNEL_PRIVATE
+extern void ipc_thread_port_unpin(
+	ipc_port_t port,
+	bool check_bit);
+#endif
 
 #endif  /* _KERN_IPC_TT_H_ */

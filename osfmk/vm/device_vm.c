@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -78,6 +78,7 @@ const struct memory_object_pager_ops device_pager_ops = {
 	.memory_object_map = device_pager_map,
 	.memory_object_last_unmap = device_pager_last_unmap,
 	.memory_object_data_reclaim = NULL,
+	.memory_object_backing_object = NULL,
 	.memory_object_pager_name = "device pager"
 };
 
@@ -92,22 +93,31 @@ typedef struct device_pager {
 
 	/* pager-specific data */
 	lck_mtx_t       lock;
-	struct os_refcnt ref_count;     /* reference count */
 	device_port_t   device_handle;  /* device_handle */
 	vm_size_t       size;
+#if MEMORY_OBJECT_HAS_REFCOUNT
+#define dev_pgr_hdr_ref dev_pgr_hdr.mo_ref
+#else
+	os_ref_atomic_t dev_pgr_hdr_ref;
+#endif
 	int             flags;
 	boolean_t       is_mapped;
 } *device_pager_t;
 
-lck_grp_t       device_pager_lck_grp;
-lck_grp_attr_t  device_pager_lck_grp_attr;
-lck_attr_t      device_pager_lck_attr;
+__header_always_inline os_ref_count_t
+device_pager_get_refcount(device_pager_t device_object)
+{
+	return os_ref_get_count_raw(&device_object->dev_pgr_hdr_ref);
+}
 
-#define device_pager_lock_init(pager)                           \
-	lck_mtx_init(&(pager)->lock,                            \
-	             &device_pager_lck_grp,                     \
-	             &device_pager_lck_attr)
-#define device_pager_lock_destroy(pager)                        \
+LCK_GRP_DECLARE(device_pager_lck_grp, "device_pager");
+
+ZONE_DECLARE(device_pager_zone, "device node pager structures",
+    sizeof(struct device_pager), ZC_NONE);
+
+#define device_pager_lock_init(pager) \
+	lck_mtx_init(&(pager)->lock, &device_pager_lck_grp, LCK_ATTR_NULL)
+#define device_pager_lock_destroy(pager) \
 	lck_mtx_destroy(&(pager)->lock, &device_pager_lck_grp)
 #define device_pager_lock(pager) lck_mtx_lock(&(pager)->lock)
 #define device_pager_unlock(pager) lck_mtx_unlock(&(pager)->lock)
@@ -119,37 +129,10 @@ device_pager_lookup(            /* forward */
 device_pager_t
 device_object_create(void);     /* forward */
 
-zone_t  device_pager_zone;
-
-
 #define DEVICE_PAGER_NULL       ((device_pager_t) 0)
-
 
 #define MAX_DNODE               10000
 
-
-
-
-
-/*
- *
- */
-void
-device_pager_bootstrap(void)
-{
-	vm_size_t      size;
-
-	size = (vm_size_t) sizeof(struct device_pager);
-	device_pager_zone = zinit(size, (vm_size_t) MAX_DNODE * size,
-	    PAGE_SIZE, "device node pager structures");
-	zone_change(device_pager_zone, Z_CALLERACCT, FALSE);
-
-	lck_grp_attr_setdefault(&device_pager_lck_grp_attr);
-	lck_grp_init(&device_pager_lck_grp, "device_pager", &device_pager_lck_grp_attr);
-	lck_attr_setdefault(&device_pager_lck_attr);
-
-	return;
-}
 
 /*
  *
@@ -256,7 +239,7 @@ device_pager_lookup(
 
 	assert(mem_obj->mo_pager_ops == &device_pager_ops);
 	device_object = (device_pager_t)mem_obj;
-	assert(os_ref_get_count(&device_object->ref_count) > 0);
+	assert(device_pager_get_refcount(device_object) > 0);
 	return device_object;
 }
 
@@ -384,10 +367,10 @@ device_pager_reference(
 	device_pager_t          device_object;
 
 	device_object = device_pager_lookup(mem_obj);
-	os_ref_retain(&device_object->ref_count);
+	os_ref_retain_raw(&device_object->dev_pgr_hdr_ref, NULL);
 	DTRACE_VM2(device_pager_reference,
 	    device_pager_t, device_object,
-	    unsigned int, os_ref_get_count(&device_object->ref_count));
+	    unsigned int, device_pager_get_refcount(device_object));
 }
 
 /*
@@ -399,14 +382,15 @@ device_pager_deallocate(
 {
 	device_pager_t          device_object;
 	memory_object_control_t device_control;
+	os_ref_count_t          ref_count;
 
 	device_object = device_pager_lookup(mem_obj);
 
 	DTRACE_VM2(device_pager_deallocate,
 	    device_pager_t, device_object,
-	    unsigned int, os_ref_get_count(&device_object->ref_count));
+	    unsigned int, device_pager_get_refcount(device_object));
 
-	os_ref_count_t ref_count = os_ref_release(&device_object->ref_count);
+	ref_count = os_ref_release_raw(&device_object->dev_pgr_hdr_ref, NULL);
 
 	if (ref_count == 1) {
 		/*
@@ -416,7 +400,7 @@ device_pager_deallocate(
 
 		DTRACE_VM2(device_pager_destroy,
 		    device_pager_t, device_object,
-		    unsigned int, os_ref_get_count(&device_object->ref_count));
+		    unsigned int, device_pager_get_refcount(device_object));
 
 		assert(device_object->is_mapped == FALSE);
 		if (device_object->device_handle != (device_port_t) NULL) {
@@ -431,8 +415,14 @@ device_pager_deallocate(
 		 */
 		DTRACE_VM2(device_pager_free,
 		    device_pager_t, device_object,
-		    unsigned int, os_ref_get_count(&device_object->ref_count));
+		    unsigned int, device_pager_get_refcount(device_object));
 
+		device_control = device_object->dev_pgr_hdr.mo_control;
+
+		if (device_control != MEMORY_OBJECT_CONTROL_NULL) {
+			memory_object_control_deallocate(device_control);
+			device_object->dev_pgr_hdr.mo_control = MEMORY_OBJECT_CONTROL_NULL;
+		}
 		device_pager_lock_destroy(device_object);
 
 		zfree(device_pager_zone, device_object);
@@ -496,7 +486,7 @@ device_pager_map(
 	device_object = device_pager_lookup(mem_obj);
 
 	device_pager_lock(device_object);
-	assert(os_ref_get_count(&device_object->ref_count) > 0);
+	assert(device_pager_get_refcount(device_object) > 0);
 	if (device_object->is_mapped == FALSE) {
 		/*
 		 * First mapping of this pager: take an extra reference
@@ -521,7 +511,7 @@ device_pager_last_unmap(
 	device_object = device_pager_lookup(mem_obj);
 
 	device_pager_lock(device_object);
-	assert(os_ref_get_count(&device_object->ref_count) > 0);
+	assert(device_pager_get_refcount(device_object) > 0);
 	if (device_object->is_mapped) {
 		device_object->is_mapped = FALSE;
 		drop_ref = TRUE;
@@ -559,12 +549,12 @@ device_object_create(void)
 	device_object->dev_pgr_hdr.mo_control = MEMORY_OBJECT_CONTROL_NULL;
 
 	device_pager_lock_init(device_object);
-	os_ref_init(&device_object->ref_count, NULL);
+	os_ref_init_raw(&device_object->dev_pgr_hdr_ref, NULL);
 	device_object->is_mapped = FALSE;
 
 	DTRACE_VM2(device_pager_create,
 	    device_pager_t, device_object,
-	    unsigned int, os_ref_get_count(&device_object->ref_count));
+	    unsigned int, device_pager_get_refcount(device_object));
 
 	return device_object;
 }

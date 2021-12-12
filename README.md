@@ -1,9 +1,9 @@
 What is XNU?
 ===========
 
-XNU kernel is part of the Darwin operating system for use in OS X and iOS operating systems. XNU is an acronym for XNU is Not Unix.
-XNU is a hybrid kernel combining the Mach kernel developed at Carnegie Mellon University with components from FreeBSD and C++ API for writing drivers called IOKit.
-XNU runs on I386, X86_64 for both single processor and multi-processor configurations.
+XNU kernel is part of the Darwin operating system for use in macOS and iOS operating systems. XNU is an acronym for X is Not Unix.
+XNU is a hybrid kernel combining the Mach kernel developed at Carnegie Mellon University with components from FreeBSD and a C++ API for writing drivers called IOKit.
+XNU runs on x86_64 for both single processor and multi-processor configurations.
 
 XNU Source Tree
 ===============
@@ -35,9 +35,9 @@ Here is the syntax:
 
 Where:
 
-  * \<sdkroot>: path to MacOS SDK on disk. (defaults to `/`)
+  * \<sdkroot>: path to macOS SDK on disk. (defaults to `/`)
   * \<variant>: can be `debug`, `development`, `release`, `profile` and configures compilation flags and asserts throughout kernel code.
-  * \<arch>   : can be valid arch to build for. (E.g. `i386` or `X86_64`)
+  * \<arch>   : can be valid arch to build for. (E.g. `X86_64`)
 
 To build a kernel for the same architecture as running OS, just type
 
@@ -58,6 +58,19 @@ Note:
 This will also create a bootable image, kernel.[config],  and a kernel binary
 with symbols, kernel.[config].unstripped.
 
+To intall the kernel into a DSTROOT, use the `install_kernels` target:
+
+    $ make install_kernels DSTROOT=/tmp/xnu-dst
+
+Hint:
+For a more satisfying kernel debugging experience, with access to all
+local variables and arguments, but without all the extra check of the
+DEBUG kernel, add something like:
+	CFLAGS_DEVELOPMENTARM64="-O0 -g -DKERNEL_STACK_MULTIPLIER=2"
+	CXXFLAGS_DEVELOPMENTARM64="-O0 -g -DKERNEL_STACK_MULTIPLIER=2"
+to your make command.
+Replace DEVELOPMENT and ARM64 with the appropriate build and platform.
+
 
   * To build with RELEASE kernel configuration
 
@@ -69,7 +82,7 @@ Building FAT kernel binary
 
 Define architectures in your environment or when running a make command.
 
-    $ make ARCH_CONFIGS="I386 X86_64" exporthdrs all
+    $ make ARCH_CONFIGS="X86_64" exporthdrs all
 
 Other makefile options
 ----------------------
@@ -81,6 +94,8 @@ Other makefile options
  * $ make REMOTEBUILD=user@remotehost # perform build on remote host
  * $ make BUILD_JSON_COMPILATION_DATABASE=1 # Build Clang JSON Compilation Database
 
+The XNU build system can optionally output color-formatted build output. To enable this, you can either
+set the `XNU_LOGCOLORS` environment variable to `y`, or you can pass `LOGCOLORS=y` to the make command.
 
 
 Debug information formats
@@ -101,7 +116,7 @@ kernel together into a single bootable image.
 To build a kernelcache you can use the following mechanisms:
 
   * Using automatic kernelcache generation with `kextd`.
-    The kextd daemon keeps watching for changing in `/System/Library/Extensions` directory. 
+    The kextd daemon keeps watching for changing in `/System/Library/Extensions` directory.
     So you can setup new kernel as
 
         $ cp BUILD/obj/DEVELOPMENT/X86_64/kernel.development /System/Library/Kernels/
@@ -154,22 +169,6 @@ Set up your build environment and from the top directory, run:
     $ make cscope   # this will build cscope database
 
 
-Coding styles (Reindenting files)
-=================================
-
-Source files can be reindented using clang-format setup in .clang-format.
-XNU follows a variant of WebKit style for source code formatting.
-Please refer to format styles at [WebKit website](http://www.webkit.org/coding/coding-style.html). 
-Further options about style options is available at [clang docs](http://clang.llvm.org/docs/ClangFormatStyleOptions.html)
-
-  Note: clang-format binary may not be part of base installation. It can be compiled from llvm clang sources and is reachable in $PATH.
-
-  From the top directory, run:
-
-   $ make reindent      # reindent all source files using clang format.
-
-
-
 How to install a new header file from XNU
 =========================================
 
@@ -180,16 +179,18 @@ XNU installs header files at the following locations -
     a. $(DSTROOT)/System/Library/Frameworks/Kernel.framework/Headers
     b. $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
     c. $(DSTROOT)/usr/include/
-    d. $(DSTROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
+    d. $(DSTROOT)/System/DriverKit/usr/include/
+    e. $(DSTROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
 
 `Kernel.framework` is used by kernel extensions.\
 The `System.framework` and `/usr/include` are used by user level applications. \
+`/System/DriverKit/usr/include` is used by userspace drivers. \
 The header files in framework's `PrivateHeaders` are only available for ** Apple Internal Development **.
 
 The directory containing the header file should have a Makefile that
 creates the list of files that should be installed at different locations.
-If you are adding first header file in a directory, you will need to
-create Makefile similar to xnu/bsd/sys/Makefile.
+If you are adding the first header file in a directory, you will need to
+create Makefile similar to `xnu/bsd/sys/Makefile`.
 
 Add your header file to the correct file list depending on where you want
 to install it. The default locations where the header files are installed
@@ -198,20 +199,29 @@ from each file list are -
     a. `DATAFILES` : To make header file available in user level -
        `$(DSTROOT)/usr/include`
 
-    b. `PRIVATE_DATAFILES` : To make header file available to Apple internal in
+    b. `DRIVERKIT_DATAFILES` : To make header file available to DriverKit userspace drivers -
+       `$(DSTROOT)/System/DriverKit/usr/include`
+
+    c. `PRIVATE_DATAFILES` : To make header file available to Apple internal in
        user level -
        `$(DSTROOT)/System/Library/Frameworks/System.framework/PrivateHeaders`
 
-    c. `KERNELFILES` : To make header file available in kernel level -
+    d. `KERNELFILES` : To make header file available in kernel level -
        `$(DSTROOT)/System/Library/Frameworks/Kernel.framework/Headers`
        `$(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders`
 
-    d. `PRIVATE_KERNELFILES` : To make header file available to Apple internal
+    e. `PRIVATE_KERNELFILES` : To make header file available to Apple internal
        for kernel extensions -
        `$(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders`
 
 The Makefile combines the file lists mentioned above into different
-install lists which are used by build system to install the header files.
+install lists which are used by build system to install the header files. There
+are two types of install lists: machine-dependent and machine-independent.
+These lists are indicated by the presence of `MD` and `MI` in the build
+setting, respectively. If your header is architecture-specific, then you should
+use a machine-dependent install list (e.g. `INSTALL_MD_LIST`). If your header
+should be installed for all architectures, then you should use a
+machine-independent install list (e.g. `INSTALL_MI_LIST`).
 
 If the install list that you are interested does not exist, create it
 by adding the appropriate file lists.  The default install lists, its
@@ -223,26 +233,46 @@ member file lists and their default location are described below -
        Definition -
            INSTALL_MI_LIST = ${DATAFILES}
 
-    b.  `INSTALL_MI_LCL_LIST` : Installs header file to a location that is available
+    b. `INSTALL_DRIVERKIT_MI_LIST` : Installs header file to a location that is
+        available to DriverKit userspace drivers.
+        Locations -
+           $(DSTROOT)/System/DriverKit/usr/include
+       Definition -
+           INSTALL_DRIVERKIT_MI_LIST = ${DRIVERKIT_DATAFILES}
+
+    c.  `INSTALL_MI_LCL_LIST` : Installs header file to a location that is available
        for Apple internal in user level.
        Locations -
            $(DSTROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
        Definition -
            INSTALL_MI_LCL_LIST = ${PRIVATE_DATAFILES}
 
-    c. `INSTALL_KF_MI_LIST` : Installs header file to location that is available
+    d. `INSTALL_KF_MI_LIST` : Installs header file to location that is available
        to everyone for kernel extensions.
        Locations -
             $(DSTROOT)/System/Library/Frameworks/Kernel.framework/Headers
        Definition -
             INSTALL_KF_MI_LIST = ${KERNELFILES}
 
-    d. `INSTALL_KF_MI_LCL_LIST` : Installs header file to location that is
+    e. `INSTALL_KF_MI_LCL_LIST` : Installs header file to location that is
        available for Apple internal for kernel extensions.
        Locations -
             $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
        Definition -
             INSTALL_KF_MI_LCL_LIST = ${KERNELFILES} ${PRIVATE_KERNELFILES}
+
+    f. `EXPORT_MI_LIST` : Exports header file to all of xnu (bsd/, osfmk/, etc.)
+       for compilation only. Does not install anything into the SDK.
+       Definition -
+            EXPORT_MI_LIST = ${KERNELFILES} ${PRIVATE_KERNELFILES}
+
+    g. `INSTALL_MODULEMAP_INCDIR_MI_LIST` : Installs module map file to a
+       location that is available to everyone in user level, installing at the
+       root of INCDIR.
+       Locations -
+           $(DSTROOT)/usr/include
+       Definition -
+           INSTALL_MODULEMAP_INCDIR_MI_LIST = ${MODULEMAP_INCDIR_FILES}
 
 If you want to install the header file in a sub-directory of the paths
 described in (1), specify the directory name using two variables
@@ -263,28 +293,56 @@ want to export a function only to kernel level but not user level.
 
  Some pre-defined macros and their descriptions are -
 
-    a. `PRIVATE` : If true, code is available to all of the xnu kernel and is
-       not available in kernel extensions and user level header files.  The
-       header files installed in all the paths described above in (1) will not
-       have code enclosed within this macro.
-
-    b. `KERNEL_PRIVATE` : If true, code is available to all of the xnu kernel and Apple
-        internal kernel extensions.
-
-    c. `BSD_KERNEL_PRIVATE` : If true, code is available to the xnu/bsd part of
-       the kernel and is not available to rest of the kernel, kernel extensions
-       and user level header files.  The header files installed in all the
-       paths described above in (1) will not have code enclosed within this macro.
-
-    d. `KERNEL` :  If true, code is available only in kernel and kernel
-       extensions and is not available in user level header files.  Only the
+    a. `PRIVATE` : If defined, enclosed definitions are considered System
+	Private Interfaces. These are visible within xnu and
+	exposed in user/kernel headers installed within the AppleInternal
+	"PrivateHeaders" sections of the System and Kernel frameworks.
+    b. `KERNEL_PRIVATE` : If defined, enclosed code is available to all of xnu
+	kernel and Apple internal kernel extensions and omitted from user
+	headers.
+    c. `BSD_KERNEL_PRIVATE` : If defined, enclosed code is visible exclusively
+	within the xnu/bsd module.
+    d. `MACH_KERNEL_PRIVATE`: If defined, enclosed code is visible exclusively
+	within the xnu/osfmk module.
+    e. `XNU_KERNEL_PRIVATE`: If defined, enclosed code is visible exclusively
+	within xnu.
+    f. `KERNEL` :  If defined, enclosed code is available within xnu and kernel
+       extensions and is not visible in user level header files.  Only the
        header files installed in following paths will have the code -
 
             $(DSTROOT)/System/Library/Frameworks/Kernel.framework/Headers
             $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
+    g. `DRIVERKIT`: If defined, enclosed code is visible exclusively in the
+    DriverKit SDK headers used by userspace drivers.
 
-       you should check [Testing the kernel][] for details.
+Conditional compilation
+=======================
 
+`xnu` offers the following mechanisms for conditionally compiling code:
+
+    a. *CPU Characteristics* If the code you are guarding has specific
+    characterstics that will vary only based on the CPU architecture being
+    targeted, use this option. Prefer checking for features of the
+    architecture (e.g. `__LP64__`, `__LITTLE_ENDIAN__`, etc.).
+    b. *New Features* If the code you are guarding, when taken together,
+    implements a feature, you should define a new feature in `config/MASTER`
+    and use the resulting `CONFIG` preprocessor token (e.g. for a feature
+    named `config_virtual_memory`, check for `#if CONFIG_VIRTUAL_MEMORY`).
+    This practice ensures that existing features may be brought to other
+    platforms by simply changing a feature switch.
+    c. *Existing Features* You can use existing features if your code is
+    strongly tied to them (e.g. use `SECURE_KERNEL` if your code implements
+    new functionality that is exclusively relevant to the trusted kernel and
+    updates the definition/understanding of what being a trusted kernel means).
+
+It is recommended that you avoid compiling based on the target platform. `xnu`
+does not define the platform macros from `TargetConditionals.h`
+(`TARGET_OS_OSX`, `TARGET_OS_IOS`, etc.).
+
+
+There is a deprecated `TARGET_OS_EMBEDDED` macro, but this should be avoided
+as it is in general too broad a definition for most functionality.
+Please refer to TargetConditionals.h for a full picture.
 
 How to add a new syscall
 ========================
@@ -341,7 +399,7 @@ common options.
 To debug a panic'ed kernel, use llvm debugger (lldb) along with unstripped symbol rich kernel binary.
 
     sh$ lldb kernel.development.unstripped
-    
+
 And then you can connect to panic'ed machine with `kdp_remote [ip addr]` or `gdb_remote [hostip : port]` commands.
 
 Each kernel is packaged with kernel specific debug scripts as part of the build process. For security reasons these special commands

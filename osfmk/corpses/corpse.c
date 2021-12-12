@@ -130,6 +130,7 @@
 #include <kern/kern_cdata.h>
 #include <mach/mach_vm.h>
 #include <kern/exc_guard.h>
+#include <os/log.h>
 
 #if CONFIG_MACF
 #include <security/mac_mach_internal.h>
@@ -218,15 +219,19 @@ total_corpses_count(void)
 	return gate.corpses;
 }
 
+extern char *proc_best_name(struct proc *);
+extern int proc_pid(struct proc *);
+
 /*
  * Routine: task_crashinfo_get_ref()
  *          Grab a slot at creating a corpse.
  * Returns: KERN_SUCCESS if the policy allows for creating a corpse.
  */
 static kern_return_t
-task_crashinfo_get_ref(uint16_t kcd_u_flags)
+task_crashinfo_get_ref(corpse_flags_t kcd_u_flags)
 {
 	union corpse_creation_gate oldgate, newgate;
+	struct proc *p = (void *)current_proc();
 
 	assert(kcd_u_flags & CORPSE_CRASHINFO_HAS_REF);
 
@@ -235,10 +240,14 @@ task_crashinfo_get_ref(uint16_t kcd_u_flags)
 		newgate = oldgate;
 		if (kcd_u_flags & CORPSE_CRASHINFO_USER_FAULT) {
 			if (newgate.user_faults++ >= TOTAL_USER_FAULTS_ALLOWED) {
+				os_log(OS_LOG_DEFAULT, "%s[%d] Corpse failure, too many faults %d\n",
+				    proc_best_name(p), proc_pid(p), newgate.user_faults);
 				return KERN_RESOURCE_SHORTAGE;
 			}
 		}
 		if (newgate.corpses++ >= TOTAL_CORPSES_ALLOWED) {
+			os_log(OS_LOG_DEFAULT, "%s[%d] Corpse failure, too many %d\n",
+			    proc_best_name(p), proc_pid(p), newgate.corpses);
 			return KERN_RESOURCE_SHORTAGE;
 		}
 
@@ -246,6 +255,8 @@ task_crashinfo_get_ref(uint16_t kcd_u_flags)
 		if (atomic_compare_exchange_strong_explicit(&inflight_corpses,
 		    &oldgate.value, newgate.value, memory_order_relaxed,
 		    memory_order_relaxed)) {
+			os_log(OS_LOG_DEFAULT, "%s[%d] Corpse allowed %d of %d\n",
+			    proc_best_name(p), proc_pid(p), newgate.corpses, TOTAL_CORPSES_ALLOWED);
 			return KERN_SUCCESS;
 		}
 	}
@@ -256,7 +267,7 @@ task_crashinfo_get_ref(uint16_t kcd_u_flags)
  *          release the slot for corpse being used.
  */
 static kern_return_t
-task_crashinfo_release_ref(uint16_t kcd_u_flags)
+task_crashinfo_release_ref(corpse_flags_t kcd_u_flags)
 {
 	union corpse_creation_gate oldgate, newgate;
 
@@ -277,6 +288,7 @@ task_crashinfo_release_ref(uint16_t kcd_u_flags)
 		if (atomic_compare_exchange_strong_explicit(&inflight_corpses,
 		    &oldgate.value, newgate.value, memory_order_relaxed,
 		    memory_order_relaxed)) {
+			os_log(OS_LOG_DEFAULT, "Corpse released, count at %d\n", newgate.corpses);
 			return KERN_SUCCESS;
 		}
 	}
@@ -285,7 +297,7 @@ task_crashinfo_release_ref(uint16_t kcd_u_flags)
 
 kcdata_descriptor_t
 task_crashinfo_alloc_init(mach_vm_address_t crash_data_p, unsigned size,
-    uint32_t kc_u_flags, unsigned kc_flags)
+    corpse_flags_t kc_u_flags, unsigned kc_flags)
 {
 	kcdata_descriptor_t kcdata;
 
@@ -540,7 +552,7 @@ task_generate_corpse_internal(
 	uint64_t *udata_buffer = NULL;
 	int size = 0;
 	int num_udata = 0;
-	uint16_t kc_u_flags = CORPSE_CRASHINFO_HAS_REF;
+	corpse_flags_t kc_u_flags = CORPSE_CRASHINFO_HAS_REF;
 
 #if CONFIG_MACF
 	struct label *label = NULL;
@@ -653,7 +665,7 @@ error_task_generate_corpse:
 			/* Terminate all the other threads in the task. */
 			queue_iterate(&new_task->threads, thread_next, thread_t, task_threads)
 			{
-				thread_terminate_internal(thread_next);
+				thread_terminate_internal(thread_next, TH_TERMINATE_OPTION_NONE);
 			}
 			/* wait for all the threads in the task to terminate */
 			task_wait_till_threads_terminate_locked(new_task);
@@ -669,7 +681,7 @@ error_task_generate_corpse:
 	}
 	/* Free the udata buffer allocated in task_duplicate_map_and_threads */
 	if (udata_buffer != NULL) {
-		kfree(udata_buffer, size);
+		kheap_free(KHEAP_DATA_BUFFERS, udata_buffer, size);
 	}
 
 	return kr;
@@ -726,7 +738,7 @@ task_map_corpse_info_64(
 {
 	kern_return_t kr;
 	mach_vm_offset_t crash_data_ptr = 0;
-	mach_vm_size_t size = CORPSEINFO_ALLOCATION_SIZE;
+	const mach_vm_size_t size = CORPSEINFO_ALLOCATION_SIZE;
 	void *corpse_info_kernel = NULL;
 
 	if (task == TASK_NULL || task_is_a_corpse_fork(task)) {
@@ -743,7 +755,7 @@ task_map_corpse_info_64(
 	if (kr != KERN_SUCCESS) {
 		return kr;
 	}
-	copyout(corpse_info_kernel, crash_data_ptr, size);
+	copyout(corpse_info_kernel, (user_addr_t)crash_data_ptr, (size_t)size);
 	*kcd_addr_begin = crash_data_ptr;
 	*kcd_size = size;
 

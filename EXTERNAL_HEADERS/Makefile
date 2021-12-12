@@ -8,7 +8,8 @@ include $(MakeInc_def)
 
 INSTINC_SUBDIRS =	\
 	architecture	\
-	mach-o
+	mach-o			\
+	sys
 
 INSTINC_SUBDIRS_X86_64 =	\
 	architecture
@@ -25,13 +26,15 @@ INSTINC_SUBDIRS_ARM64 =	\
 EXPORT_FILES = \
 	Availability.h	\
 	AvailabilityInternal.h	\
-	AvailabilityMacros.h	\
-	stddef.h
+	AvailabilityMacros.h
 
 KERNEL_FILES = \
 	stdarg.h	\
+	stdatomic.h	\
 	stdbool.h	\
-	stdint.h
+	stddef.h	\
+	stdint.h	\
+	ptrauth.h
 
 INSTALL_MI_LIST =
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005-2017 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2005-2020 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -38,12 +38,10 @@
 #include <sys/un.h>
 #include <sys/kern_control.h>
 #include <sys/event.h>
-#ifndef __DARLING__
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#endif
 #include <mach/machine.h>
 #include <uuid/uuid.h>
 
@@ -110,7 +108,8 @@ struct proc_uniqidentifierinfo {
 	uint8_t                 p_uuid[16];             /* UUID of the main executable */
 	uint64_t                p_uniqueid;             /* 64 bit unique identifier for process */
 	uint64_t                p_puniqueid;            /* unique identifier for process's parent */
-	uint64_t                p_reserve2;             /* reserved for future use */
+	int32_t                 p_idversion;            /* pid version */
+	uint32_t                p_reserve2;             /* reserved for future use */
 	uint64_t                p_reserve3;             /* reserved for future use */
 	uint64_t                p_reserve4;             /* reserved for future use */
 };
@@ -412,7 +411,6 @@ struct proc_threadwithpathinfo {
 #define INI_IPV4        0x1
 #define INI_IPV6        0x2
 
-#ifndef __DARLING__
 struct in4in6_addr {
 	u_int32_t               i46a_pad32[3];
 	struct in_addr          i46a_addr4;
@@ -447,7 +445,6 @@ struct in_sockinfo {
 		short                   in6_hops;
 	}                                       insi_v6;
 };
-#endif
 
 /*
  * TCP Sockets
@@ -472,7 +469,6 @@ struct in_sockinfo {
 #define TSI_S_TIME_WAIT         10      /* in 2*msl quiet wait after close */
 #define TSI_S_RESERVED          11      /* pseudo state: reserved */
 
-#ifndef __DARLING__
 struct tcp_sockinfo {
 	struct in_sockinfo              tcpsi_ini;
 	int                             tcpsi_state;
@@ -482,7 +478,6 @@ struct tcp_sockinfo {
 	uint32_t                        rfu_1;          /* reserved */
 	uint64_t                        tcpsi_tp;       /* opaque handle of TCP protocol control block */
 };
-#endif
 
 /*
  * Unix Domain Sockets
@@ -505,11 +500,6 @@ struct un_sockinfo {
 /*
  * PF_NDRV Sockets
  */
-
-#ifdef __DARLING__
-// copied from `bsd/net/if.h`
-#define IF_NAMESIZE     16
-#endif
 
 struct ndrv_info {
 	uint32_t        ndrvsi_if_family;
@@ -539,6 +529,17 @@ struct kern_ctl_info {
 	uint32_t        kcsi_sendbufsize;               /* request more than the default buffer size */
 	uint32_t        kcsi_unit;
 	char            kcsi_name[MAX_KCTL_NAME];       /* unique nke identifier, provided by DTS */
+};
+
+/*
+ * VSock Sockets
+ */
+
+struct vsock_sockinfo {
+	uint32_t        local_cid;
+	uint32_t        local_port;
+	uint32_t        remote_cid;
+	uint32_t        remote_port;
 };
 
 /* soi_state */
@@ -575,7 +576,8 @@ enum {
 	SOCKINFO_UN             = 3,
 	SOCKINFO_NDRV           = 4,
 	SOCKINFO_KERN_EVENT     = 5,
-	SOCKINFO_KERN_CTL       = 6
+	SOCKINFO_KERN_CTL       = 6,
+	SOCKINFO_VSOCK          = 7,
 };
 
 struct socket_info {
@@ -599,14 +601,13 @@ struct socket_info {
 	int                                     soi_kind;
 	uint32_t                                rfu_1;          /* reserved */
 	union {
-#ifndef __DARLING__
 		struct in_sockinfo      pri_in;                 /* SOCKINFO_IN */
 		struct tcp_sockinfo     pri_tcp;                /* SOCKINFO_TCP */
-#endif
 		struct un_sockinfo      pri_un;                 /* SOCKINFO_UN */
 		struct ndrv_info        pri_ndrv;               /* SOCKINFO_NDRV */
 		struct kern_event_info  pri_kern_event;         /* SOCKINFO_KERN_EVENT */
 		struct kern_ctl_info    pri_kern_ctl;           /* SOCKINFO_KERN_CTL */
+		struct vsock_sockinfo   pri_vsock;              /* SOCKINFO_VSOCK */
 	}                                       soi_proto;
 };
 
@@ -970,7 +971,16 @@ struct proc_fileportinfo {
 #define PROC_INFO_CALL_CANUSEFGHW        0xc
 #define PROC_INFO_CALL_PIDDYNKQUEUEINFO  0xd
 #define PROC_INFO_CALL_UDATA_INFO        0xe
+
+/* __proc_info_extended_id() flags */
+#define PIF_COMPARE_IDVERSION           0x01
+#define PIF_COMPARE_UNIQUEID            0x02
+
 #endif /* PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+extern int proc_fdlist(proc_t p, struct proc_fdinfo *buf, size_t *count);
+#endif
 
 #ifdef XNU_KERNEL_PRIVATE
 #ifndef pshmnode

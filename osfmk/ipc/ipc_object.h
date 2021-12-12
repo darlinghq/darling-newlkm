@@ -85,6 +85,20 @@ typedef natural_t ipc_object_refs_t;    /* for ipc/ipc_object.h		*/
 typedef natural_t ipc_object_bits_t;
 typedef natural_t ipc_object_type_t;
 
+__options_closed_decl(ipc_object_copyout_flags_t, uint32_t, {
+	IPC_OBJECT_COPYOUT_FLAGS_NONE                 = 0x0,
+	IPC_OBJECT_COPYOUT_FLAGS_PINNED               = 0x1,
+	IPC_OBJECT_COPYOUT_FLAGS_NO_LABEL_CHECK       = 0x2,
+});
+
+__options_closed_decl(ipc_object_copyin_flags_t, uint32_t, {
+	IPC_OBJECT_COPYIN_FLAGS_NONE                     = 0x0,
+	IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND     = 0x1, /* Dest port contains an immovable send right */
+	IPC_OBJECT_COPYIN_FLAGS_SOFT_FAIL_IMMOVABLE_SEND = 0x2, /* Silently fail copyin without guard exception */
+	IPC_OBJECT_COPYIN_FLAGS_ALLOW_DEAD_SEND_ONCE     = 0x4,
+	IPC_OBJECT_COPYIN_FLAGS_DEADOK                   = 0x8,
+});
+
 /*
  * The ipc_object is used to both tag and reference count these two data
  * structures, and (Noto Bene!) pointers to either of these or the
@@ -131,8 +145,9 @@ struct ipc_object_header {
  *	definitions in ipc_port.h.
  */
 #define IO_BITS_PORT_INFO       0x0000f000      /* stupid port tricks */
-#define IO_BITS_KOTYPE          0x000007ff      /* used by the object */
+#define IO_BITS_KOTYPE          0x000003ff      /* used by the object */
 #define IO_BITS_KOBJECT         0x00000800      /* port belongs to a kobject */
+#define IO_BITS_KOLABEL         0x00000400      /* The kobject has a label */
 #define IO_BITS_OTYPE           0x7fff0000      /* determines a zone */
 #define IO_BITS_ACTIVE          0x80000000      /* is object alive? */
 
@@ -141,7 +156,7 @@ struct ipc_object_header {
 #define io_otype(io)            (((io)->io_bits & IO_BITS_OTYPE) >> 16)
 #define io_kotype(io)           ((io)->io_bits & IO_BITS_KOTYPE)
 #define io_is_kobject(io)       (((io)->io_bits & IO_BITS_KOBJECT) != IKOT_NONE)
-
+#define io_is_kolabeled(io)     (((io)->io_bits & IO_BITS_KOLABEL) != 0)
 #define io_makebits(active, otype, kotype)      \
 	(((active) ? IO_BITS_ACTIVE : 0) | ((otype) << 16) | (kotype))
 
@@ -155,8 +170,11 @@ struct ipc_object_header {
 extern zone_t ipc_object_zones[IOT_NUMBER];
 extern lck_grp_t        ipc_lck_grp;
 
-#define io_alloc(otype)         \
-	        ((ipc_object_t) zalloc(ipc_object_zones[(otype)]))
+static inline ipc_object_t
+io_alloc(unsigned int otype, zalloc_flags_t flags)
+{
+	return zalloc_flags(ipc_object_zones[otype], flags);
+}
 
 extern void     io_free(
 	unsigned int    otype,
@@ -197,7 +215,7 @@ extern boolean_t io_lock_try(
  * and zfree modifies that to point to the next free zone element.
  */
 #define IO_MAX_REFERENCES                                               \
-	(unsigned)(~0 ^ (1U << (sizeof(int)*BYTE_SIZE - 1)))
+	(unsigned)(~0U ^ (1U << (sizeof(int)*BYTE_SIZE - 1)))
 
 static inline void
 io_reference(ipc_object_t io)
@@ -332,7 +350,7 @@ extern kern_return_t ipc_object_copyin(
 	ipc_object_t            *objectp,
 	mach_port_context_t     context,
 	mach_msg_guard_flags_t  *guard_flags,
-	uint32_t                kmsg_flags);
+	ipc_object_copyin_flags_t copyin_flags);
 
 /* Copyin a naked capability from the kernel */
 extern void ipc_object_copyin_from_kernel(
@@ -360,6 +378,7 @@ extern kern_return_t ipc_object_copyout(
 	ipc_space_t             space,
 	ipc_object_t            object,
 	mach_msg_type_name_t    msgt_name,
+	ipc_object_copyout_flags_t flags,
 	mach_port_context_t     *context,
 	mach_msg_guard_flags_t  *guard_flags,
 	mach_port_name_t        *namep);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2013-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,11 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/notify.h>
@@ -50,17 +45,21 @@
 #include <mach/mach_host_server.h>
 #include <voucher/ipc_pthread_priority_types.h>
 
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
-
 /*
  * Sysctl variable; enable and disable tracing of voucher contents
  */
 uint32_t ipc_voucher_trace_contents = 0;
 
-static zone_t ipc_voucher_zone;
-static zone_t ipc_voucher_attr_control_zone;
+static SECURITY_READ_ONLY_LATE(zone_t) ipc_voucher_zone;
+static ZONE_DECLARE(ipc_voucher_attr_control_zone, "ipc voucher attr controls",
+    sizeof(struct ipc_voucher_attr_control), ZC_NOENCRYPT | ZC_ZFREE_CLEARMEM);
+
+ZONE_INIT(&ipc_voucher_zone, "ipc vouchers", sizeof(struct ipc_voucher),
+    ZC_NOENCRYPT | ZC_ZFREE_CLEARMEM | ZC_NOSEQUESTER,
+    ZONE_ID_IPC_VOUCHERS, NULL);
+
+#define voucher_require(v) \
+	zone_id_require(ZONE_ID_IPC_VOUCHERS, sizeof(struct ipc_voucher), v)
 
 /*
  * Voucher hash table
@@ -69,11 +68,9 @@ static zone_t ipc_voucher_attr_control_zone;
 #define IV_HASH_BUCKET(x) ((x) % IV_HASH_BUCKETS)
 
 static queue_head_t ivht_bucket[IV_HASH_BUCKETS];
-static lck_spin_t ivht_lock_data;
+static LCK_SPIN_DECLARE_ATTR(ivht_lock_data, &ipc_lck_grp, &ipc_lck_attr);
 static uint32_t ivht_count = 0;
 
-#define ivht_lock_init() \
-	lck_spin_init(&ivht_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define ivht_lock_destroy() \
 	lck_spin_destroy(&ivht_lock_data, &ipc_lck_grp)
 #define ivht_lock() \
@@ -92,10 +89,8 @@ static uint32_t ivht_count = 0;
  */
 static iv_index_t ivgt_keys_in_use = MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN;
 static ipc_voucher_global_table_element iv_global_table[MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN];
-static lck_spin_t ivgt_lock_data;
+static LCK_SPIN_DECLARE_ATTR(ivgt_lock_data, &ipc_lck_grp, &ipc_lck_attr);
 
-#define ivgt_lock_init() \
-	lck_spin_init(&ivgt_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define ivgt_lock_destroy() \
 	lck_spin_destroy(&ivgt_lock_data, &ipc_lck_grp)
 #define ivgt_lock() \
@@ -201,44 +196,16 @@ ipc_voucher_prepare_processing_recipe(
 	ipc_voucher_attr_manager_flags flags,
 	int *need_processing);
 
-#if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) || defined(MACH_VOUCHER_ATTR_KEY_TEST)
-void user_data_attr_manager_init(void);
-#endif
-
-void
+__startup_func
+static void
 ipc_voucher_init(void)
 {
-	natural_t ipc_voucher_max = (task_max + thread_max) * 2;
-	natural_t attr_manager_max = MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN;
-	iv_index_t i;
-
-	ipc_voucher_zone = zinit(sizeof(struct ipc_voucher),
-	    ipc_voucher_max * sizeof(struct ipc_voucher),
-	    sizeof(struct ipc_voucher),
-	    "ipc vouchers");
-	zone_change(ipc_voucher_zone, Z_NOENCRYPT, TRUE);
-	zone_change(ipc_voucher_zone, Z_CLEARMEMORY, TRUE);
-
-	ipc_voucher_attr_control_zone = zinit(sizeof(struct ipc_voucher_attr_control),
-	    attr_manager_max * sizeof(struct ipc_voucher_attr_control),
-	    sizeof(struct ipc_voucher_attr_control),
-	    "ipc voucher attr controls");
-	zone_change(ipc_voucher_attr_control_zone, Z_NOENCRYPT, TRUE);
-	zone_change(ipc_voucher_attr_control_zone, Z_CLEARMEMORY, TRUE);
-
 	/* initialize voucher hash */
-	ivht_lock_init();
-	for (i = 0; i < IV_HASH_BUCKETS; i++) {
+	for (iv_index_t i = 0; i < IV_HASH_BUCKETS; i++) {
 		queue_init(&ivht_bucket[i]);
 	}
-
-	/* initialize global table locking */
-	ivgt_lock_init();
-
-#if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) || defined(MACH_VOUCHER_ATTR_KEY_TEST)
-	user_data_attr_manager_init();
-#endif
 }
+STARTUP(MACH_IPC, STARTUP_RANK_FIRST, ipc_voucher_init);
 
 ipc_voucher_t
 iv_alloc(iv_index_t entries)
@@ -386,7 +353,10 @@ unsafe_convert_port_to_voucher(
 	ipc_port_t      port)
 {
 	if (IP_VALID(port)) {
-		uintptr_t voucher = (uintptr_t) port->ip_kobject;
+		/* vouchers never labeled (they get transformed before use) */
+		if (ip_is_kolabeled(port)) {
+			return (uintptr_t)IV_NULL;
+		}
 
 		/*
 		 * No need to lock because we have a reference on the
@@ -394,10 +364,19 @@ unsafe_convert_port_to_voucher(
 		 * keeps the voucher bound to the port (and active).
 		 */
 		if (ip_kotype(port) == IKOT_VOUCHER) {
-			return voucher;
+			return (uintptr_t)ipc_kobject_get(port);
 		}
 	}
 	return (uintptr_t)IV_NULL;
+}
+
+static ipc_voucher_t
+ip_get_voucher(ipc_port_t port)
+{
+	ipc_voucher_t voucher = (ipc_voucher_t)ip_get_kobject(port);
+	require_ip_active(port);
+	voucher_require(voucher);
+	return voucher;
 }
 
 /*
@@ -414,22 +393,13 @@ ipc_voucher_t
 convert_port_to_voucher(
 	ipc_port_t      port)
 {
-	if (IP_VALID(port)) {
-		zone_require(port, ipc_object_zones[IOT_PORT]);
-		ipc_voucher_t voucher = (ipc_voucher_t) port->ip_kobject;
-
+	if (IP_VALID(port) && ip_kotype(port) == IKOT_VOUCHER) {
 		/*
 		 * No need to lock because we have a reference on the
 		 * port, and if it is a true voucher port, that reference
 		 * keeps the voucher bound to the port (and active).
 		 */
-		if (ip_kotype(port) != IKOT_VOUCHER) {
-			return IV_NULL;
-		}
-
-		require_ip_active(port);
-
-		zone_require(voucher, ipc_voucher_zone);
+		ipc_voucher_t voucher = ip_get_voucher(port);
 		ipc_voucher_reference(voucher);
 		return voucher;
 	}
@@ -496,13 +466,12 @@ ipc_voucher_notify(mach_msg_header_t *msg)
 {
 	mach_no_senders_notification_t *notification = (void *)msg;
 	ipc_port_t port = notification->not_header.msgh_remote_port;
+	ipc_voucher_t voucher = ip_get_voucher(port);
 
-	require_ip_active(port);
 	assert(IKOT_VOUCHER == ip_kotype(port));
 
 	/* consume the reference donated by convert_voucher_to_port */
-	zone_require((ipc_voucher_t)port->ip_kobject, ipc_voucher_zone);
-	ipc_voucher_release((ipc_voucher_t)port->ip_kobject);
+	ipc_voucher_release(voucher);
 }
 
 /*
@@ -515,7 +484,7 @@ convert_voucher_to_port(ipc_voucher_t voucher)
 		return IP_NULL;
 	}
 
-	zone_require(voucher, ipc_voucher_zone);
+	voucher_require(voucher);
 	assert(os_ref_get_count(&voucher->iv_refs) > 0);
 
 	/*
@@ -523,7 +492,7 @@ convert_voucher_to_port(ipc_voucher_t voucher)
 	 * if this is the first send right
 	 */
 	if (!ipc_kobject_make_send_lazy_alloc_port(&voucher->iv_port,
-	    (ipc_kobject_t)voucher, IKOT_VOUCHER)) {
+	    (ipc_kobject_t)voucher, IKOT_VOUCHER, IPC_KOBJECT_ALLOC_NONE, false, 0)) {
 		ipc_voucher_release(voucher);
 	}
 	return voucher->iv_port;
@@ -679,8 +648,7 @@ convert_port_to_voucher_attr_control(
 	ipc_port_t      port)
 {
 	if (IP_VALID(port)) {
-		zone_require(port, ipc_object_zones[IOT_PORT]);
-		ipc_voucher_attr_control_t ivac = (ipc_voucher_attr_control_t) port->ip_kobject;
+		ipc_voucher_attr_control_t ivac = (ipc_voucher_attr_control_t) ip_get_kobject(port);
 
 		/*
 		 * No need to lock because we have a reference on the
@@ -693,7 +661,7 @@ convert_port_to_voucher_attr_control(
 		}
 		require_ip_active(port);
 
-		zone_require(ivac, ipc_voucher_attr_control_zone);
+		zone_require(ipc_voucher_attr_control_zone, ivac);
 		ivac_reference(ivac);
 		return ivac;
 	}
@@ -711,12 +679,14 @@ ipc_voucher_attr_control_notify(mach_msg_header_t *msg)
 {
 	mach_no_senders_notification_t *notification = (void *)msg;
 	ipc_port_t port = notification->not_header.msgh_remote_port;
+	ipc_voucher_attr_control_t ivac;
 
 	require_ip_active(port);
 	assert(IKOT_VOUCHER_ATTR_CONTROL == ip_kotype(port));
 
 	/* release the reference donated by convert_voucher_attr_control_to_port */
-	ivac_release((ipc_voucher_attr_control_t)port->ip_kobject);
+	ivac = (ipc_voucher_attr_control_t)ip_get_kobject(port);
+	ivac_release(ivac);
 }
 
 /*
@@ -729,14 +699,14 @@ convert_voucher_attr_control_to_port(ipc_voucher_attr_control_t control)
 		return IP_NULL;
 	}
 
-	zone_require(control, ipc_voucher_attr_control_zone);
+	zone_require(ipc_voucher_attr_control_zone, control);
 
 	/*
 	 * make a send right and donate our reference for
 	 * ipc_voucher_attr_control_notify if this is the first send right
 	 */
 	if (!ipc_kobject_make_send_lazy_alloc_port(&control->ivac_port,
-	    (ipc_kobject_t)control, IKOT_VOUCHER_ATTR_CONTROL)) {
+	    (ipc_kobject_t)control, IKOT_VOUCHER_ATTR_CONTROL, IPC_KOBJECT_ALLOC_NONE, false, 0)) {
 		ivac_release(control);
 	}
 	return control->ivac_port;
@@ -1517,7 +1487,7 @@ ipc_execute_voucher_recipe_command(
 			}
 			break;
 		}
-	/* fall thru for single key redemption */
+		OS_FALLTHROUGH; /* fall thru for single key redemption */
 
 	/*
 	 * DEFAULT:
@@ -2647,7 +2617,7 @@ ipc_get_pthpriority_from_kmsg_voucher(
 		return KERN_FAILURE;
 	}
 
-	pthread_priority_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
+	pthread_priority_voucher = ip_get_voucher(kmsg->ikm_voucher);
 	kr = mach_voucher_extract_attr_recipe(pthread_priority_voucher,
 	    MACH_VOUCHER_ATTR_KEY_PTHPRIORITY,
 	    content_data,
@@ -2692,7 +2662,7 @@ ipc_voucher_send_preprocessing(ipc_kmsg_t kmsg)
 	}
 
 	/* setup recipe for preprocessing of all the attributes. */
-	pre_processed_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
+	pre_processed_voucher = ip_get_voucher(kmsg->ikm_voucher);
 
 	kr = ipc_voucher_prepare_processing_recipe(pre_processed_voucher,
 	    (mach_voucher_attr_raw_recipe_array_t)recipes,
@@ -2741,7 +2711,7 @@ ipc_voucher_receive_postprocessing(
 	}
 
 	/* setup recipe for auto redeem of all the attributes. */
-	sent_voucher = (ipc_voucher_t)kmsg->ikm_voucher->ip_kobject;
+	sent_voucher = ip_get_voucher(kmsg->ikm_voucher);
 
 	kr = ipc_voucher_prepare_processing_recipe(sent_voucher,
 	    (mach_voucher_attr_raw_recipe_array_t)recipes,
@@ -2906,7 +2876,7 @@ struct user_data_value_element {
 	iv_index_t                              e_sum;
 	iv_index_t                              e_hash;
 	queue_chain_t                           e_hash_link;
-	uint8_t                                 e_data[];
+	uint8_t                                *e_data;
 };
 
 typedef struct user_data_value_element *user_data_element_t;
@@ -2918,10 +2888,8 @@ typedef struct user_data_value_element *user_data_element_t;
 #define USER_DATA_HASH_BUCKET(x) ((x) % USER_DATA_HASH_BUCKETS)
 
 static queue_head_t user_data_bucket[USER_DATA_HASH_BUCKETS];
-static lck_spin_t user_data_lock_data;
+static LCK_SPIN_DECLARE_ATTR(user_data_lock_data, &ipc_lck_grp, &ipc_lck_attr);
 
-#define user_data_lock_init() \
-	lck_spin_init(&user_data_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define user_data_lock_destroy() \
 	lck_spin_destroy(&user_data_lock_data, &ipc_lck_grp)
 #define user_data_lock() \
@@ -2999,6 +2967,13 @@ ipc_voucher_attr_control_t test_control;
 #define USER_DATA_ASSERT_KEY(key) assert(MACH_VOUCHER_ATTR_KEY_TEST == (key))
 #endif
 
+static void
+user_data_value_element_free(user_data_element_t elem)
+{
+	kheap_free(KHEAP_DATA_BUFFERS, elem->e_data, elem->e_size);
+	kfree(elem, sizeof(struct user_data_value_element));
+}
+
 /*
  *	Routine:	user_data_release_value
  *	Purpose:
@@ -3028,7 +3003,7 @@ user_data_release_value(
 	if (sync == elem->e_made) {
 		queue_remove(&user_data_bucket[hash], elem, user_data_element_t, e_hash_link);
 		user_data_unlock();
-		kfree(elem, sizeof(*elem) + elem->e_size);
+		user_data_value_element_free(elem);
 		return KERN_SUCCESS;
 	}
 	assert(sync < elem->e_made);
@@ -3108,7 +3083,7 @@ retry:
 			user_data_unlock();
 
 			if (NULL != alloc) {
-				kfree(alloc, sizeof(*alloc) + content_size);
+				user_data_value_element_free(alloc);
 			}
 
 			return elem;
@@ -3118,11 +3093,12 @@ retry:
 	if (NULL == alloc) {
 		user_data_unlock();
 
-		alloc = (user_data_element_t)kalloc(sizeof(*alloc) + content_size);
+		alloc = kalloc(sizeof(struct user_data_value_element));
 		alloc->e_made = 1;
 		alloc->e_size = content_size;
 		alloc->e_sum = sum;
 		alloc->e_hash = hash;
+		alloc->e_data = kheap_alloc(KHEAP_DATA_BUFFERS, content_size, Z_WAITOK | Z_NOFAIL);
 		memcpy(alloc->e_data, content, content_size);
 		goto retry;
 	}
@@ -3161,9 +3137,13 @@ user_data_get_value(
 		/* redeem of previous values is the value */
 		if (0 < prev_value_count) {
 			elem = (user_data_element_t)prev_values[0];
+
+			user_data_lock();
 			assert(0 < elem->e_made);
 			elem->e_made++;
-			*out_value = prev_values[0];
+			user_data_unlock();
+
+			*out_value = (mach_voucher_attr_value_handle_t)elem;
 			return KERN_SUCCESS;
 		}
 
@@ -3254,48 +3234,36 @@ user_data_release(
 	panic("Voucher user-data manager released");
 }
 
-static int user_data_manager_inited = 0;
-
-void
-user_data_attr_manager_init()
+__startup_func
+static void
+user_data_attr_manager_init(void)
 {
 	kern_return_t kr;
 
 #if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA)
-	if ((user_data_manager_inited & 0x1) != 0x1) {
-		kr = ipc_register_well_known_mach_voucher_attr_manager(&user_data_manager,
-		    (mach_voucher_attr_value_handle_t)0,
-		    MACH_VOUCHER_ATTR_KEY_USER_DATA,
-		    &user_data_control);
-		if (KERN_SUCCESS != kr) {
-			printf("Voucher user-data manager register(USER-DATA) returned %d", kr);
-		} else {
-			user_data_manager_inited |= 0x1;
-		}
+	kr = ipc_register_well_known_mach_voucher_attr_manager(&user_data_manager,
+	    (mach_voucher_attr_value_handle_t)0,
+	    MACH_VOUCHER_ATTR_KEY_USER_DATA,
+	    &user_data_control);
+	if (KERN_SUCCESS != kr) {
+		printf("Voucher user-data manager register(USER-DATA) returned %d", kr);
 	}
 #endif
 #if defined(MACH_VOUCHER_ATTR_KEY_TEST)
-	if ((user_data_manager_inited & 0x2) != 0x2) {
-		kr = ipc_register_well_known_mach_voucher_attr_manager(&user_data_manager,
-		    (mach_voucher_attr_value_handle_t)0,
-		    MACH_VOUCHER_ATTR_KEY_TEST,
-		    &test_control);
-		if (KERN_SUCCESS != kr) {
-			printf("Voucher user-data manager register(TEST) returned %d", kr);
-		} else {
-			user_data_manager_inited |= 0x2;
-		}
+	kr = ipc_register_well_known_mach_voucher_attr_manager(&user_data_manager,
+	    (mach_voucher_attr_value_handle_t)0,
+	    MACH_VOUCHER_ATTR_KEY_TEST,
+	    &test_control);
+	if (KERN_SUCCESS != kr) {
+		printf("Voucher user-data manager register(TEST) returned %d", kr);
 	}
 #endif
 #if defined(MACH_VOUCHER_ATTR_KEY_USER_DATA) || defined(MACH_VOUCHER_ATTR_KEY_TEST)
-	int i;
-
-	for (i = 0; i < USER_DATA_HASH_BUCKETS; i++) {
+	for (int i = 0; i < USER_DATA_HASH_BUCKETS; i++) {
 		queue_init(&user_data_bucket[i]);
 	}
-
-	user_data_lock_init();
 #endif
 }
+STARTUP(MACH_IPC, STARTUP_RANK_FIRST, user_data_attr_manager_init);
 
-#endif /* MACH_DEBUG */
+#endif /* MACH_VOUCHER_ATTR_KEY_USER_DATA || MACH_VOUCHER_ATTR_KEY_TEST */

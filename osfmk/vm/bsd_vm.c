@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -109,6 +109,7 @@ const struct memory_object_pager_ops vnode_pager_ops = {
 	.memory_object_map = vnode_pager_map,
 	.memory_object_last_unmap = vnode_pager_last_unmap,
 	.memory_object_data_reclaim = NULL,
+	.memory_object_backing_object = NULL,
 	.memory_object_pager_name = "vnode pager"
 };
 
@@ -117,7 +118,11 @@ typedef struct vnode_pager {
 	struct memory_object vn_pgr_hdr;
 
 	/*  pager-specific */
-	struct os_refcnt        ref_count;
+#if MEMORY_OBJECT_HAS_REFCOUNT
+#define vn_pgr_hdr_ref      vn_pgr_hdr.mo_ref
+#else
+	os_ref_atomic_t         vn_pgr_hdr_ref;
+#endif
 	struct vnode            *vnode_handle;  /* vnode handle              */
 } *vnode_pager_t;
 
@@ -152,16 +157,13 @@ struct vnode *
 vnode_pager_lookup_vnode(               /* forward */
 	memory_object_t);
 
-zone_t  vnode_pager_zone;
-
+ZONE_DECLARE(vnode_pager_zone, "vnode pager structures",
+    sizeof(struct vnode_pager), ZC_NOENCRYPT);
 
 #define VNODE_PAGER_NULL        ((vnode_pager_t) 0)
 
 /* TODO: Should be set dynamically by vnode_pager_init() */
 #define CLUSTER_SHIFT   1
-
-/* TODO: Should be set dynamically by vnode_pager_bootstrap() */
-#define MAX_VNODE               10000
 
 
 #if DEBUG
@@ -267,7 +269,7 @@ memory_object_control_uiomove(
 					 * We're modifying a code-signed
 					 * page: force revalidate
 					 */
-					dst_page->vmp_cs_validated = FALSE;
+					dst_page->vmp_cs_validated = VMP_CS_ALL_FALSE;
 
 					VM_PAGEOUT_DEBUG(vm_cs_validated_resets, 1);
 
@@ -355,33 +357,6 @@ memory_object_control_uiomove(
 /*
  *
  */
-void
-vnode_pager_bootstrap(void)
-{
-	vm_size_t      size;
-
-	size = (vm_size_t) sizeof(struct vnode_pager);
-	vnode_pager_zone = zinit(size, (vm_size_t) MAX_VNODE * size,
-	    PAGE_SIZE, "vnode pager structures");
-	zone_change(vnode_pager_zone, Z_CALLERACCT, FALSE);
-	zone_change(vnode_pager_zone, Z_NOENCRYPT, TRUE);
-
-
-#if CONFIG_CODE_DECRYPTION
-	apple_protect_pager_bootstrap();
-#endif  /* CONFIG_CODE_DECRYPTION */
-	swapfile_pager_bootstrap();
-#if __arm64__
-	fourk_pager_bootstrap();
-#endif /* __arm64__ */
-	shared_region_pager_bootstrap();
-
-	return;
-}
-
-/*
- *
- */
 memory_object_t
 vnode_pager_setup(
 	struct vnode    *vp,
@@ -457,6 +432,8 @@ vnode_pager_data_return(
 	int                     upl_flags)
 {
 	vnode_pager_t   vnode_object;
+
+	assertf(page_aligned(offset), "offset 0x%llx\n", offset);
 
 	vnode_object = vnode_pager_lookup(mem_obj);
 
@@ -648,6 +625,8 @@ vnode_pager_data_request(
 	vm_size_t               size;
 	uint32_t                io_streaming = 0;
 
+	assertf(page_aligned(offset), "offset 0x%llx\n", offset);
+
 	vnode_object = vnode_pager_lookup(mem_obj);
 
 	size = MAX_UPL_TRANSFER_BYTES;
@@ -675,7 +654,7 @@ vnode_pager_reference(
 	vnode_pager_t   vnode_object;
 
 	vnode_object = vnode_pager_lookup(mem_obj);
-	os_ref_retain(&vnode_object->ref_count);
+	os_ref_retain_raw(&vnode_object->vn_pgr_hdr_ref, NULL);
 }
 
 /*
@@ -691,7 +670,7 @@ vnode_pager_deallocate(
 
 	vnode_object = vnode_pager_lookup(mem_obj);
 
-	if (os_ref_release(&vnode_object->ref_count) == 0) {
+	if (os_ref_release_raw(&vnode_object->vn_pgr_hdr_ref, NULL) == 0) {
 		if (vnode_object->vnode_handle != NULL) {
 			vnode_pager_vrele(vnode_object->vnode_handle);
 		}
@@ -945,7 +924,7 @@ vnode_object_create(
 	vnode_object->vn_pgr_hdr.mo_pager_ops = &vnode_pager_ops;
 	vnode_object->vn_pgr_hdr.mo_control = MEMORY_OBJECT_CONTROL_NULL;
 
-	os_ref_init(&vnode_object->ref_count, NULL);
+	os_ref_init_raw(&vnode_object->vn_pgr_hdr_ref, NULL);
 	vnode_object->vnode_handle = vp;
 
 	return vnode_object;
@@ -996,6 +975,7 @@ fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *
 	vm_region_extended_info_data_t extended;
 	vm_region_top_info_data_t top;
 	boolean_t do_region_footprint;
+	int       effective_page_shift, effective_page_size;
 
 	task_lock(task);
 	map = task->map;
@@ -1003,6 +983,10 @@ fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *
 		task_unlock(task);
 		return 0;
 	}
+
+	effective_page_shift = vm_self_region_page_shift(map);
+	effective_page_size = (1 << effective_page_shift);
+
 	vm_map_reference(map);
 	task_unlock(task);
 
@@ -1046,19 +1030,19 @@ fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *
 				pinfo->pri_user_wired_count = 0;
 				pinfo->pri_user_tag = -1;
 				pinfo->pri_pages_resident =
-				    (uint32_t) (ledger_resident / PAGE_SIZE);
+				    (uint32_t) (ledger_resident / effective_page_size);
 				pinfo->pri_pages_shared_now_private = 0;
 				pinfo->pri_pages_swapped_out =
-				    (uint32_t) (ledger_compressed / PAGE_SIZE);
+				    (uint32_t) (ledger_compressed / effective_page_size);
 				pinfo->pri_pages_dirtied =
-				    (uint32_t) (ledger_resident / PAGE_SIZE);
+				    (uint32_t) (ledger_resident / effective_page_size);
 				pinfo->pri_ref_count = 1;
 				pinfo->pri_shadow_depth = 0;
 				pinfo->pri_share_mode = SM_PRIVATE;
 				pinfo->pri_private_pages_resident =
-				    (uint32_t) (ledger_resident / PAGE_SIZE);
+				    (uint32_t) (ledger_resident / effective_page_size);
 				pinfo->pri_shared_pages_resident = 0;
-				pinfo->pri_obj_id = INFO_MAKE_FAKE_OBJECT_ID(map, task_ledgers.purgeable_nonvolatile);
+				pinfo->pri_obj_id = VM_OBJECT_ID_FAKE(map, task_ledgers.purgeable_nonvolatile);
 				pinfo->pri_address = address;
 				pinfo->pri_size =
 				    (uint64_t) (ledger_resident + ledger_compressed);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2020 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -69,11 +69,6 @@
  *	Functions to manipulate IPC capability spaces.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 #include <mach/port.h>
@@ -91,17 +86,15 @@
 #include <prng/random.h>
 #include <string.h>
 
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
-
 /* Remove this in the future so port names are less predictable. */
 #define CONFIG_SEMI_RANDOM_ENTRIES
 #ifdef CONFIG_SEMI_RANDOM_ENTRIES
 #define NUM_SEQ_ENTRIES 8
 #endif
 
-zone_t ipc_space_zone;
+ZONE_DECLARE(ipc_space_zone, "ipc spaces",
+    sizeof(struct ipc_space), ZC_NOENCRYPT);
+
 ipc_space_t ipc_space_kernel;
 ipc_space_t ipc_space_reply;
 
@@ -246,6 +239,7 @@ ipc_space_rand_freelist(
 kern_return_t
 ipc_space_create(
 	ipc_table_size_t        initial,
+	ipc_label_t             label,
 	ipc_space_t             *spacep)
 {
 	ipc_space_t space;
@@ -273,10 +267,6 @@ ipc_space_create(
 	ipc_space_rand_freelist(space, table, 0, new_size);
 
 	is_lock_init(space);
-#ifdef __DARLING__
-	mutex_init(&space->is_mutex_lock);
-#endif
-
 	space->is_bits = 2; /* 2 refs, active, not growing */
 	space->is_table_hashed = 0;
 	space->is_table_size = new_size;
@@ -284,6 +274,7 @@ ipc_space_create(
 	space->is_table = table;
 	space->is_table_next = initial + 1;
 	space->is_task = NULL;
+	space->is_label = label;
 	space->is_low_mod = new_size;
 	space->is_high_mod = 0;
 	space->is_node_id = HOST_LOCAL_NODE; /* HOST_LOCAL_NODE, except proxy spaces */
@@ -292,6 +283,67 @@ ipc_space_create(
 	return KERN_SUCCESS;
 }
 
+/*
+ *	Routine:	ipc_space_label
+ *	Purpose:
+ *		Modify the label on a space. The desired
+ *      label must be a super-set of the current
+ *      label for the space (as rights may already
+ *      have been previously copied out under the
+ *      old label value.
+ *	Conditions:
+ *		Nothing locked.
+ *	Returns:
+ *		KERN_SUCCESS		Updated the label
+ *		KERN_INVALID_VALUE  label not a superset of old
+ */
+kern_return_t
+ipc_space_label(
+	ipc_space_t space,
+	ipc_label_t label)
+{
+	is_write_lock(space);
+	if (!is_active(space)) {
+		is_write_unlock(space);
+		return KERN_SUCCESS;
+	}
+
+	if ((space->is_label & label) != space->is_label) {
+		is_write_unlock(space);
+		return KERN_INVALID_VALUE;
+	}
+	space->is_label = label;
+	is_write_unlock(space);
+	return KERN_SUCCESS;
+}
+
+/*
+ *	Routine:	ipc_space_add_label
+ *	Purpose:
+ *		Modify the label on a space. The desired
+ *      label is added to the labels already set
+ *      on the space.
+ *	Conditions:
+ *		Nothing locked.
+ *	Returns:
+ *		KERN_SUCCESS		Updated the label
+ *		KERN_INVALID_VALUE  label not a superset of old
+ */
+kern_return_t
+ipc_space_add_label(
+	ipc_space_t space,
+	ipc_label_t label)
+{
+	is_write_lock(space);
+	if (!is_active(space)) {
+		is_write_unlock(space);
+		return KERN_SUCCESS;
+	}
+
+	space->is_label |= label;
+	is_write_unlock(space);
+	return KERN_SUCCESS;
+}
 /*
  *	Routine:	ipc_space_create_special
  *	Purpose:
@@ -319,13 +371,11 @@ ipc_space_create_special(
 	}
 
 	is_lock_init(space);
-#ifdef __DARLING__
-	mutex_init(&space->is_mutex_lock);
-#endif
 
 	space->is_bits       = IS_INACTIVE | 1; /* 1 ref, not active, not growing */
 	space->is_table      = IE_NULL;
 	space->is_task       = TASK_NULL;
+	space->is_label      = IPC_LABEL_SPECIAL;
 	space->is_table_next = 0;
 	space->is_low_mod    = 0;
 	space->is_high_mod   = 0;

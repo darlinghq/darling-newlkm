@@ -118,13 +118,13 @@ __END_DECLS
 
 #ifdef BSD_KERNEL_PRIVATE
 extern char version[];                  /* system version */
-extern const char copyright[];          /* system copyright */
+extern const char *const copyright;     /* system copyright */
 
 
 extern int      boothowto;      /* reboot flags, from console subsystem */
 extern int      show_space;
 extern int      minimalboot;
-#if CONFIG_EMBEDDED
+#if CONFIG_DARKBOOT
 extern int      darkboot;
 #endif
 
@@ -190,7 +190,7 @@ void throttle_info_end_io(buf_t bp);
 void    timeout(void (*)(void *), void *arg, int ticks);
 void    timeout_with_leeway(void (*)(void *), void *arg, int ticks, int leeway_ticks);
 void    untimeout(void (*)(void *), void *arg);
-int     bsd_hostname(char *, int, int*);
+int     bsd_hostname(char *, size_t, size_t*);
 int     vslock(user_addr_t addr, user_size_t len);
 int     vsunlock(user_addr_t addr, user_size_t len, int dirtied);
 #endif /* KERNEL_PRIVATE */
@@ -202,6 +202,7 @@ int     enosys(void);
 int     enxio(void);
 int     eopnotsupp(void);
 void    *hashinit(int count, int type, u_long *hashmask);
+void    hashdestroy(void *, int type, u_long hashmask);
 void    ovbcopy(const void *from, void *to, size_t len);
 int     fubyte(user_addr_t addr);
 int     fuibyte(user_addr_t addr);
@@ -231,7 +232,8 @@ uint32_t throttle_lowpri_io(int sleep_amount);
 /* returns TRUE if the throttle_lowpri_io called with the same sleep_amount would've slept */
 int     throttle_lowpri_io_will_be_throttled(int sleep_amount);
 void    throttle_set_thread_io_policy(int policy);
-int             throttle_get_thread_effective_io_policy(void);
+int     throttle_get_thread_effective_io_policy(void);
+int     throttle_thread_io_tier_above_metadata(void);
 
 typedef struct __throttle_info_handle *throttle_info_handle_t;
 int     throttle_info_ref_by_mask(uint64_t throttle_mask, throttle_info_handle_t *throttle_info_handle);

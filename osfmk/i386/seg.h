@@ -58,6 +58,7 @@
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 #include <mach/vm_types.h>
+#include <mach/vm_param.h>
 #include <architecture/i386/sel.h>
 
 /*
@@ -265,7 +266,6 @@ __END_DECLS
 
 #define NULL_SEG        0
 
-#ifndef __DARLING__
 
 /*
  * Kernel descriptors for MACH - 64-bit flat address space.
@@ -286,7 +286,6 @@ __END_DECLS
                                         /* 12: other 8 bytes of USER_LDT */
 #define KERNEL_DS       0x68            /* 13: 32-bit kernel data */
 
-#endif
 
 #define SYSENTER_TF_CS  (USER_CS|0x10000)
 #define SYSENTER_DS     KERNEL64_SS     /* sysenter kernel data segment */

@@ -113,8 +113,13 @@ switch_to_video_console(void)
 int
 switch_to_serial_console(void)
 {
+	extern bool serial_console_enabled;
 	int old_cons_ops = cons_ops_index;
-	cons_ops_index = SERIAL_CONS_OPS;
+
+	if (serial_console_enabled) {
+		cons_ops_index = SERIAL_CONS_OPS;
+	}
+
 	return old_cons_ops;
 }
 
@@ -156,7 +161,7 @@ console_printbuf_putc(int ch, void * arg)
 	struct console_printbuf_state * info = (struct console_printbuf_state *)arg;
 	info->total += 1;
 	if (info->pos < (SERIAL_CONS_BUF_SIZE - 1)) {
-		info->str[info->pos] = ch;
+		info->str[info->pos] = (char)ch;
 		info->pos += 1;
 	} else {
 		/*
@@ -168,7 +173,7 @@ console_printbuf_putc(int ch, void * arg)
 			info->str[info->pos] = '\0';
 			console_write(info->str, info->pos);
 			info->pos            = 0;
-			info->str[info->pos] = ch;
+			info->str[info->pos] = (char)ch;
 			info->pos += 1;
 		}
 	}

@@ -16,6 +16,7 @@ DATAFILES = \
 PRIVATE_DATAFILES = \
 	arithmetic_128.h  \
 	block_hint.h \
+	cambria_layout.h \
 	cs_blobs.h \
 	debug.h \
 	ecc.h \
@@ -35,15 +36,17 @@ EXPORT_FILES = \
 	backtrace.h \
 	bits.h \
 	btlog.h \
-	call_entry.h \
 	circle_queue.h \
 	clock.h \
 	coalition.h \
+	counter.h  \
 	cpu_number.h \
 	cpu_data.h \
 	energy_perf.h \
 	extmod_statistics.h \
+	hv_io_notifier.h \
 	hv_support.h \
+	hv_support_kext.h \
 	ipc_mig.h \
 	ipc_misc.h \
 	kalloc.h \
@@ -55,6 +58,7 @@ EXPORT_FILES = \
 	locks.h \
 	lock_group.h \
 	host.h \
+	hvg_hypercall.h \
 	mach_param.h \
 	macro_help.h \
 	mpqueue.h \
@@ -64,6 +68,7 @@ EXPORT_FILES = \
 	processor.h \
 	queue.h \
 	mpsc_queue.h \
+	percpu.h \
 	priority_queue.h \
 	sched_prim.h \
 	sfi.h \
@@ -79,10 +84,14 @@ EXPORT_FILES = \
 	work_interval.h \
 	zalloc.h
 
+
+# Installs header file for Apple internal use for kernel extensions -
+#         $(DSTROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders
 PRIVATE_EXPORT_FILES = \
 	build_config.h \
 	mach_node_link.h \
-	copyout_shim.h
+	copyout_shim.h \
+	mach_filter.h
 
 XNU_ONLY_EXPORTS = \
 	arcade.h \

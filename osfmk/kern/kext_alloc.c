@@ -38,6 +38,8 @@
 
 #include <mach-o/loader.h>
 #include <libkern/kernel_mach_header.h>
+#include <libkern/prelink.h>
+#include <libkern/OSKextLibPrivate.h>
 #include <san/kasan.h>
 
 #define KASLR_IOREG_DEBUG 0
@@ -60,6 +62,7 @@ static mach_vm_offset_t kext_post_boot_base = 0;
  * kernel's text segment.  To ensure this happens, we snag 2GB of kernel VM
  * as early as possible for kext allocations.
  */
+__startup_func
 void
 kext_alloc_init(void)
 {
@@ -131,6 +134,31 @@ kext_alloc_init(void)
 #endif /* CONFIG_KEXT_BASEMENT */
 }
 
+/*
+ * Get a vm addr in the kext submap where a kext
+ * collection of given size could be mapped.
+ */
+vm_offset_t
+get_address_from_kext_map(vm_size_t fsize)
+{
+	vm_offset_t addr = 0;
+	kern_return_t ret;
+
+	ret = kext_alloc(&addr, fsize, false);
+	assert(ret == KERN_SUCCESS);
+
+	if (ret != KERN_SUCCESS) {
+		return 0;
+	}
+
+	kext_free(addr, fsize);
+
+	addr += VM_MAP_PAGE_SIZE(g_kext_map);
+	addr = vm_map_trunc_page(addr,
+	    VM_MAP_PAGE_MASK(g_kext_map));
+	return addr;
+}
+
 kern_return_t
 kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 {
@@ -143,6 +171,20 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 	int flags = (fixed) ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE;
 
 #if CONFIG_KEXT_BASEMENT
+	kc_format_t kcformat;
+	if (PE_get_primary_kc_format(&kcformat) && kcformat == KCFormatFileset) {
+		/*
+		 * There is no need for a kext basement when booting with the
+		 * new MH_FILESET format kext collection.
+		 */
+		rval = mach_vm_allocate_kernel(g_kext_map, &addr, size, flags, VM_KERN_MEMORY_KEXT);
+		if (rval != KERN_SUCCESS) {
+			printf("vm_allocate failed - %d\n", rval);
+			goto finish;
+		}
+		goto check_reachable;
+	}
+
 	/* Allocate the kext virtual memory
 	 * 10608884 - use mach_vm_map since we want VM_FLAGS_ANYWHERE allocated past
 	 * kext_post_boot_base (when possible).  mach_vm_allocate will always
@@ -167,6 +209,7 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 		printf("mach_vm_map failed - %d\n", rval);
 		goto finish;
 	}
+check_reachable:
 #else
 	rval = mach_vm_allocate_kernel(g_kext_map, &addr, size, flags, VM_KERN_MEMORY_KEXT);
 	if (rval != KERN_SUCCESS) {
@@ -199,4 +242,62 @@ kext_free(vm_offset_t addr, vm_size_t size)
 
 	rval = mach_vm_deallocate(g_kext_map, addr, size);
 	assert(rval == KERN_SUCCESS);
+}
+
+kern_return_t
+kext_receipt(void **addrp, size_t *sizep)
+{
+	kern_return_t ret = KERN_FAILURE;
+	if (addrp == NULL || sizep == NULL) {
+		goto finish;
+	}
+
+	kernel_mach_header_t *kc = PE_get_kc_header(KCKindAuxiliary);
+	if (kc == NULL) {
+		ret = KERN_MISSING_KC;
+		goto finish;
+	}
+
+	/*
+	 * This will be set in early boot once we've successfully checked that
+	 * the AuxKC is properly linked against the BootKC. If this isn't set,
+	 * and we have a valid AuxKC mach header, then the booter gave us a
+	 * bad KC.
+	 */
+	if (auxkc_uuid_valid == FALSE) {
+		ret = KERN_INVALID_KC;
+		goto finish;
+	}
+
+	size_t size;
+	void *addr = getsectdatafromheader(kc,
+	    kReceiptInfoSegment, kAuxKCReceiptSection, &size);
+	if (addr == NULL) {
+		ret = KERN_INVALID_KC;
+		goto finish;
+	}
+
+	*addrp = addr;
+	*sizep = size;
+	ret = KERN_SUCCESS;
+
+finish:
+	/*
+	 * If we do return success, we'll want to wait for the other side to
+	 * call kext_receipt_set_queried themselves, so we can confirm that
+	 * it made the roundtrip before allowing third party kexts to load.
+	 */
+	if (ret != KERN_SUCCESS) {
+		kext_receipt_set_queried();
+	}
+	return ret;
+}
+
+/*
+ * Returns KERN_FAILURE if the variable was already set.
+ */
+kern_return_t
+kext_receipt_set_queried()
+{
+	return OSKextSetReceiptQueried();
 }

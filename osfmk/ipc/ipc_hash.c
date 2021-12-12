@@ -63,14 +63,8 @@
  *	Entry hash table operations.
  */
 
-#ifdef __DARLING__
-#include <duct/duct.h>
-#include <duct/duct_pre_xnu.h>
-#endif
-
 #include <mach/boolean.h>
 #include <mach/port.h>
-#include <kern/kalloc.h>
 #include <ipc/port.h>
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_object.h>
@@ -87,10 +81,6 @@
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
 #endif  /* MACH_IPC_DEBUG */
-
-#ifdef __DARLING__
-#include <duct/duct_post_xnu.h>
-#endif
 
 /*
  * Forward declarations

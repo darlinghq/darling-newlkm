@@ -74,6 +74,7 @@
 #include <kern/processor.h>
 #include <kern/timer.h>
 #include <kern/affinity.h>
+#include <kern/host.h>
 
 #include <stdatomic.h>
 
@@ -156,9 +157,11 @@ thread_start_in_assert_wait(
  */
 kern_return_t
 thread_terminate_internal(
-	thread_t                        thread)
+	thread_t                        thread,
+	thread_terminate_options_t      options)
 {
 	kern_return_t           result = KERN_SUCCESS;
+	boolean_t               test_pin_bit = false;
 
 	thread_mtx_lock(thread);
 
@@ -172,6 +175,8 @@ thread_terminate_internal(
 		} else {
 			thread_start(thread);
 		}
+		/* This bit can be reliably tested only if the thread is still active */
+		test_pin_bit = (options == TH_TERMINATE_OPTION_UNPIN) ? true : false;
 	} else {
 		result = KERN_TERMINATED;
 	}
@@ -179,6 +184,13 @@ thread_terminate_internal(
 	if (thread->affinity_set != NULL) {
 		thread_affinity_terminate(thread);
 	}
+
+	/*
+	 * <rdar://problem/53562036> thread_terminate shouldn't be allowed on pthread
+	 * Until thread_terminate is disallowed for pthreads, always unpin the pinned port
+	 * when the thread is being terminated.
+	 */
+	ipc_thread_port_unpin(thread->ith_self, test_pin_bit);
 
 	thread_mtx_unlock(thread);
 
@@ -205,7 +217,7 @@ thread_terminate(
 		return KERN_FAILURE;
 	}
 
-	kern_return_t result = thread_terminate_internal(thread);
+	kern_return_t result = thread_terminate_internal(thread, TH_TERMINATE_OPTION_NONE);
 
 	/*
 	 * If a kernel thread is terminating itself, force handle the APC_AST here.
@@ -221,6 +233,20 @@ thread_terminate(
 		/* NOTREACHED */
 	}
 
+	return result;
+}
+
+kern_return_t
+thread_terminate_pinned(
+	thread_t                thread)
+{
+	if (thread == THREAD_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	assert(thread->task != kernel_task);
+
+	kern_return_t result = thread_terminate_internal(thread, TH_TERMINATE_OPTION_UNPIN);
 	return result;
 }
 
@@ -643,6 +669,67 @@ thread_set_state_from_user(
 	return thread_set_state_internal(thread, flavor, state, state_count, TRUE);
 }
 
+kern_return_t
+thread_convert_thread_state(
+	thread_t                thread,
+	int                     direction,
+	thread_state_flavor_t   flavor,
+	thread_state_t          in_state,          /* pointer to IN array */
+	mach_msg_type_number_t  in_state_count,
+	thread_state_t          out_state,         /* pointer to OUT array */
+	mach_msg_type_number_t  *out_state_count)   /*IN/OUT*/
+{
+	kern_return_t kr;
+	thread_t to_thread = THREAD_NULL;
+	thread_t from_thread = THREAD_NULL;
+	mach_msg_type_number_t state_count = in_state_count;
+
+	if (direction != THREAD_CONVERT_THREAD_STATE_TO_SELF &&
+	    direction != THREAD_CONVERT_THREAD_STATE_FROM_SELF) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	if (thread == THREAD_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	if (state_count > *out_state_count) {
+		return KERN_INSUFFICIENT_BUFFER_SIZE;
+	}
+
+	if (direction == THREAD_CONVERT_THREAD_STATE_FROM_SELF) {
+		to_thread = thread;
+		from_thread = current_thread();
+	} else {
+		to_thread = current_thread();
+		from_thread = thread;
+	}
+
+	/* Authenticate and convert thread state to kernel representation */
+	kr = machine_thread_state_convert_from_user(from_thread, flavor,
+	    in_state, state_count);
+
+	/* Return early if one of the thread was jop disabled while other wasn't */
+	if (kr != KERN_SUCCESS) {
+		return kr;
+	}
+
+	/* Convert thread state to target thread user representation */
+	kr = machine_thread_state_convert_to_user(to_thread, flavor,
+	    in_state, &state_count);
+
+	if (kr == KERN_SUCCESS) {
+		if (state_count <= *out_state_count) {
+			memcpy(out_state, in_state, state_count * sizeof(uint32_t));
+			*out_state_count = state_count;
+		} else {
+			kr = KERN_INSUFFICIENT_BUFFER_SIZE;
+		}
+	}
+
+	return kr;
+}
+
 /*
  * Kernel-internal "thread" interfaces used outside this file:
  */
@@ -689,7 +776,6 @@ thread_state_initialize(
 
 	return result;
 }
-
 
 kern_return_t
 thread_dup(
@@ -1001,6 +1087,7 @@ thread_apc_ast(thread_t thread)
 
 	thread_mtx_unlock(thread);
 }
+
 
 /* Prototype, see justification above */
 kern_return_t

@@ -82,7 +82,7 @@
 #include <sys/namei.h>
 #include <sys/ucred.h>
 #include <sys/errno.h>
-#include <sys/malloc.h>
+#include <kern/kalloc.h>
 #include <sys/decmpfs.h>
 
 #if CONFIG_MACF
@@ -101,6 +101,8 @@
 #else
 #define DODEBUG(A)
 #endif
+
+ZONE_DECLARE(mount_zone, "mount", sizeof(struct mount), ZC_ZFREE_CLEARMEM);
 
 __private_extern__ void vntblinit(void);
 
@@ -162,9 +164,8 @@ vfs_opv_init(void)
 		 * Also handle backwards compatibility.
 		 */
 		if (*opv_desc_vector_p == NULL) {
-			MALLOC(*opv_desc_vector_p, PFIvp*,
-			    vfs_opv_numops * sizeof(PFIvp), M_TEMP, M_WAITOK);
-			bzero(*opv_desc_vector_p, vfs_opv_numops * sizeof(PFIvp));
+			*opv_desc_vector_p = kheap_alloc(KHEAP_DEFAULT,
+			    vfs_opv_numops * sizeof(PFIvp), Z_WAITOK | Z_ZERO);
 			DODEBUG(printf("vector at %x allocated\n",
 			    opv_desc_vector_p));
 		}
@@ -269,53 +270,23 @@ vfs_op_init(void)
 extern struct vnodeops dead_vnodeops;
 extern struct vnodeops spec_vnodeops;
 
-/* vars for vnode lock */
-lck_grp_t * vnode_lck_grp;
-lck_grp_attr_t * vnode_lck_grp_attr;
-lck_attr_t * vnode_lck_attr;
-
-#if CONFIG_TRIGGERS
-/* vars for vnode trigger resolver */
-lck_grp_t * trigger_vnode_lck_grp;
-lck_grp_attr_t * trigger_vnode_lck_grp_attr;
-lck_attr_t * trigger_vnode_lck_attr;
-#endif
-
-lck_grp_t * fd_vn_lck_grp;
-lck_grp_attr_t * fd_vn_lck_grp_attr;
-lck_attr_t * fd_vn_lck_attr;
-
 /* vars for vnode list lock */
-lck_grp_t * vnode_list_lck_grp;
-lck_grp_attr_t * vnode_list_lck_grp_attr;
-lck_attr_t * vnode_list_lck_attr;
-lck_spin_t * vnode_list_spin_lock;
-lck_mtx_t * spechash_mtx_lock;
-
-/* vars for vfsconf lock */
-lck_grp_t * fsconf_lck_grp;
-lck_grp_attr_t * fsconf_lck_grp_attr;
-lck_attr_t * fsconf_lck_attr;
-
+static LCK_GRP_DECLARE(vnode_list_lck_grp, "vnode list");
+static LCK_ATTR_DECLARE(vnode_list_lck_attr, 0, 0);
+static LCK_SPIN_DECLARE_ATTR(vnode_list_spin_lock,
+    &vnode_list_lck_grp, &vnode_list_lck_attr);
+static LCK_MTX_DECLARE_ATTR(spechash_mtx_lock,
+    &vnode_list_lck_grp, &vnode_list_lck_attr);
+LCK_MTX_DECLARE_ATTR(pkg_extensions_lck,
+    &vnode_list_lck_grp, &vnode_list_lck_attr);
 
 /* vars for mount lock */
-lck_grp_t * mnt_lck_grp;
-lck_grp_attr_t * mnt_lck_grp_attr;
-lck_attr_t * mnt_lck_attr;
+static LCK_GRP_DECLARE(mnt_lck_grp, "mount");
+static LCK_ATTR_DECLARE(mnt_lck_attr, 0, 0);
 
 /* vars for mount list lock */
-lck_grp_t * mnt_list_lck_grp;
-lck_grp_attr_t * mnt_list_lck_grp_attr;
-lck_attr_t * mnt_list_lck_attr;
-lck_mtx_t * mnt_list_mtx_lock;
-
-/* vars for sync mutex */
-lck_grp_t * sync_mtx_lck_grp;
-lck_grp_attr_t * sync_mtx_lck_grp_attr;
-lck_attr_t * sync_mtx_lck_attr;
-lck_mtx_t * sync_mtx_lck;
-
-lck_mtx_t *pkg_extensions_lck;
+static LCK_GRP_DECLARE(mnt_list_lck_grp, "mount list");
+LCK_MTX_DECLARE(mnt_list_mtx_lock, &mnt_list_lck_grp);
 
 struct mount * dead_mountp;
 
@@ -328,77 +299,6 @@ vfsinit(void)
 	struct vfstable *vfsp;
 	int i, maxtypenum;
 	struct mount * mp;
-
-	/* Allocate vnode list lock group attribute and group */
-	vnode_list_lck_grp_attr = lck_grp_attr_alloc_init();
-
-	vnode_list_lck_grp = lck_grp_alloc_init("vnode list", vnode_list_lck_grp_attr);
-
-	/* Allocate vnode list lock attribute */
-	vnode_list_lck_attr = lck_attr_alloc_init();
-
-	/* Allocate vnode list lock */
-	vnode_list_spin_lock = lck_spin_alloc_init(vnode_list_lck_grp, vnode_list_lck_attr);
-
-	/* Allocate spec hash list lock */
-	spechash_mtx_lock = lck_mtx_alloc_init(vnode_list_lck_grp, vnode_list_lck_attr);
-
-	/* Allocate the package extensions table lock */
-	pkg_extensions_lck = lck_mtx_alloc_init(vnode_list_lck_grp, vnode_list_lck_attr);
-
-	/* allocate vnode lock group attribute and group */
-	vnode_lck_grp_attr = lck_grp_attr_alloc_init();
-
-	vnode_lck_grp = lck_grp_alloc_init("vnode", vnode_lck_grp_attr);
-
-	/* Allocate vnode lock attribute */
-	vnode_lck_attr = lck_attr_alloc_init();
-
-#if CONFIG_TRIGGERS
-	trigger_vnode_lck_grp_attr = lck_grp_attr_alloc_init();
-	trigger_vnode_lck_grp = lck_grp_alloc_init("trigger_vnode", trigger_vnode_lck_grp_attr);
-	trigger_vnode_lck_attr = lck_attr_alloc_init();
-#endif
-	/* Allocate per fd vnode data lock attribute and group */
-	fd_vn_lck_grp_attr = lck_grp_attr_alloc_init();
-	fd_vn_lck_grp = lck_grp_alloc_init("fd_vnode_data", fd_vn_lck_grp_attr);
-	fd_vn_lck_attr = lck_attr_alloc_init();
-
-	/* Allocate fs config lock group attribute and group */
-	fsconf_lck_grp_attr = lck_grp_attr_alloc_init();
-
-	fsconf_lck_grp = lck_grp_alloc_init("fs conf", fsconf_lck_grp_attr);
-
-	/* Allocate fs config lock attribute */
-	fsconf_lck_attr = lck_attr_alloc_init();
-
-	/* Allocate mount point related lock structures  */
-
-	/* Allocate mount list lock group attribute and group */
-	mnt_list_lck_grp_attr = lck_grp_attr_alloc_init();
-
-	mnt_list_lck_grp = lck_grp_alloc_init("mount list", mnt_list_lck_grp_attr);
-
-	/* Allocate mount list lock attribute */
-	mnt_list_lck_attr = lck_attr_alloc_init();
-
-	/* Allocate mount list lock */
-	mnt_list_mtx_lock = lck_mtx_alloc_init(mnt_list_lck_grp, mnt_list_lck_attr);
-
-
-	/* allocate mount lock group attribute and group */
-	mnt_lck_grp_attr = lck_grp_attr_alloc_init();
-
-	mnt_lck_grp = lck_grp_alloc_init("mount", mnt_lck_grp_attr);
-
-	/* Allocate mount lock attribute */
-	mnt_lck_attr = lck_attr_alloc_init();
-
-	/* Allocate sync lock */
-	sync_mtx_lck_grp_attr =  lck_grp_attr_alloc_init();
-	sync_mtx_lck_grp =       lck_grp_alloc_init("sync thread", sync_mtx_lck_grp_attr);
-	sync_mtx_lck_attr =      lck_attr_alloc_init();
-	sync_mtx_lck =           lck_mtx_alloc_init(sync_mtx_lck_grp, sync_mtx_lck_attr);
 
 	/*
 	 * Initialize the vnode table
@@ -448,7 +348,7 @@ vfsinit(void)
 			struct sysctl_oid *oidp = NULL;
 			struct sysctl_oid oid = SYSCTL_STRUCT_INIT(_vfs, vfsp->vfc_typenum, , CTLTYPE_NODE | CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0, vfs_sysctl_node, "-", "");
 
-			MALLOC(oidp, struct sysctl_oid *, sizeof(struct sysctl_oid), M_TEMP, M_WAITOK);
+			oidp = kheap_alloc(KHEAP_DEFAULT, sizeof(struct sysctl_oid), Z_WAITOK);
 			*oidp = oid;
 
 			/* Memory for VFS oid held by vfsentry forever */
@@ -471,18 +371,9 @@ vfsinit(void)
 	vnode_authorize_init();
 
 	/*
-	 * Initialiize the quota system.
-	 */
-#if QUOTA
-	dqinit();
-#endif
-
-	/*
 	 * create a mount point for dead vnodes
 	 */
-	MALLOC_ZONE(mp, struct mount *, sizeof(struct mount),
-	    M_MOUNT, M_WAITOK);
-	bzero((char *)mp, sizeof(struct mount));
+	mp = zalloc_flags(mount_zone, Z_WAITOK | Z_ZERO);
 	/* Initialize the default IO constraints */
 	mp->mnt_maxreadcnt = mp->mnt_maxwritecnt = MAXPHYS;
 	mp->mnt_segreadcnt = mp->mnt_segwritecnt = 32;
@@ -519,43 +410,43 @@ vfsinit(void)
 void
 vnode_list_lock(void)
 {
-	lck_spin_lock_grp(vnode_list_spin_lock, vnode_list_lck_grp);
+	lck_spin_lock_grp(&vnode_list_spin_lock, &vnode_list_lck_grp);
 }
 
 void
 vnode_list_unlock(void)
 {
-	lck_spin_unlock(vnode_list_spin_lock);
+	lck_spin_unlock(&vnode_list_spin_lock);
 }
 
 void
 mount_list_lock(void)
 {
-	lck_mtx_lock(mnt_list_mtx_lock);
+	lck_mtx_lock(&mnt_list_mtx_lock);
 }
 
 void
 mount_list_unlock(void)
 {
-	lck_mtx_unlock(mnt_list_mtx_lock);
+	lck_mtx_unlock(&mnt_list_mtx_lock);
 }
 
 void
 mount_lock_init(mount_t mp)
 {
-	lck_mtx_init(&mp->mnt_mlock, mnt_lck_grp, mnt_lck_attr);
-	lck_mtx_init(&mp->mnt_iter_lock, mnt_lck_grp, mnt_lck_attr);
-	lck_mtx_init(&mp->mnt_renamelock, mnt_lck_grp, mnt_lck_attr);
-	lck_rw_init(&mp->mnt_rwlock, mnt_lck_grp, mnt_lck_attr);
+	lck_mtx_init(&mp->mnt_mlock, &mnt_lck_grp, &mnt_lck_attr);
+	lck_mtx_init(&mp->mnt_iter_lock, &mnt_lck_grp, &mnt_lck_attr);
+	lck_mtx_init(&mp->mnt_renamelock, &mnt_lck_grp, &mnt_lck_attr);
+	lck_rw_init(&mp->mnt_rwlock, &mnt_lck_grp, &mnt_lck_attr);
 }
 
 void
 mount_lock_destroy(mount_t mp)
 {
-	lck_mtx_destroy(&mp->mnt_mlock, mnt_lck_grp);
-	lck_mtx_destroy(&mp->mnt_iter_lock, mnt_lck_grp);
-	lck_mtx_destroy(&mp->mnt_renamelock, mnt_lck_grp);
-	lck_rw_destroy(&mp->mnt_rwlock, mnt_lck_grp);
+	lck_mtx_destroy(&mp->mnt_mlock, &mnt_lck_grp);
+	lck_mtx_destroy(&mp->mnt_iter_lock, &mnt_lck_grp);
+	lck_mtx_destroy(&mp->mnt_renamelock, &mnt_lck_grp);
+	lck_rw_destroy(&mp->mnt_rwlock, &mnt_lck_grp);
 }
 
 
@@ -589,7 +480,7 @@ vfstable_add(struct vfstable  *nvfsp)
 	if (nvfsp->vfc_vfsops->vfs_sysctl) {
 		struct sysctl_oid oid = SYSCTL_STRUCT_INIT(_vfs, nvfsp->vfc_typenum, , CTLTYPE_NODE | CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0, vfs_sysctl_node, "-", "");
 
-		MALLOC(oidp, struct sysctl_oid *, sizeof(struct sysctl_oid), M_TEMP, M_WAITOK);
+		oidp = kheap_alloc(KHEAP_DEFAULT, sizeof(struct sysctl_oid), Z_WAITOK);
 		*oidp = oid;
 	}
 
@@ -609,8 +500,8 @@ findslot:
 		if (allocated == NULL) {
 			mount_list_unlock();
 			/* out of static slots; allocate one instead */
-			MALLOC(allocated, struct vfstable *, sizeof(struct vfstable),
-			    M_TEMP, M_WAITOK);
+			allocated = kheap_alloc(KHEAP_DEFAULT, sizeof(struct vfstable),
+			    Z_WAITOK);
 			goto findslot;
 		} else {
 			slotp = allocated;
@@ -651,7 +542,7 @@ findslot:
 
 	if (allocated && allocated != slotp) {
 		/* did allocation, but ended up using static slot */
-		FREE(allocated, M_TEMP);
+		kheap_free(KHEAP_DEFAULT, allocated, sizeof(struct vfstable));
 	}
 
 	return slotp;
@@ -677,7 +568,7 @@ vfstable_del(struct vfstable  * vtbl)
 	struct vfstable *vcdelp;
 
 #if DEBUG
-	lck_mtx_assert(mnt_list_mtx_lock, LCK_MTX_ASSERT_OWNED);
+	lck_mtx_assert(&mnt_list_mtx_lock, LCK_MTX_ASSERT_OWNED);
 #endif /* DEBUG */
 
 	/*
@@ -697,8 +588,7 @@ vfstable_del(struct vfstable  * vtbl)
 	if ((*vcpp)->vfc_sysctl) {
 		sysctl_unregister_oid((*vcpp)->vfc_sysctl);
 		(*vcpp)->vfc_sysctl->oid_name = NULL;
-		FREE((*vcpp)->vfc_sysctl, M_TEMP);
-		(*vcpp)->vfc_sysctl = NULL;
+		kheap_free(KHEAP_DEFAULT, (*vcpp)->vfc_sysctl, sizeof(struct sysctl_oid));
 	}
 
 	/* Unlink entry */
@@ -724,12 +614,12 @@ vfstable_del(struct vfstable  * vtbl)
 		 */
 		numregistered_fses--;
 		mount_list_unlock();
-		FREE(vcdelp, M_TEMP);
+		kheap_free(KHEAP_DEFAULT, vcdelp, sizeof(struct vfstable));
 		mount_list_lock();
 	}
 
 #if DEBUG
-	lck_mtx_assert(mnt_list_mtx_lock, LCK_MTX_ASSERT_OWNED);
+	lck_mtx_assert(&mnt_list_mtx_lock, LCK_MTX_ASSERT_OWNED);
 #endif /* DEBUG */
 
 	return 0;
@@ -738,11 +628,11 @@ vfstable_del(struct vfstable  * vtbl)
 void
 SPECHASH_LOCK(void)
 {
-	lck_mtx_lock(spechash_mtx_lock);
+	lck_mtx_lock(&spechash_mtx_lock);
 }
 
 void
 SPECHASH_UNLOCK(void)
 {
-	lck_mtx_unlock(spechash_mtx_lock);
+	lck_mtx_unlock(&spechash_mtx_lock);
 }

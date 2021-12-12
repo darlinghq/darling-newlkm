@@ -28,7 +28,7 @@
 
 #include <sys/errno.h>
 #include <sys/types.h>
-#include <sys/malloc.h>
+#include <kern/kalloc.h>
 #include <sys/buf.h>
 #include <sys/time.h>
 #include <sys/kauth.h>
@@ -41,7 +41,7 @@
 #include <sys/kasl.h>
 
 #include <sys/queue.h>
-#include <kern/kalloc.h>
+#include <kern/zalloc.h>
 
 #include <uuid/uuid.h>
 
@@ -111,15 +111,8 @@ fslog_extmod_msgtracer(proc_t caller, proc_t target)
  * Log information about floating point exception handling
  */
 
-static lck_mtx_t fpxlock;
-
-void
-fpxlog_init(void)
-{
-	lck_grp_attr_t *lck_grp_attr = lck_grp_attr_alloc_init();
-	lck_grp_t *lck_grp = lck_grp_alloc_init("fpx", lck_grp_attr);
-	lck_mtx_init(&fpxlock, lck_grp, LCK_ATTR_NULL);
-}
+static LCK_GRP_DECLARE(fpxlock_grp, "fpx");
+static LCK_MTX_DECLARE(fpxlock, &fpxlock_grp);
 
 struct fpx_event {
 	uuid_t fe_uuid;
@@ -203,7 +196,7 @@ novel_fpx_event(const uuid_t uuid, uint32_t code, uint32_t xcpt)
 		DPRINTF_FPX_EVENT("reusing", fe);
 	} else {
 		/* add a new element to the list */
-		fe = kalloc(sizeof(*fe));
+		fe = zalloc_permanent_type(struct fpx_event);
 	}
 	memcpy(fe->fe_uuid, uuid, sizeof(uuid_t));
 	fe->fe_code = code;
@@ -267,13 +260,6 @@ fpxlog(
 	    /* 3 */ "com.apple.message.value", csrstr,
 	    /* 4 */ "com.apple.message.summarize", "YES",
 	    NULL);
-}
-
-#else
-
-void
-fpxlog_init(void)
-{
 }
 
 #endif /* __x86_64__ */

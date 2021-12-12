@@ -28,7 +28,7 @@
 
 #include <arm/cpu_data_internal.h>
 #include <arm/cpu_internal.h>
-#include <kern/kalloc.h>
+#include <kern/cpu_number.h>
 #include <kern/kpc.h>
 #include <kern/thread.h>
 #include <kern/processor.h>
@@ -62,21 +62,6 @@ void kpc_pmi_handler(unsigned int ctr);
 #define PMCR0_PMC_ENABLE_MASK(PMC)  (UINT64_C(0x1) << PMCR_PMC_SHIFT(PMC))
 #define PMCR0_PMC_DISABLE_MASK(PMC) (~PMCR0_PMC_ENABLE_MASK(PMC))
 
-/* how interrupts are generated on PMIs */
-#define PMCR0_INTGEN_SHIFT   (8)
-#define PMCR0_INTGEN_MASK    (UINT64_C(0x7) << PMCR0_INTGEN_SHIFT)
-#define PMCR0_INTGEN_OFF     (UINT64_C(0) << PMCR0_INTGEN_SHIFT)
-#define PMCR0_INTGEN_PMI     (UINT64_C(1) << PMCR0_INTGEN_SHIFT)
-#define PMCR0_INTGEN_AIC     (UINT64_C(2) << PMCR0_INTGEN_SHIFT)
-#define PMCR0_INTGEN_DBG_HLT (UINT64_C(3) << PMCR0_INTGEN_SHIFT)
-#define PMCR0_INTGEN_FIQ     (UINT64_C(4) << PMCR0_INTGEN_SHIFT)
-
-/* 10 unused */
-
-/* set by hardware if PMI was generated */
-#define PMCR0_PMAI_SHIFT (11)
-#define PMCR0_PMAI_MASK  (UINT64_C(1) << PMCR0_PMAI_SHIFT)
-
 /* overflow on a PMC generates an interrupt */
 #define PMCR0_PMI_OFFSET            (12)
 #define PMCR0_PMI_SHIFT(PMC)        (PMCR0_PMI_OFFSET + PMCR_PMC_SHIFT(PMC))
@@ -107,7 +92,7 @@ void kpc_pmi_handler(unsigned int ctr);
 
 /* force the CPMU clocks in case of a clocking bug */
 #define PMCR0_CLKEN_SHIFT        (31)
-#define PMCR0_CLKEN_ENABLE_MASK  (UINT64_C(1) << PMCR0_USEREN_SHIFT)
+#define PMCR0_CLKEN_ENABLE_MASK  (UINT64_C(1) << PMCR0_CLKEN_SHIFT)
 #define PMCR0_CLKEN_DISABLE_MASK (~PMCR0_CLKEN_ENABLE_MASK)
 
 /* 32 - 44 mirror the low bits for PMCs 8 and 9 */
@@ -156,37 +141,6 @@ void kpc_pmi_handler(unsigned int ctr);
 #define PMESR_EVT_ENCODE(EVT, PMC, OFF) \
 	(((EVT) & PMESR_PMC_MASK) << PMESR_SHIFT(PMC, OFF))
 
-/* system registers in the CPMU */
-
-#define SREG_PMCR0  "S3_1_c15_c0_0"
-#define SREG_PMCR1  "S3_1_c15_c1_0"
-#define SREG_PMCR2  "S3_1_c15_c2_0"
-#define SREG_PMCR3  "S3_1_c15_c3_0"
-#define SREG_PMCR4  "S3_1_c15_c4_0"
-#define SREG_PMESR0 "S3_1_c15_c5_0"
-#define SREG_PMESR1 "S3_1_c15_c6_0"
-#define SREG_PMSR   "S3_1_c15_c13_0"
-#define SREG_OPMAT0 "S3_1_c15_c7_0"
-#define SREG_OPMAT1 "S3_1_c15_c8_0"
-#define SREG_OPMSK0 "S3_1_c15_c9_0"
-#define SREG_OPMSK1 "S3_1_c15_c10_0"
-
-#define SREG_PMC0 "S3_2_c15_c0_0"
-#define SREG_PMC1 "S3_2_c15_c1_0"
-#define SREG_PMC2 "S3_2_c15_c2_0"
-#define SREG_PMC3 "S3_2_c15_c3_0"
-#define SREG_PMC4 "S3_2_c15_c4_0"
-#define SREG_PMC5 "S3_2_c15_c5_0"
-#define SREG_PMC6 "S3_2_c15_c6_0"
-#define SREG_PMC7 "S3_2_c15_c7_0"
-#define SREG_PMC8 "S3_2_c15_c9_0"
-#define SREG_PMC9 "S3_2_c15_c10_0"
-
-#define SREG_PMMMAP   "S3_2_c15_c15_0"
-#define SREG_PMTRHLD2 "S3_2_c15_c14_0"
-#define SREG_PMTRHLD4 "S3_2_c15_c13_0"
-#define SREG_PMTRHLD6 "S3_2_c15_c12_0"
-
 /*
  * The low 8 bits of a configuration words select the event to program on
  * PMESR{0,1}. Bits 16-19 are mapped to PMCR1 bits.
@@ -232,127 +186,31 @@ static uint64_t kpc_running_cfg_pmc_mask = 0;
 static uint32_t kpc_running_classes = 0;
 static uint32_t kpc_configured = 0;
 
-/*
- * The whitelist is disabled by default on development/debug kernel. This can
- * be changed via the kpc.disable_whitelist sysctl. The whitelist is enabled on
- * release kernel and cannot be disabled.
- */
-#if DEVELOPMENT || DEBUG
-static boolean_t whitelist_disabled = TRUE;
-#else
-static boolean_t whitelist_disabled = FALSE;
-#endif
-
-#define CPMU_CORE_CYCLE 0x02
-
-#if HAS_EARLY_APPLE_CPMU
-
-#define CPMU_BIU_UPSTREAM_CYCLE 0x19
-#define CPMU_BIU_DOWNSTREAM_CYCLE 0x1a
-#define CPMU_L2C_AGENT_LD 0x22
-#define CPMU_L2C_AGENT_LD_MISS 0x23
-#define CPMU_L2C_AGENT_ST 0x24
-#define CPMU_L2C_AGENT_ST_MISS 0x25
-#define CPMU_INST_A32 0x78
-#define CPMU_INST_THUMB 0x79
-#define CPMU_INST_A64 0x7a
-#define CPMU_INST_BRANCH 0x7b
-#define CPMU_SYNC_DC_LOAD_MISS 0xb4
-#define CPMU_SYNC_DC_STORE_MISS 0xb5
-#define CPMU_SYNC_DTLB_MISS 0xb6
-#define CPMU_SYNC_ST_HIT_YNGR_LD 0xb9
-#define CPMU_SYNC_BR_ANY_MISP 0xc0
-#define CPMU_FED_IC_MISS_DEM 0xce
-#define CPMU_FED_ITLB_MISS 0xcf
-
-#else /* HAS_EARLY_APPLE_CPMU */
-
-#if HAS_CPMU_BIU_EVENTS
-#define CPMU_BIU_UPSTREAM_CYCLE 0x13
-#define CPMU_BIU_DOWNSTREAM_CYCLE 0x14
-#endif /* HAS_CPMU_BIU_EVENTS */
-
-#if HAS_CPMU_L2C_EVENTS
-#define CPMU_L2C_AGENT_LD 0x1a
-#define CPMU_L2C_AGENT_LD_MISS 0x1b
-#define CPMU_L2C_AGENT_ST 0x1c
-#define CPMU_L2C_AGENT_ST_MISS 0x1d
-#endif /* HAS_CPMU_L2C_EVENTS */
-
-#define CPMU_INST_A32 0x8a
-#define CPMU_INST_THUMB 0x8b
-#define CPMU_INST_A64 0x8c
-#define CPMU_INST_BRANCH 0x8d
-#define CPMU_SYNC_DC_LOAD_MISS 0xbf
-#define CPMU_SYNC_DC_STORE_MISS 0xc0
-#define CPMU_SYNC_DTLB_MISS 0xc1
-#define CPMU_SYNC_ST_HIT_YNGR_LD 0xc4
-#define CPMU_SYNC_BR_ANY_MISP 0xcb
-#define CPMU_FED_IC_MISS_DEM 0xd3
-#define CPMU_FED_ITLB_MISS 0xd4
-
-#endif /* !HAS_EARLY_APPLE_CPMU */
-
-/* List of counter events that are allowed to be used by 3rd-parties. */
-static kpc_config_t whitelist[] = {
-	0, /* NO_EVENT */
-
-	CPMU_CORE_CYCLE,
-
-#if HAS_CPMU_BIU_EVENTS
-	CPMU_BIU_UPSTREAM_CYCLE, CPMU_BIU_DOWNSTREAM_CYCLE,
-#endif /* HAS_CPMU_BIU_EVENTS */
-
-#if HAS_CPMU_L2C_EVENTS
-	CPMU_L2C_AGENT_LD, CPMU_L2C_AGENT_LD_MISS, CPMU_L2C_AGENT_ST,
-	CPMU_L2C_AGENT_ST_MISS,
-#endif /* HAS_CPMU_L2C_EVENTS */
-
-	CPMU_INST_A32, CPMU_INST_THUMB, CPMU_INST_A64, CPMU_INST_BRANCH,
-	CPMU_SYNC_DC_LOAD_MISS, CPMU_SYNC_DC_STORE_MISS,
-	CPMU_SYNC_DTLB_MISS, CPMU_SYNC_ST_HIT_YNGR_LD,
-	CPMU_SYNC_BR_ANY_MISP, CPMU_FED_IC_MISS_DEM, CPMU_FED_ITLB_MISS,
-};
-#define WHITELIST_COUNT (sizeof(whitelist) / sizeof(whitelist[0]))
-#define EVENT_MASK 0xff
-
-static bool
-config_in_whitelist(kpc_config_t cfg)
-{
-	for (unsigned int i = 0; i < WHITELIST_COUNT; i++) {
-		/* Strip off any EL configuration bits -- just look at the event. */
-		if ((cfg & EVENT_MASK) == whitelist[i]) {
-			return true;
-		}
-	}
-	return false;
-}
-
 #ifdef KPC_DEBUG
 static void
 dump_regs(void)
 {
 	uint64_t val;
-	kprintf("PMCR0 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMCR0));
-	kprintf("PMCR1 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMCR1));
-	kprintf("PMCR2 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMCR2));
-	kprintf("PMCR3 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMCR3));
-	kprintf("PMCR4 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMCR4));
-	kprintf("PMESR0 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMESR0));
-	kprintf("PMESR1 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMESR1));
+	kprintf("PMCR0 = 0x%" PRIx64 "\n", SREG_READ("PMCR0_EL1"));
+	kprintf("PMCR1 = 0x%" PRIx64 "\n", SREG_READ("PMCR1_EL1"));
+	kprintf("PMCR2 = 0x%" PRIx64 "\n", SREG_READ("PMCR2_EL1"));
+	kprintf("PMCR3 = 0x%" PRIx64 "\n", SREG_READ("PMCR3_EL1"));
+	kprintf("PMCR4 = 0x%" PRIx64 "\n", SREG_READ("PMCR4_EL1"));
+	kprintf("PMESR0 = 0x%" PRIx64 "\n", SREG_READ("PMESR0_EL1"));
+	kprintf("PMESR1 = 0x%" PRIx64 "\n", SREG_READ("PMESR1_EL1"));
 
-	kprintf("PMC0 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC0));
-	kprintf("PMC1 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC1));
-	kprintf("PMC2 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC2));
-	kprintf("PMC3 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC3));
-	kprintf("PMC4 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC4));
-	kprintf("PMC5 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC5));
-	kprintf("PMC6 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC6));
-	kprintf("PMC7 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC7));
+	kprintf("PMC0 = 0x%" PRIx64 "\n", SREG_READ("PMC0"));
+	kprintf("PMC1 = 0x%" PRIx64 "\n", SREG_READ("PMC1"));
+	kprintf("PMC2 = 0x%" PRIx64 "\n", SREG_READ("PMC2"));
+	kprintf("PMC3 = 0x%" PRIx64 "\n", SREG_READ("PMC3"));
+	kprintf("PMC4 = 0x%" PRIx64 "\n", SREG_READ("PMC4"));
+	kprintf("PMC5 = 0x%" PRIx64 "\n", SREG_READ("PMC5"));
+	kprintf("PMC6 = 0x%" PRIx64 "\n", SREG_READ("PMC6"));
+	kprintf("PMC7 = 0x%" PRIx64 "\n", SREG_READ("PMC7"));
 
 #if (KPC_ARM64_CONFIGURABLE_COUNT > 6)
-	kprintf("PMC8 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC8));
-	kprintf("PMC9 = 0x%" PRIx64 "\n", SREG_READ(SREG_PMC9));
+	kprintf("PMC8 = 0x%" PRIx64 "\n", SREG_READ("PMC8"));
+	kprintf("PMC9 = 0x%" PRIx64 "\n", SREG_READ("PMC9"));
 #endif
 }
 #endif
@@ -360,33 +218,22 @@ dump_regs(void)
 static boolean_t
 enable_counter(uint32_t counter)
 {
-	int cpuid = cpu_number();
-	uint64_t pmcr0 = 0, intgen_type;
-	boolean_t counter_running, pmi_enabled, intgen_correct, enabled;
+	uint64_t pmcr0 = 0;
+	boolean_t counter_running, pmi_enabled, enabled;
 
-	pmcr0 = SREG_READ(SREG_PMCR0) | 0x3 /* leave the fixed counters enabled for monotonic */;
+	pmcr0 = SREG_READ("PMCR0_EL1") | 0x3 /* leave the fixed counters enabled for monotonic */;
 
 	counter_running = (pmcr0 & PMCR0_PMC_ENABLE_MASK(counter)) != 0;
 	pmi_enabled = (pmcr0 & PMCR0_PMI_ENABLE_MASK(counter)) != 0;
 
-	/* TODO this should use the PMI path rather than AIC for the interrupt
-	 *      as it is faster
-	 */
-	intgen_type = PMCR0_INTGEN_AIC;
-	intgen_correct = (pmcr0 & PMCR0_INTGEN_MASK) == intgen_type;
-
-	enabled = counter_running && pmi_enabled && intgen_correct;
+	enabled = counter_running && pmi_enabled;
 
 	if (!enabled) {
 		pmcr0 |= PMCR0_PMC_ENABLE_MASK(counter);
 		pmcr0 |= PMCR0_PMI_ENABLE_MASK(counter);
-		pmcr0 &= ~PMCR0_INTGEN_MASK;
-		pmcr0 |= intgen_type;
-
-		SREG_WRITE(SREG_PMCR0, pmcr0);
+		SREG_WRITE("PMCR0_EL1", pmcr0);
 	}
 
-	saved_PMCR[cpuid][0] = pmcr0;
 	return enabled;
 }
 
@@ -395,21 +242,19 @@ disable_counter(uint32_t counter)
 {
 	uint64_t pmcr0;
 	boolean_t enabled;
-	int cpuid = cpu_number();
 
 	if (counter < 2) {
 		return true;
 	}
 
-	pmcr0 = SREG_READ(SREG_PMCR0) | 0x3;
+	pmcr0 = SREG_READ("PMCR0_EL1") | 0x3;
 	enabled = (pmcr0 & PMCR0_PMC_ENABLE_MASK(counter)) != 0;
 
 	if (enabled) {
 		pmcr0 &= PMCR0_PMC_DISABLE_MASK(counter);
-		SREG_WRITE(SREG_PMCR0, pmcr0);
+		SREG_WRITE("PMCR0_EL1", pmcr0);
 	}
 
-	saved_PMCR[cpuid][0] = pmcr0;
 	return enabled;
 }
 
@@ -446,11 +291,11 @@ set_modes(uint32_t counter, kpc_config_t cfgword)
 		bits = PMCR1_EL_ALL_ENABLE_MASK(counter);
 	}
 
-	uint64_t pmcr1 = SREG_READ(SREG_PMCR1);
+	uint64_t pmcr1 = SREG_READ("PMCR1_EL1");
 	pmcr1 &= PMCR1_EL_ALL_DISABLE_MASK(counter);
 	pmcr1 |= bits;
 	pmcr1 |= 0x30303; /* monotonic compatibility */
-	SREG_WRITE(SREG_PMCR1, pmcr1);
+	SREG_WRITE("PMCR1_EL1", pmcr1);
 	saved_PMCR[cpuid][1] = pmcr1;
 }
 
@@ -458,17 +303,17 @@ static uint64_t
 read_counter(uint32_t counter)
 {
 	switch (counter) {
-	// case 0: return SREG_READ(SREG_PMC0);
-	// case 1: return SREG_READ(SREG_PMC1);
-	case 2: return SREG_READ(SREG_PMC2);
-	case 3: return SREG_READ(SREG_PMC3);
-	case 4: return SREG_READ(SREG_PMC4);
-	case 5: return SREG_READ(SREG_PMC5);
-	case 6: return SREG_READ(SREG_PMC6);
-	case 7: return SREG_READ(SREG_PMC7);
+	// case 0: return SREG_READ("PMC0");
+	// case 1: return SREG_READ("PMC1");
+	case 2: return SREG_READ("PMC2");
+	case 3: return SREG_READ("PMC3");
+	case 4: return SREG_READ("PMC4");
+	case 5: return SREG_READ("PMC5");
+	case 6: return SREG_READ("PMC6");
+	case 7: return SREG_READ("PMC7");
 #if (KPC_ARM64_CONFIGURABLE_COUNT > 6)
-	case 8: return SREG_READ(SREG_PMC8);
-	case 9: return SREG_READ(SREG_PMC9);
+	case 8: return SREG_READ("PMC8");
+	case 9: return SREG_READ("PMC9");
 #endif
 	default: return 0;
 	}
@@ -478,17 +323,17 @@ static void
 write_counter(uint32_t counter, uint64_t value)
 {
 	switch (counter) {
-	// case 0: SREG_WRITE(SREG_PMC0, value); break;
-	// case 1: SREG_WRITE(SREG_PMC1, value); break;
-	case 2: SREG_WRITE(SREG_PMC2, value); break;
-	case 3: SREG_WRITE(SREG_PMC3, value); break;
-	case 4: SREG_WRITE(SREG_PMC4, value); break;
-	case 5: SREG_WRITE(SREG_PMC5, value); break;
-	case 6: SREG_WRITE(SREG_PMC6, value); break;
-	case 7: SREG_WRITE(SREG_PMC7, value); break;
+	// case 0: SREG_WRITE("PMC0", value); break;
+	// case 1: SREG_WRITE("PMC1", value); break;
+	case 2: SREG_WRITE("PMC2", value); break;
+	case 3: SREG_WRITE("PMC3", value); break;
+	case 4: SREG_WRITE("PMC4", value); break;
+	case 5: SREG_WRITE("PMC5", value); break;
+	case 6: SREG_WRITE("PMC6", value); break;
+	case 7: SREG_WRITE("PMC7", value); break;
 #if (KPC_ARM64_CONFIGURABLE_COUNT > 6)
-	case 8: SREG_WRITE(SREG_PMC8, value); break;
-	case 9: SREG_WRITE(SREG_PMC9, value); break;
+	case 8: SREG_WRITE("PMC8", value); break;
+	case 9: SREG_WRITE("PMC9", value); break;
 #endif
 	default: break;
 	}
@@ -503,18 +348,18 @@ kpc_rawpmu_config_count(void)
 int
 kpc_get_rawpmu_config(kpc_config_t *configv)
 {
-	configv[0] = SREG_READ(SREG_PMCR2);
-	configv[1] = SREG_READ(SREG_PMCR3);
-	configv[2] = SREG_READ(SREG_PMCR4);
-	configv[3] = SREG_READ(SREG_OPMAT0);
-	configv[4] = SREG_READ(SREG_OPMAT1);
-	configv[5] = SREG_READ(SREG_OPMSK0);
-	configv[6] = SREG_READ(SREG_OPMSK1);
+	configv[0] = SREG_READ("PMCR2_EL1");
+	configv[1] = SREG_READ("PMCR3_EL1");
+	configv[2] = SREG_READ("PMCR4_EL1");
+	configv[3] = SREG_READ("OPMAT0_EL1");
+	configv[4] = SREG_READ("OPMAT1_EL1");
+	configv[5] = SREG_READ("OPMSK0_EL1");
+	configv[6] = SREG_READ("OPMSK1_EL1");
 #if RAWPMU_CONFIG_COUNT > 7
-	configv[7] = SREG_READ(SREG_PMMMAP);
-	configv[8] = SREG_READ(SREG_PMTRHLD2);
-	configv[9] = SREG_READ(SREG_PMTRHLD4);
-	configv[10] = SREG_READ(SREG_PMTRHLD6);
+	configv[7] = SREG_READ("PMMMAP_EL1");
+	configv[8] = SREG_READ("PMTRHLD2_EL1");
+	configv[9] = SREG_READ("PMTRHLD4_EL1");
+	configv[10] = SREG_READ("PMTRHLD6_EL1");
 #endif
 	return 0;
 }
@@ -522,18 +367,18 @@ kpc_get_rawpmu_config(kpc_config_t *configv)
 static int
 kpc_set_rawpmu_config(kpc_config_t *configv)
 {
-	SREG_WRITE(SREG_PMCR2, configv[0]);
-	SREG_WRITE(SREG_PMCR3, configv[1]);
-	SREG_WRITE(SREG_PMCR4, configv[2]);
-	SREG_WRITE(SREG_OPMAT0, configv[3]);
-	SREG_WRITE(SREG_OPMAT1, configv[4]);
-	SREG_WRITE(SREG_OPMSK0, configv[5]);
-	SREG_WRITE(SREG_OPMSK1, configv[6]);
+	SREG_WRITE("PMCR2_EL1", configv[0]);
+	SREG_WRITE("PMCR3_EL1", configv[1]);
+	SREG_WRITE("PMCR4_EL1", configv[2]);
+	SREG_WRITE("OPMAT0_EL1", configv[3]);
+	SREG_WRITE("OPMAT1_EL1", configv[4]);
+	SREG_WRITE("OPMSK0_EL1", configv[5]);
+	SREG_WRITE("OPMSK1_EL1", configv[6]);
 #if RAWPMU_CONFIG_COUNT > 7
-	SREG_WRITE(SREG_PMMMAP, configv[7]);
-	SREG_WRITE(SREG_PMTRHLD2, configv[8]);
-	SREG_WRITE(SREG_PMTRHLD4, configv[9]);
-	SREG_WRITE(SREG_PMTRHLD6, configv[10]);
+	SREG_WRITE("PMMMAP_EL1", configv[7]);
+	SREG_WRITE("PMTRHLD2_EL1", configv[8]);
+	SREG_WRITE("PMTRHLD4_EL1", configv[9]);
+	SREG_WRITE("PMTRHLD6_EL1", configv[10]);
 #endif
 	return 0;
 }
@@ -547,17 +392,14 @@ save_regs(void)
 
 	assert(ml_get_interrupts_enabled() == FALSE);
 
-	/* Save current PMCR0/1 values. PMCR2-4 are in the RAWPMU set. */
-	saved_PMCR[cpuid][0] = SREG_READ(SREG_PMCR0) | 0x3;
-
 	/* Save event selections. */
-	saved_PMESR[cpuid][0] = SREG_READ(SREG_PMESR0);
-	saved_PMESR[cpuid][1] = SREG_READ(SREG_PMESR1);
+	saved_PMESR[cpuid][0] = SREG_READ("PMESR0_EL1");
+	saved_PMESR[cpuid][1] = SREG_READ("PMESR1_EL1");
 
 	kpc_get_rawpmu_config(saved_RAWPMU[cpuid]);
 
 	/* Disable the counters. */
-	// SREG_WRITE(SREG_PMCR0, clear);
+	// SREG_WRITE("PMCR0_EL1", clear);
 
 	/* Finally, save state for each counter*/
 	for (int i = 2; i < KPC_ARM64_PMC_COUNT; i++) {
@@ -571,8 +413,8 @@ restore_regs(void)
 	int cpuid = cpu_number();
 
 	/* Restore PMESR values. */
-	SREG_WRITE(SREG_PMESR0, saved_PMESR[cpuid][0]);
-	SREG_WRITE(SREG_PMESR1, saved_PMESR[cpuid][1]);
+	SREG_WRITE("PMESR0_EL1", saved_PMESR[cpuid][0]);
+	SREG_WRITE("PMESR1_EL1", saved_PMESR[cpuid][1]);
 
 	kpc_set_rawpmu_config(saved_RAWPMU[cpuid]);
 
@@ -582,8 +424,7 @@ restore_regs(void)
 	}
 
 	/* Restore PMCR0/1 values (with PMCR0 last to enable). */
-	SREG_WRITE(SREG_PMCR1, saved_PMCR[cpuid][1] | 0x30303);
-	SREG_WRITE(SREG_PMCR0, saved_PMCR[cpuid][0] | 0x3);
+	SREG_WRITE("PMCR1_EL1", saved_PMCR[cpuid][1] | 0x30303);
 }
 
 static uint64_t
@@ -596,7 +437,7 @@ get_counter_config(uint32_t counter)
 	case 3:         /* FALLTHROUGH */
 	case 4:         /* FALLTHROUGH */
 	case 5:
-		pmesr = PMESR_EVT_DECODE(SREG_READ(SREG_PMESR0), counter, 2);
+		pmesr = PMESR_EVT_DECODE(SREG_READ("PMESR0_EL1"), counter, 2);
 		break;
 	case 6:         /* FALLTHROUGH */
 	case 7:
@@ -605,7 +446,7 @@ get_counter_config(uint32_t counter)
 	case 8:         /* FALLTHROUGH */
 	case 9:
 #endif
-		pmesr = PMESR_EVT_DECODE(SREG_READ(SREG_PMESR1), counter, 6);
+		pmesr = PMESR_EVT_DECODE(SREG_READ("PMESR1_EL1"), counter, 6);
 		break;
 	default:
 		pmesr = 0;
@@ -614,7 +455,7 @@ get_counter_config(uint32_t counter)
 
 	kpc_config_t config = pmesr;
 
-	uint64_t pmcr1 = SREG_READ(SREG_PMCR1);
+	uint64_t pmcr1 = SREG_READ("PMCR1_EL1");
 
 	if (pmcr1 & PMCR1_EL0_A32_ENABLE_MASK(counter)) {
 		config |= CFGWORD_EL0A32EN_MASK;
@@ -648,10 +489,10 @@ set_counter_config(uint32_t counter, uint64_t config)
 	case 3:         /* FALLTHROUGH */
 	case 4:         /* FALLTHROUGH */
 	case 5:
-		pmesr = SREG_READ(SREG_PMESR0);
+		pmesr = SREG_READ("PMESR0_EL1");
 		pmesr &= PMESR_EVT_CLEAR(counter, 2);
 		pmesr |= PMESR_EVT_ENCODE(config, counter, 2);
-		SREG_WRITE(SREG_PMESR0, pmesr);
+		SREG_WRITE("PMESR0_EL1", pmesr);
 		saved_PMESR[cpuid][0] = pmesr;
 		break;
 
@@ -662,10 +503,10 @@ set_counter_config(uint32_t counter, uint64_t config)
 	case 8:         /* FALLTHROUGH */
 	case 9:
 #endif
-		pmesr = SREG_READ(SREG_PMESR1);
+		pmesr = SREG_READ("PMESR1_EL1");
 		pmesr &= PMESR_EVT_CLEAR(counter, 6);
 		pmesr |= PMESR_EVT_ENCODE(config, counter, 6);
-		SREG_WRITE(SREG_PMESR1, pmesr);
+		SREG_WRITE("PMESR1_EL1", pmesr);
 		saved_PMESR[cpuid][1] = pmesr;
 		break;
 	default:
@@ -807,7 +648,7 @@ kpc_get_all_cpus_counters(uint32_t classes, int *curcpu, uint64_t *buf)
 
 	/* grab counters and CPU number as close as possible */
 	if (curcpu) {
-		*curcpu = current_processor()->cpu_id;
+		*curcpu = cpu_number();
 	}
 
 	struct kpc_get_counters_remote hdl = {
@@ -1012,7 +853,37 @@ kpc_pmi_handler(unsigned int ctr)
 	FIXED_SHADOW(ctr) += (kpc_fixed_max() - FIXED_RELOAD(ctr) + 1 /* Wrap */) + extra;
 
 	if (FIXED_ACTIONID(ctr)) {
-		kpc_sample_kperf(FIXED_ACTIONID(ctr));
+		uintptr_t pc = 0;
+		bool kernel = true;
+		struct arm_saved_state *state;
+		state = getCpuDatap()->cpu_int_state;
+		if (state) {
+			kernel = !PSR64_IS_USER(get_saved_state_cpsr(state));
+			pc = get_saved_state_pc(state);
+			if (kernel) {
+				pc = VM_KERNEL_UNSLIDE(pc);
+			}
+		}
+
+		uint64_t config = get_counter_config(ctr);
+		kperf_kpc_flags_t flags = kernel ? KPC_KERNEL_PC : 0;
+		bool custom_mode = false;
+		if ((config & CFGWORD_EL0A32EN_MASK) || (config & CFGWORD_EL0A64EN_MASK)) {
+			flags |= KPC_USER_COUNTING;
+			custom_mode = true;
+		}
+		if ((config & CFGWORD_EL1EN_MASK)) {
+			flags |= KPC_KERNEL_COUNTING;
+			custom_mode = true;
+		}
+		/*
+		 * For backwards-compatibility.
+		 */
+		if (!custom_mode) {
+			flags |= KPC_USER_COUNTING | KPC_KERNEL_COUNTING;
+		}
+		kpc_sample_kperf(FIXED_ACTIONID(ctr), ctr, config & 0xff, FIXED_SHADOW(ctr),
+		    pc, flags);
 	}
 }
 
@@ -1053,17 +924,8 @@ kpc_set_period_arch(struct kpc_config_remote *mp_config)
 int
 kpc_set_config_arch(struct kpc_config_remote *mp_config)
 {
-	uint32_t count = kpc_popcount(mp_config->pmc_mask);
-
 	assert(mp_config);
 	assert(mp_config->configv);
-
-	/* check config against whitelist for external devs */
-	for (uint32_t i = 0; i < count; ++i) {
-		if (!whitelist_disabled && !config_in_whitelist(mp_config->configv[i])) {
-			return EPERM;
-		}
-	}
 
 	/* dispatch to all CPUs */
 	cpu_broadcast_xcall(&kpc_config_sync, TRUE, kpc_set_config_xcall, mp_config);
@@ -1093,19 +955,6 @@ int
 kpc_set_sw_inc( uint32_t mask __unused )
 {
 	return ENOTSUP;
-}
-
-int
-kpc_disable_whitelist( int val )
-{
-	whitelist_disabled = val;
-	return 0;
-}
-
-int
-kpc_get_whitelist_disabled( void )
-{
-	return whitelist_disabled;
 }
 
 int
@@ -1258,18 +1107,6 @@ kpc_rawpmu_config_count(void)
 
 int
 kpc_get_rawpmu_config(__unused kpc_config_t *configv)
-{
-	return 0;
-}
-
-int
-kpc_disable_whitelist( int val __unused )
-{
-	return 0;
-}
-
-int
-kpc_get_whitelist_disabled( void )
 {
 	return 0;
 }

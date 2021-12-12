@@ -63,10 +63,18 @@
 
 #ifndef _NETINET_TCP_H_
 #define _NETINET_TCP_H_
-#include <sys/types.h>
+#ifndef DRIVERKIT
 #include <sys/appleapiopts.h>
+#endif /* DRIVERKIT */
+
 #include <machine/endian.h>
 #include <machine/types.h> /* __uint32_t */
+
+#ifndef DRIVERKIT
+#include <sys/types.h>
+#else
+#include <sys/_types.h>
+#endif /* DRIVERKIT */
 
 #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 typedef __uint32_t tcp_seq;
@@ -237,11 +245,7 @@ struct tcphdr {
 #define TCP_MEASURE_BW_BURST    0x203   /* Burst size to use for bandwidth measurement */
 #define TCP_PEER_PID            0x204   /* Lookup pid of the process we're connected to */
 #define TCP_ADAPTIVE_READ_TIMEOUT       0x205   /* Read timeout used as a multiple of RTT */
-/*
- * Enable message delivery on a socket, this feature is currently unsupported and
- * is subjected to change in future.
- */
-#define TCP_ENABLE_MSGS                 0x206
+#define TCP_OPTION_UNUSED_0             0x206   /* UNUSED */
 #define TCP_ADAPTIVE_WRITE_TIMEOUT      0x207   /* Write timeout used as a multiple of RTT */
 #define TCP_NOTIMEWAIT                  0x208   /* Avoid going into time-wait */
 #define TCP_DISABLE_BLACKHOLE_DETECTION 0x209   /* disable PMTU blackhole detection */
@@ -289,7 +293,9 @@ struct tcp_notify_ack_complete {
 #define MPTCP_SVCTYPE_INTERACTIVE       1
 #define MPTCP_SVCTYPE_AGGREGATE         2
 #define MPTCP_SVCTYPE_TARGET_BASED      3
-#define MPTCP_SVCTYPE_MAX               4
+#define MPTCP_SVCTYPE_PURE_HANDOVER     4
+#define MPTCP_SVCTYPE_MAX               5
+
 /*
  * Specify minimum time in seconds before which an established
  * TCP connection will not be dropped when there is no response from the
@@ -318,10 +324,15 @@ struct tcp_notify_ack_complete {
 #define TCPI_FLAG_STREAMING_ON  0x02    /* Streaming detection on */
 
 struct tcp_conn_status {
-	unsigned int    probe_activated : 1;
-	unsigned int    write_probe_failed : 1;
-	unsigned int    read_probe_failed : 1;
-	unsigned int    conn_probe_failed : 1;
+	union {
+		struct {
+			unsigned int    probe_activated : 1;
+			unsigned int    write_probe_failed : 1;
+			unsigned int    read_probe_failed : 1;
+			unsigned int    conn_probe_failed : 1;
+		};
+		uint32_t        pad_field;
+	};
 };
 
 /*
@@ -478,17 +489,17 @@ typedef struct conninfo_tcp {
 #pragma pack()
 
 struct mptcp_itf_stats {
-	uint16_t        ifindex;
-	uint16_t        switches;
-	uint32_t        is_expensive:1;
-	uint64_t        mpis_txbytes __attribute__((aligned(8)));
-	uint64_t        mpis_rxbytes __attribute__((aligned(8)));
-	uint64_t        mpis_wifi_txbytes __attribute__((aligned(8)));
-	uint64_t        mpis_wifi_rxbytes __attribute__((aligned(8)));
-	uint64_t        mpis_wired_txbytes __attribute__((aligned(8)));
-	uint64_t        mpis_wired_rxbytes __attribute__((aligned(8)));
-	uint64_t        mpis_cell_txbytes __attribute__((aligned(8)));
-	uint64_t        mpis_cell_rxbytes __attribute__((aligned(8)));
+	u_short  ifindex;
+	uint16_t switches;
+	uint32_t is_expensive:1;
+	uint64_t mpis_txbytes __attribute__((aligned(8)));
+	uint64_t mpis_rxbytes __attribute__((aligned(8)));
+	uint64_t mpis_wifi_txbytes __attribute__((aligned(8)));
+	uint64_t mpis_wifi_rxbytes __attribute__((aligned(8)));
+	uint64_t mpis_wired_txbytes __attribute__((aligned(8)));
+	uint64_t mpis_wired_rxbytes __attribute__((aligned(8)));
+	uint64_t mpis_cell_txbytes __attribute__((aligned(8)));
+	uint64_t mpis_cell_rxbytes __attribute__((aligned(8)));
 };
 
 /* Version solely used to let libnetcore survive */
