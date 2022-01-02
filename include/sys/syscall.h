@@ -536,6 +536,11 @@
 			/* 496  */
 			/* 497  */
 			/* 498  */
+#ifdef DARLING
+	#define	SYS_mach_eventlink_signal 496
+	#define	SYS_mach_eventlink_wait_until 497
+	#define	SYS_mach_eventlink_signal_wait_until 498
+#endif
 #define	SYS_work_interval_ctl 499
 #define	SYS_getentropy     500
 #define	SYS_necp_open      501
@@ -573,6 +578,18 @@
 #define	SYS_log_data       533
 #define	SYS_memorystatus_available_memory 534
 #define	SYS_MAXSYSCALL	535
+#ifdef DARLING
+	#define SYS_shared_region_map_and_slide_2_np 536
+	#define SYS_pivot_root 537
+	#define SYS_task_inspect_for_pid 538
+	#define SYS_task_read_for_pid 539
+	#define SYS_preadv 540
+	#define SYS_pwritev 541
+	#define SYS_preadv_nocancel 542
+	#define SYS_pwritev_nocancel 543
+	#define SYS_ulock_wait2 544
+	#define SYS_proc_info_extended_id 545
+#endif
 #define	SYS_invalid	63
 
 #endif /* __APPLE_API_PRIVATE */
