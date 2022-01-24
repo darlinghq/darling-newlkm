@@ -436,6 +436,8 @@ OBJS_darling = \
 	darling/uthreads.o \
 	$(OBJS_old_psynch)
 
+CFLAGS_darling/binfmt.o = -D__NO_FORTIFY=1
+
 #
 # full list of all objects in the darling-mach kernel module
 #
@@ -471,7 +473,8 @@ DARLING_MACH_NORMAL_INCLUDES := \
 	-I$(BUILD_ROOT)/darling \
 	-I$(MIGDIR)/osfmk \
 	-I$(MIGDIR)/../../startup \
-	-I$(BUILD_ROOT)/include
+	-I$(BUILD_ROOT)/include \
+	-isystem $(shell $(CC) -print-file-name=include)
 
 #
 # special flags for the generated files in the MIG directory
@@ -581,9 +584,9 @@ ifneq ($(KERNELRELEASE),)
     $(foreach OBJ,$($(1)_ALL_OBJS), \
       $(eval CFLAGS_$(notdir $(OBJ)) = $$(CFLAGS_$(OBJ))) \
       $(if $(strip $(CFLAGS_$(OBJ))), \
-        $(eval CFLAGS_$(OBJ) := $(call do_includes,$(OBJ))) \
-      , \
         $(eval CFLAGS_$(OBJ) += $(call do_includes,$(OBJ))) \
+      , \
+        $(eval CFLAGS_$(OBJ) := $(call do_includes,$(OBJ))) \
       ) \
     ) \
     $(foreach OBJ,$($(1)_ALL_OBJS), \

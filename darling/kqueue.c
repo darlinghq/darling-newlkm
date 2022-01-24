@@ -150,7 +150,11 @@ static int dkqueue_vnode_fs_handle_event(struct fsnotify_group* group, u32 mask,
 static int dkqueue_vnode_fs_handle_event(struct fsnotify_group* group, struct inode* inode, u32 mask, const void* data, int data_type, const struct qstr* file_name, u32 cookie, struct fsnotify_iter_info* iter_info);
 #endif
 static void dkqueue_vnode_free_group(struct fsnotify_group *group);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,16,0)
 static void dkqueue_vnode_fs_free_event(struct fsnotify_event* event);
+#else
+static void dkqueue_vnode_fs_free_event(struct fsnotify_group*, struct fsnotify_event* event);
+#endif
 static void dkqueue_vnode_fs_free_mark(struct fsnotify_mark* mark);
 static void dkqueue_vnode_update_wanted_events(dkqueue_vnode_context_t* ctx);
 static void vnode_context_lock(dkqueue_vnode_context_t* ctx);
@@ -979,7 +983,11 @@ static void dkqueue_vnode_free_group(struct fsnotify_group *group) {
 	kq->dkq_fs_group = NULL;
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,16,0)
 static void dkqueue_vnode_fs_free_event(struct fsnotify_event* event) {
+#else
+static void dkqueue_vnode_fs_free_event(struct fsnotify_group* group, struct fsnotify_event* event) {
+#endif
 	// unused but required by fsnotify
 };
 

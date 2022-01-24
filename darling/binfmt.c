@@ -670,7 +670,13 @@ bool macho_dump_headers32(struct coredump_params* cprm)
 	unsigned int threads = 0; // = atomic_read(&current->mm->core_state->nr_threads); // doesn't seem to work?
 	struct core_thread* ct;
 
-	for (ct = &current->mm->core_state->dumper; ct != NULL; ct = ct->next)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,16,0)
+	struct core_state* cs = current->mm->core_state;
+#else
+	struct core_state* cs = current->signal->core_state;
+#endif
+
+	for (ct = &cs->dumper; ct != NULL; ct = ct->next)
 		threads++;
 
 	struct mach_header mh;
@@ -731,7 +737,7 @@ bool macho_dump_headers32(struct coredump_params* cprm)
 	const int memsize = sizeof(struct thread_command) + statesize;
 	uint8_t* buffer = kmalloc(memsize, GFP_KERNEL);
 
-	for (ct = &current->mm->core_state->dumper; ct != NULL; ct = ct->next)
+	for (ct = &cs->dumper; ct != NULL; ct = ct->next)
 	{
 		struct thread_command* tc = (struct thread_command*) buffer;
 		struct thread_flavor* tf = (struct thread_flavor*)(tc+1);
@@ -774,7 +780,13 @@ bool macho_dump_headers64(struct coredump_params* cprm)
 	struct core_thread* ct;
 	struct mach_header_64 mh;
 
-	for (ct = &current->mm->core_state->dumper; ct != NULL; ct = ct->next)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,16,0)
+	struct core_state* cs = current->mm->core_state;
+#else
+	struct core_state* cs = current->signal->core_state;
+#endif
+
+	for (ct = &cs->dumper; ct != NULL; ct = ct->next)
 		threads++;
 
 	mh.magic = MH_MAGIC_64;
@@ -835,7 +847,7 @@ bool macho_dump_headers64(struct coredump_params* cprm)
 	const int memsize = sizeof(struct thread_command) + statesize;
 	uint8_t* buffer = kmalloc(memsize, GFP_KERNEL);
 
-	for (ct = &current->mm->core_state->dumper; ct != NULL; ct = ct->next)
+	for (ct = &cs->dumper; ct != NULL; ct = ct->next)
 	{
 
 		struct thread_command* tc = (struct thread_command*) buffer;
