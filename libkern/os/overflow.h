@@ -45,6 +45,10 @@
 #include <stdbool.h>
 #include <os/base.h>
 
+#if defined(__DARLING__) && !defined(__clang__)
+#include <duct/compiler/gcc/has-builtin.h>
+#endif
+
 #if defined(__DARLING__) && defined(__clang__)
 static
 #endif
