@@ -1,3 +1,8 @@
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #if KERNEL
 #include <kern/assert.h>
 #include <kern/debug.h>
@@ -9,6 +14,10 @@
 #include <os/atomic_private.h>
 
 #include "refcnt.h"
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #define OS_REFCNT_MAX_COUNT     ((os_ref_count_t)0x0FFFFFFFUL)
 

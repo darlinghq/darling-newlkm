@@ -203,11 +203,17 @@ union wait {
 		    w_Retcode:8,                /* exit code if w_termsig==0 */
 		    w_Filler:16;                /* upper bits filler */
 #endif
+		// weird compiler issue:
+		// both `__DARWIN_BYTE_ORDER == __DARWIN_LITTLE_ENDIAN` and `__DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN`
+		// evaluate to true (maybe they're not defined?)
+		// so let's workaround it:
+#ifndef __DARLING__
 #if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
 		unsigned int    w_Filler:16,    /* upper bits filler */
 		    w_Retcode:8,                /* exit code if w_termsig==0 */
 		    w_Coredump:1,               /* core dump indicator */
 		    w_Termsig:7;                /* termination signal */
+#endif
 #endif
 	} w_T;
 	/*
@@ -221,10 +227,13 @@ union wait {
 		    w_Stopsig:8,                /* signal that stopped us */
 		    w_Filler:16;                /* upper bits filler */
 #endif
+		// same issue here
+#ifndef __DARLING__
 #if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
 		unsigned int    w_Filler:16,    /* upper bits filler */
 		    w_Stopsig:8,                /* signal that stopped us */
 		    w_Stopval:8;                /* == W_STOPPED if stopped */
+#endif
 #endif
 	} w_S;
 };

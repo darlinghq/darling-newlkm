@@ -66,8 +66,10 @@
 
 #ifdef  KERNEL_PRIVATE
 
+#ifndef __DARLING__
 /* Use a function to do this less directly. */
 extern int      cpu_number(void);
+#endif
 
 #endif  /* KERNEL_PRIVATE */
 

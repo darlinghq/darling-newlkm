@@ -27,6 +27,9 @@
 #include <os/object.h>
 #include <stdint.h>
 #include <stdbool.h>
+#ifdef DARLING
+#include <os/trace.h>
+#endif
 
 #ifndef __has_attribute
 #define __has_attribute(x) 0
@@ -46,7 +49,9 @@
 
 __BEGIN_DECLS
 
+#ifndef DARLING
 extern void *__dso_handle;
+#endif
 
 #ifdef XNU_KERNEL_PRIVATE
 extern bool startup_serial_logging_active;

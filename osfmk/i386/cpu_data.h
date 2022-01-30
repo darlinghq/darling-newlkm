@@ -390,6 +390,10 @@ extern cpu_data_t       *cpu_data_ptr[];
  * the real thing,
  */
 
+#ifdef __DARLING__
+extern thread_t current_thread(void);
+#define current_thread_fast()           current_thread()
+#else
 
 /*
  * The "volatile" flavor of current_thread() is intended for use by
@@ -427,13 +431,20 @@ get_active_thread(void)
 static inline int
 get_preemption_level(void)
 {
+#ifdef __DARLING__
+	return 0;
+#else
 	return CPU_DATA()->cpu_preemption_level;
+#endif
 }
 static inline int
 get_interrupt_level(void)
 {
 	return CPU_DATA()->cpu_interrupt_level;
 }
+#ifdef __DARLING__
+int get_cpu_number(void);
+#else
 static inline int
 get_cpu_number(void)
 {
@@ -444,6 +455,7 @@ get_current_percpu_base(void)
 {
 	return CPU_DATA()->cpu_pcpu_base;
 }
+#endif
 static inline int
 get_cpu_phys_number(void)
 {
@@ -663,17 +675,24 @@ pltrace(boolean_t plenable)
 static inline void
 disable_preemption_internal(void)
 {
+#ifdef __DARLING__
+	printf("STUB: disable_preemption_internal\n");
+#else
 	assert(get_preemption_level() >= 0);
 
 	os_compiler_barrier();
 	CPU_DATA()->cpu_preemption_level++;
 	os_compiler_barrier();
 	pltrace(FALSE);
+#endif
 }
 
 static inline void
 enable_preemption_internal(void)
 {
+#ifdef __DARLING__
+	printf("STUB: enable_preemption_internal\n");
+#else
 	assert(get_preemption_level() > 0);
 	pltrace(TRUE);
 	os_compiler_barrier();
@@ -681,6 +700,7 @@ enable_preemption_internal(void)
 		kernel_preempt_check();
 	}
 	os_compiler_barrier();
+#endif
 }
 
 static inline void
