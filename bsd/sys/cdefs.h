@@ -193,7 +193,9 @@
  * __kpi_deprecated() specifically indicates deprecation of kernel programming
  * interfaces in Kernel.framework used by KEXTs.
  */
+#ifndef __DARLING__
 #define __deprecated    __attribute__((__deprecated__))
+#endif
 
 #if __has_extension(attribute_deprecated_with_message) || \
         (defined(__GNUC__) && ((__GNUC__ >= 5) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5))))

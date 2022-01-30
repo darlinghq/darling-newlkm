@@ -32,6 +32,12 @@
 #include <sys/user.h>
 #include <kern/thread_call.h>
 
+#ifdef __DARLING__
+#ifndef BUILDING_DTHREAD
+#undef _SYS_PTHREAD_INTERNAL_H_
+#include <darling/pthread_internal.h>
+#endif
+#else
 struct ksyn_waitq_element {
 #if __LP64__
 	char opaque[48];
@@ -39,6 +45,7 @@ struct ksyn_waitq_element {
 	char opaque[32];
 #endif
 };
+#endif
 
 void workq_mark_exiting(struct proc *);
 void workq_exit(struct proc *);

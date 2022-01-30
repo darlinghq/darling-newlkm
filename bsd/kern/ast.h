@@ -34,6 +34,15 @@
 #ifndef _KERN_AST_H_
 #define _KERN_AST_H_
 
+#ifdef __DARLING__
+// hack/workaround for the wrong file getting picked up when including `osfmk/` headers in `bsd/`
+//
+// obviously, this shouldn't be necessary because Apple doesn't have to do this normally for XNU,
+// so we should revisit this someday and properly set up include paths, but it works for now
+#undef _KERN_AST_H_
+#include_next <kern/ast.h>
+#endif
+
 #include <kern/thread.h>
 
 extern void act_set_astbsd(thread_t);

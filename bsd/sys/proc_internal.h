@@ -420,6 +420,9 @@ struct  proc {
 	uint64_t        p_user_data;                    /* general-purpose storage for userland-provided data */
 #endif /* CONFIG_PROC_UDATA_STORAGE */
 
+#ifdef __DARLING__
+	int64_t           kqueue_fork_listener_id;      /* registration ID of kqueue fork listener (PL) */
+#endif
 	char * p_subsystem_root_path;
 	lck_rw_t        p_dirs_lock;                    /* keeps fd_cdir and fd_rdir stable across a lookup */
 	pid_t           p_sessionid;
@@ -838,7 +841,9 @@ void pth_proc_hashdelete(proc_t);
 void pth_global_hashinit(void);
 extern thread_call_t psynch_thcall;
 void psynch_wq_cleanup(__unused void *  param, __unused void * param1);
+#ifndef __DARLING__
 extern lck_mtx_t * pthread_list_mlock;
+#endif
 #endif /* PSYNCH */
 struct uthread * current_uthread(void);
 

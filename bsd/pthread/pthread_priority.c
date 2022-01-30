@@ -27,7 +27,16 @@
  *
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <pthread/priority_private.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #ifndef QOS_MIN_RELATIVE_PRIORITY // from <sys/qos.h> in userspace
 #define QOS_MIN_RELATIVE_PRIORITY -15

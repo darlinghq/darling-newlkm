@@ -242,9 +242,11 @@ extern bool proc_is_exotic(proc_t p);
 extern bool proc_is_alien(proc_t p);
 proc_t current_proc_EXTERNAL(void);
 
+#ifndef __DARLING__
 extern int      msleep(void *chan, lck_mtx_t *mtx, int pri, const char *wmesg, struct timespec * ts );
 extern void     wakeup(void *chan);
 extern void wakeup_one(caddr_t chan);
+#endif
 
 /* proc kpis */
 /* this routine returns the pid of the current process */

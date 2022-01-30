@@ -62,10 +62,18 @@
  *	@(#)qsort.c	8.1 (Berkeley) 6/4/93
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
 
 #include <sys/types.h>
 //#include <stdlib.h>
 #include <sys/kpi_private.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 __private_extern__
 void

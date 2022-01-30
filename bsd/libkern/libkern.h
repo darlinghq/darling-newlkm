@@ -144,7 +144,9 @@ ulmin(u_int32_t a, u_int32_t b)
 
 
 /* Prototypes for non-quad routines. */
+#ifndef __DARLING__
 extern int      ffs(unsigned int);
+#endif
 extern int      ffsll(unsigned long long);
 extern int      fls(unsigned int);
 extern int      flsll(unsigned long long);
