@@ -63,6 +63,11 @@
  *	Functions to manipulate IPC port sets.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/port.h>
 #include <mach/kern_return.h>
 #include <mach/message.h>
@@ -78,6 +83,10 @@
 #include <vm/vm_map.h>
 #include <libkern/section_keywords.h>
 #include <pthread/priority_private.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	ipc_pset_alloc

@@ -70,6 +70,10 @@
  *	Operations on kernel messages.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
 
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
@@ -144,6 +148,11 @@
 #include <ptrauth.h>
 #if __has_feature(ptrauth_calls)
 #include <libkern/ptrauth_utils.h>
+#endif
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
 #endif
 
 #pragma pack(4)
@@ -528,6 +537,7 @@ mm_copy_options_string64(
 
 void db_print_msg_uid64(mach_msg_header_t *);
 
+#ifndef __DARLING__
 static void
 ipc_msg_body_print64(void *body, int size)
 {
@@ -548,6 +558,7 @@ ipc_msg_body_print64(void *body, int size)
 		kprintf("\n    %p: ", word);
 	}
 }
+#endif
 
 
 const char *
@@ -695,11 +706,13 @@ ipc_msg_print64(
 	    msgh->msgh_id,
 	    msgh->msgh_size);
 
+#ifndef __DARLING__
 	if (mbits & MACH_MSGH_BITS_COMPLEX) {
 		ipc_msg_print_untyped64((mach_msg_body_t *) (msgh + 1));
 	}
 
 	ipc_msg_body_print64((void *)(msgh + 1), msgh->msgh_size);
+#endif
 }
 
 
@@ -2004,6 +2017,16 @@ ipc_kmsg_get(
 	kmsg->ikm_header->msgh_voucher_port             = legacy_base.header.msgh_voucher_port;
 	kmsg->ikm_header->msgh_id                       = legacy_base.header.msgh_id;
 
+#ifdef __DARLING__
+	debug_msg("- ikm_header->msgh_size: %d, bits: 0x%x rport: 0x%x, lport: 0x%x, reserved: 0x%x, id: %d\n",
+		kmsg->ikm_header->msgh_size,
+		kmsg->ikm_header->msgh_bits,
+		kmsg->ikm_header->msgh_remote_port,
+		kmsg->ikm_header->msgh_local_port,
+		kmsg->ikm_header->msgh_reserved,
+		kmsg->ikm_header->msgh_id);
+#endif
+
 	DEBUG_KPRINT_SYSCALL_IPC("ipc_kmsg_get header:\n"
 	    "  size:		0x%.8x\n"
 	    "  bits:		0x%.8x\n"
@@ -2305,6 +2328,11 @@ retry:
 		}
 	}
 
+	// semi-hack; we only have importance inheritance enabled because we have to (there's some new XNU code
+	// that uses it without a conditional); we don't really care about importance, and in fact,
+	// leaving this in causes segfaults due to us not actually initializing `task_imp_base` correctly
+	// (and trying to do so would introduce more unnecessary complexity)
+#ifndef __DARLING__
 #if IMPORTANCE_INHERITANCE
 	/*
 	 * Need to see if this message needs importance donation and/or
@@ -2318,6 +2346,7 @@ retry:
 		}
 	}
 #endif /* IMPORTANCE_INHERITANCE */
+#endif
 
 	if (error != MACH_MSG_SUCCESS) {
 		ip_unlock(port);
@@ -4042,6 +4071,16 @@ ipc_kmsg_copyin(
 	if (mr != MACH_MSG_SUCCESS) {
 		return mr;
 	}
+
+#ifdef __DARLING__
+	debug_msg("- copyin_header->msgh_size: %d, bits: 0x%x rport: 0x%p, lport: 0x%p, reserved: 0x%x, id: %d\n",
+		kmsg->ikm_header->msgh_size,
+		kmsg->ikm_header->msgh_bits,
+		kmsg->ikm_header->msgh_remote_port,
+		kmsg->ikm_header->msgh_local_port,
+		kmsg->ikm_header->msgh_reserved,
+		kmsg->ikm_header->msgh_id);
+#endif
 
 	/* Get the message filter policy if the task and port support filtering */
 	mach_msg_filter_id fid = 0;

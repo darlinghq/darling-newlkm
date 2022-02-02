@@ -70,6 +70,11 @@
  *	Functions to manipulate IPC objects.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
@@ -93,6 +98,10 @@
 #include <ipc/ipc_pset.h>
 
 #include <security/mac_mach_internal.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 SECURITY_READ_ONLY_LATE(zone_t) ipc_object_zones[IOT_NUMBER];
 
@@ -920,9 +929,11 @@ ipc_object_copyout(
 	assert(IO_VALID(object));
 	assert(io_otype(object) == IOT_PORT);
 
+#ifndef __DARLING__
 	if (ITH_KNOTE_VALID(kn, msgt_name)) {
 		filt_machport_turnstile_prepare_lazily(kn, msgt_name, port);
 	}
+#endif
 
 	is_write_lock(space);
 

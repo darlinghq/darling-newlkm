@@ -69,6 +69,11 @@
  *	Functions to manipulate IPC ports.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_assert.h>
 
 #include <mach/port.h>
@@ -98,6 +103,12 @@
 #include <security/mac_mach_internal.h>
 
 #include <string.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+
+boolean_t kdp_is_in_zone(void* addr, const char* zone_name);
+#endif
 
 static TUNABLE(bool, prioritize_launch, "prioritize_launch", true);
 TUNABLE_WRITEABLE(int, ipc_portbt, "ipc_portbt", false);
@@ -933,7 +944,14 @@ ipc_port_destroy(ipc_port_t port)
 #if IMPORTANCE_INHERITANCE
 	ipc_importance_task_t release_imp_task = IIT_NULL;
 	thread_t self = current_thread();
+#ifdef __DARLING__
+	boolean_t top = true;
+	if (self) {
+		top = (self->ith_assertions == 0);
+	}
+#else
 	boolean_t top = (self->ith_assertions == 0);
+#endif
 	natural_t assertcnt = 0;
 #endif /* IMPORTANCE_INHERITANCE */
 
@@ -975,7 +993,13 @@ ipc_port_destroy(ipc_port_t port)
 	}
 
 	if (top) {
+#ifdef __DARLING__
+		if (self) {
+#endif
 		self->ith_assertions = assertcnt;
+#ifdef __DARLING__
+		}
+#endif
 	}
 #endif /* IMPORTANCE_INHERITANCE */
 
@@ -1100,16 +1124,34 @@ drop_assertions:
 	if (release_imp_task != IIT_NULL) {
 		if (assertcnt > 0) {
 			assert(top);
+#ifdef __DARLING__
+			if (self) {
+#endif
 			self->ith_assertions = 0;
+#ifdef __DARLING__
+			}
+#endif
 			assert(ipc_importance_task_is_any_receiver_type(release_imp_task));
 			ipc_importance_task_drop_internal_assertion(release_imp_task, assertcnt);
 		}
 		ipc_importance_task_release(release_imp_task);
 	} else if (assertcnt > 0) {
 		if (top) {
+#ifdef __DARLING__
+			if (self) {
+#endif
 			self->ith_assertions = 0;
+#ifdef __DARLING__
+			}
+			task_t curr_task = current_task();
+			if (curr_task) {
+				release_imp_task = curr_task->task_imp_base;
+			}
+			if (release_imp_task != IIT_NULL && ipc_importance_task_is_any_receiver_type(release_imp_task)) {
+#else
 			release_imp_task = current_task()->task_imp_base;
 			if (ipc_importance_task_is_any_receiver_type(release_imp_task)) {
+#endif
 				ipc_importance_task_drop_internal_assertion(release_imp_task, assertcnt);
 			}
 		}
@@ -1461,10 +1503,12 @@ ipc_port_recv_update_inheritor(
 			}
 			break;
 
+#ifndef __DARLING__
 		case PORT_SYNC_LINK_WORKLOOP_KNOTE:
 			kn = port->ip_sync_inheritor_knote;
 			inheritor = filt_ipc_kqueue_turnstile(kn);
 			break;
+#endif
 
 		case PORT_SYNC_LINK_WORKLOOP_STASH:
 			inheritor = port->ip_sync_inheritor_ts;
@@ -1538,9 +1582,11 @@ ipc_port_send_update_inheritor(
 			inheritor = ipc_port_get_watchport_inheritor(port);
 			inheritor_flags = TURNSTILE_INHERITOR_THREAD;
 		}
+#ifndef __DARLING__
 	} else if (port->ip_sync_link_state == PORT_SYNC_LINK_WORKLOOP_KNOTE) {
 		/* Case 4. */
 		inheritor = filt_ipc_kqueue_turnstile(mqueue->imq_inheritor_knote);
+#endif
 	} else if (port->ip_sync_link_state == PORT_SYNC_LINK_WORKLOOP_STASH) {
 		/* Case 5. */
 		inheritor = mqueue->imq_inheritor_turnstile;
@@ -1550,12 +1596,14 @@ ipc_port_send_update_inheritor(
 			inheritor = port->ip_messages.imq_inheritor_thread_ref;
 			inheritor_flags = TURNSTILE_INHERITOR_THREAD;
 		}
+#ifndef __DARLING__
 	} else if ((kn = SLIST_FIRST(&mqueue->imq_klist))) {
 		/* Case 7. Push on a workloop that is interested */
 		if (filt_machport_kqueue_has_turnstile(kn)) {
 			assert(port->ip_sync_link_state == PORT_SYNC_LINK_ANY);
 			inheritor = filt_ipc_kqueue_turnstile(kn);
 		}
+#endif
 	}
 
 	turnstile_update_inheritor(send_turnstile, inheritor,
@@ -1902,10 +1950,12 @@ not_special:
 	}
 
 	if (flags & IPC_PORT_ADJUST_SR_LINK_WORKLOOP) {
+#ifndef __DARLING__
 		if (ITH_KNOTE_VALID(kn, MACH_MSG_TYPE_PORT_SEND_ONCE)) {
 			inheritor = filt_machport_stash_port(kn, special_reply_port,
 			    &sync_link_state);
 		}
+#endif
 	} else if (flags & IPC_PORT_ADJUST_SR_ALLOW_SYNC_LINKAGE) {
 		sync_link_state = PORT_SYNC_LINK_ANY;
 	}
@@ -2085,7 +2135,9 @@ ipc_port_adjust_port_locked(
 	assert(!port->ip_specialreply);
 
 	if (kn) {
+#ifndef __DARLING__
 		inheritor = filt_machport_stash_port(kn, port, &sync_link_state);
+#endif
 		if (sync_link_state == PORT_SYNC_LINK_WORKLOOP_KNOTE) {
 			inheritor = kn;
 		}
@@ -3206,6 +3258,7 @@ ipc_port_init_debug(
 		port->ip_spares[i] = 0;
 	}
 
+#ifndef __DARLING__
 #ifdef MACH_BSD
 	task_t task = current_task();
 	if (task != TASK_NULL) {
@@ -3215,6 +3268,7 @@ ipc_port_init_debug(
 		}
 	}
 #endif /* MACH_BSD */
+#endif
 
 #if 0
 	lck_spin_lock(&port_alloc_queue_lock);

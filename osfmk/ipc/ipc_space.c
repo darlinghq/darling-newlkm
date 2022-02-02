@@ -69,6 +69,11 @@
  *	Functions to manipulate IPC capability spaces.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 #include <mach/port.h>
@@ -85,6 +90,10 @@
 #include <ipc/ipc_right.h>
 #include <prng/random.h>
 #include <string.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /* Remove this in the future so port names are less predictable. */
 #define CONFIG_SEMI_RANDOM_ENTRIES
@@ -267,6 +276,10 @@ ipc_space_create(
 	ipc_space_rand_freelist(space, table, 0, new_size);
 
 	is_lock_init(space);
+#ifdef __DARLING__
+	mutex_init(&space->is_mutex_lock);
+#endif
+
 	space->is_bits = 2; /* 2 refs, active, not growing */
 	space->is_table_hashed = 0;
 	space->is_table_size = new_size;
@@ -371,6 +384,9 @@ ipc_space_create_special(
 	}
 
 	is_lock_init(space);
+#ifdef __DARLING__
+	mutex_init(&space->is_mutex_lock);
+#endif
 
 	space->is_bits       = IS_INACTIVE | 1; /* 1 ref, not active, not growing */
 	space->is_table      = IE_NULL;

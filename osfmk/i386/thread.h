@@ -192,6 +192,9 @@ extern void act_thread_cfree(void *ctx);
 static inline vm_offset_t
 current_stack_depth(void)
 {
+#ifdef __DARLING__
+	return 0;
+#else
 	vm_offset_t     stack_ptr;
 
 	assert(get_preemption_level() > 0 || !ml_get_interrupts_enabled());
@@ -204,6 +207,7 @@ current_stack_depth(void)
 	return current_cpu_datap()->cpu_kernel_stack
 	       + sizeof(struct thread_kernel_state)
 	       - stack_ptr;
+#endif
 }
 
 /*

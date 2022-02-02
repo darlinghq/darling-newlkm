@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/notify.h>
 #include <ipc/ipc_types.h>
@@ -45,6 +50,10 @@
 
 #include <mach/mach_voucher_attr_control.h>
 #include <mach/machine/sdt.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 extern int      proc_pid(void *);
 extern int      proc_selfpid(void);
@@ -77,8 +86,12 @@ static LCK_SPIN_DECLARE_ATTR(ipc_importance_lock_data, &ipc_lck_grp, &ipc_lck_at
 	lck_spin_try_lock_grp(&ipc_importance_lock_data, &ipc_lck_grp)
 #define ipc_importance_unlock() \
 	lck_spin_unlock(&ipc_importance_lock_data)
+#ifdef __DARLING__
+#define ipc_importance_assert_held()
+#else
 #define ipc_importance_assert_held() \
 	lck_spin_assert(&ipc_importance_lock_data, LCK_ASSERT_OWNED)
+#endif
 
 #if IIE_REF_DEBUG
 #define incr_ref_counter(x) (os_atomic_inc(&(x), relaxed))
@@ -597,7 +610,9 @@ ipc_importance_task_check_transition(
 	boolean_t boost = (IIT_UPDATE_HOLD == type);
 	boolean_t before_boosted, after_boosted;
 
+#ifndef __DARLING__
 	ipc_importance_assert_held();
+#endif
 
 	if (!ipc_importance_task_is_any_receiver_type(task_imp)) {
 		return FALSE;
@@ -1081,7 +1096,9 @@ ipc_importance_task_propagate_assertion_locked(
 	queue_init(&updates);
 	queue_init(&propagate);
 
+#ifndef __DARLING__
 	ipc_importance_assert_held();
+#endif
 
 	/*
 	 * If we're going to update the policy for the provided task,
@@ -2625,7 +2642,9 @@ portupdate:
 		ip_lock(port);
 	}
 
+#ifndef __DARLING__
 	ipc_importance_assert_held();
+#endif
 
 #if IMPORTANCE_TRACE
 	if (kdebug_enable) {
@@ -3836,6 +3855,7 @@ ipc_importance_thread_call_init(void)
 	}
 }
 
+#ifndef __DARLING__
 /*
  * Routing: task_importance_list_pids
  * Purpose: list pids where task in donating importance.
@@ -3914,3 +3934,4 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 
 	return pidcount;
 }
+#endif
