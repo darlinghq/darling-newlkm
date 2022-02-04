@@ -46,7 +46,11 @@
 
 typedef unsigned int                    uint;
 
+// unnecessary, since the Linux def. is equivalent,
+// but shuts up a compiler warning
+#ifndef __DARLING__
 #define BIT(b)                          (1ULL << (b))
+#endif
 
 #define mask(width)                     (width >= 64 ? -1ULL : (BIT(width) - 1))
 #define extract(x, shift, width)        ((((uint64_t)(x)) >> (shift)) & mask(width))
@@ -203,6 +207,14 @@ atomic_bit_clear(_Atomic bitmap_t *map, int n, int mem_order)
 #define BITMAP_SIZE(n)  (size_t)(BITMAP_LEN(n) << 3)            /* Round to 64bit bitmap_t, then convert to bytes */
 #define bitmap_bit(n)   bits(n, 5, 0)
 #define bitmap_index(n) bits(n, 63, 6)
+
+#ifdef __DARLING__
+#define bitmap_zero xnu_bitmap_zero
+#define bitmap_full xnu_bitmap_full
+#define bitmap_set xnu_bitmap_set
+#define bitmap_free xnu_bitmap_free
+#define bitmap_clear xnu_bitmap_clear
+#endif
 
 inline static bitmap_t *
 bitmap_zero(bitmap_t *map, uint nbits)

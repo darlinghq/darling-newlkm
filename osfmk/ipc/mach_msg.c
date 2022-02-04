@@ -70,6 +70,11 @@
  *	Exported message traps.  See mach/message.h.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/kern_return.h>
 #include <mach/port.h>
@@ -111,6 +116,10 @@
 #include <security/mac_mach_internal.h>
 
 #include <sys/kdebug.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #ifndef offsetof
 #define offsetof(type, member)  ((size_t)(&((type *)0)->member))

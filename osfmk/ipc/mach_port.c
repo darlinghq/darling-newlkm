@@ -70,6 +70,11 @@
  *	Exported kernel calls.  See mach/mach_port.defs.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_debug.h>
 
 #include <mach/port.h>
@@ -101,6 +106,10 @@
 
 #if IMPORTANCE_INHERITANCE
 #include <ipc/ipc_importance.h>
+#endif
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
 #endif
 
 kern_return_t mach_port_get_attributes(ipc_space_t space, mach_port_name_t name,
@@ -1433,10 +1442,12 @@ mach_port_get_set_status(
 		    (vm_map_size_t)size_used, TRUE, &memory);
 		assert(kr == KERN_SUCCESS);
 
+#ifndef __DARLING__ // Our kmem_free cannot free parts of a block
 		if (vm_size_used != size) {
 			kmem_free(ipc_kernel_map,
 			    addr + vm_size_used, size - vm_size_used);
 		}
+#endif
 	}
 
 	*members = (mach_port_name_t *) memory;

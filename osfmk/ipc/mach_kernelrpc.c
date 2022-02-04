@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_vm_server.h>
@@ -38,6 +43,10 @@
 #include <kern/kalloc.h>
 #include <vm/vm_protos.h>
 #include <kdp/kdp_dyld.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 kern_return_t
 mach_port_get_attributes(
@@ -320,7 +329,12 @@ _kernelrpc_mach_port_get_attributes_trap(struct _kernelrpc_mach_port_get_attribu
 	_Static_assert(sizeof(MACH_PORT_INFO_OUT) < MACH_PORT_INFO_STACK_LIMIT,
 	    "mach_port_info_t has grown significantly, reevaluate stack usage");
 	const mach_msg_type_number_t max_count = (sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0]));
+#if defined(__DARLING__) && !defined(__clang__)
+	// GCC doesn't accept the variable above as a compile-time constant
+	typeof(MACH_PORT_INFO_OUT[0]) info[sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0])];
+#else
 	typeof(MACH_PORT_INFO_OUT[0]) info[max_count];
+#endif
 
 	/*
 	 * zero out our stack buffer because not all flavors of

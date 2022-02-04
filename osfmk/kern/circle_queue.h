@@ -32,6 +32,10 @@
 #include <kern/queue.h>
 #include <kern/assert.h>
 
+#ifdef __DARLING__
+#define __builtin_assume(x)
+#endif
+
 __BEGIN_DECLS
 
 /*

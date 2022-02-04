@@ -34,6 +34,11 @@
  *			alarm clock facility.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/message.h>
 #include <kern/host.h>
 #include <kern/processor.h>
@@ -45,6 +50,10 @@
 #include <kern/misc_protos.h>
 #include <ipc/ipc_port.h>
 #include <ipc/ipc_space.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /*
  *	Routine:	ipc_clock_init

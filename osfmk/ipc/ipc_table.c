@@ -63,6 +63,11 @@
  *	Functions to manipulate tables of IPC capabilities.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/kern_return.h>
 #include <mach/vm_param.h>
 #include <ipc/ipc_table.h>
@@ -70,6 +75,10 @@
 #include <ipc/ipc_entry.h>
 #include <kern/kalloc.h>
 #include <vm/vm_kern.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #define IPC_TABLE_ENTRIES_SIZE CONFIG_IPC_TABLE_ENTRIES_STEPS
 SECURITY_READ_ONLY_LATE(struct ipc_table_size) ipc_table_entries[IPC_TABLE_ENTRIES_SIZE];

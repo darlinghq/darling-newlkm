@@ -62,6 +62,12 @@
  *
  *	Exported IPC debug calls.
  */
+
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_ipc_debug.h>
 
 #include <mach/vm_param.h>
@@ -87,6 +93,10 @@
 
 #include <security/mac_mach_internal.h>
 #include <device/device_types.h>
+#endif
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
 #endif
 
 /*
