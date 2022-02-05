@@ -34,6 +34,11 @@
  *  Created.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_port_server.h>
@@ -46,6 +51,10 @@
 #include <kern/mk_timer.h>
 #include <kern/thread_call.h>
 #include <ipc/ipc_kmsg.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 struct mk_timer {
 	decl_simple_lock_data(, lock);

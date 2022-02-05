@@ -70,6 +70,11 @@
  *	Functions for letting a port represent a kernel object.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach_debug.h>
 #include <mach_ipc_test.h>
 #include <mach/mig.h>
@@ -158,6 +163,11 @@
 
 #include <security/mac_mach_internal.h>
 
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#include <darling/debug_print.h>
+#endif
+
 extern char *proc_name_address(void *p);
 struct proc;
 extern int proc_pid(struct proc *p);
@@ -210,8 +220,10 @@ static const struct mig_subsystem *mig_e[] = {
 	(const struct mig_subsystem *)&lock_set_subsystem,
 	(const struct mig_subsystem *)&task_subsystem,
 	(const struct mig_subsystem *)&thread_act_subsystem,
+#ifndef __DARLING__
 #ifdef VM32_SUPPORT
 	(const struct mig_subsystem *)&vm32_map_subsystem,
+#endif
 #endif
 #if CONFIG_USER_NOTIFICATION
 	(const struct mig_subsystem *)&UNDReply_subsystem,
@@ -430,6 +442,10 @@ ipc_kobject_server(
 	ipc_kmsg_trace_send(request, option);
 	{
 		if (ptr) {
+#ifdef __DARLING__
+			debug_msg("- kobject routine: %pF\n", ptr->routine);
+#endif
+
 			/*
 			 * Check if the port is a task port, if its a task port then
 			 * snapshot the task exec token before the mig routine call.

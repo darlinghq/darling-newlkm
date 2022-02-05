@@ -26,10 +26,19 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <machine/machine_cpu.h>
 #include <kern/locks.h>
 #include <kern/mpsc_queue.h>
 #include <kern/thread.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 #pragma mark Single Consumer calls
 

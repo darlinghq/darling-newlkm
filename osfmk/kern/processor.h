@@ -215,8 +215,10 @@ struct processor_set {
 	__attribute__((aligned(128))) lck_spin_t        sched_lock;     /* lock for above */
 #endif /* SCHED_PSET_TLOCK*/
 
+#ifndef __DARLING__
 #if defined(CONFIG_SCHED_TRADITIONAL) || defined(CONFIG_SCHED_MULTIQ)
 	struct run_queue        pset_runq;      /* runq for this processor set */
+#endif
 #endif
 	struct rt_queue         rt_runq;        /* realtime runq for this processor set */
 #if CONFIG_SCHED_CLUTCH
@@ -354,9 +356,11 @@ struct processor {
 	bool                    running_timers_active;  /* whether the running timers should fire */
 	struct timer_call       running_timers[RUNNING_TIMER_MAX];
 
+#ifndef __DARLING__
 #if CONFIG_SCHED_TRADITIONAL || CONFIG_SCHED_MULTIQ
 	struct run_queue        runq;                   /* runq for this processor */
 #endif /* CONFIG_SCHED_TRADITIONAL || CONFIG_SCHED_MULTIQ */
+#endif
 
 #if CONFIG_SCHED_GRRR
 	struct grrr_run_queue   grrr_runq;              /* Group Ratio Round-Robin runq */
