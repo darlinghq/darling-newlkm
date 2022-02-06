@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <kern/turnstile.h>
 #include <kern/cpu_data.h>
 #include <kern/mach_param.h>
@@ -46,6 +51,10 @@
 #include <pexpert/pexpert.h>
 #include <os/hash.h>
 #include <libkern/section_keywords.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 static TUNABLE(int, turnstile_max_hop, "turnstile_max_hop", TURNSTILE_MAX_HOP_DEFAULT);
 static ZONE_DECLARE(turnstiles_zone, "turnstiles", sizeof(struct turnstile), ZC_NONE);
@@ -925,6 +934,10 @@ turnstile_deallocate(struct turnstile *turnstile)
 void
 turnstile_deallocate_safe(struct turnstile *turnstile)
 {
+#ifdef __DARLING__
+	// until we get kernel threads
+	return turnstile_deallocate(turnstile);
+#else
 	if (turnstile == TURNSTILE_NULL) {
 		return;
 	}
@@ -933,6 +946,7 @@ turnstile_deallocate_safe(struct turnstile *turnstile)
 		mpsc_daemon_enqueue(&turnstile_deallocate_queue,
 		    &turnstile->ts_deallocate_link, MPSC_QUEUE_DISABLE_PREEMPTION);
 	}
+#endif
 }
 
 /*
@@ -953,7 +967,9 @@ turnstile_destroy(struct turnstile *turnstile)
 
 	assert(turnstile->ts_inheritor == TURNSTILE_INHERITOR_NULL);
 	assert(SLIST_EMPTY(&turnstile->ts_free_turnstiles));
+#ifndef __DARLING__
 	assert(turnstile->ts_state & TURNSTILE_STATE_THREAD);
+#endif
 #if DEVELOPMENT || DEBUG
 	/* Remove turnstile from global list */
 	global_turnstiles_lock();
@@ -1257,6 +1273,7 @@ turnstile_update_inheritor_locked(
 
 			new_inheritor_needs_update = turnstile_update_turnstile_promotion(
 				inheritor_turnstile, turnstile);
+#ifndef __DARLING__
 		} else if (new_inheritor_flags & TURNSTILE_INHERITOR_WORKQ) {
 			/*
 			 * When we are still picking "WORKQ" then possible racing
@@ -1265,6 +1282,7 @@ turnstile_update_inheritor_locked(
 			 */
 			turnstile_stats_update(1, TSU_NO_PRI_CHANGE_NEEDED |
 			    TSU_TURNSTILE_ARG | TSU_BOOST_ARG, turnstile);
+#endif
 		} else {
 			panic("Inheritor flags lost along the way");
 		}
@@ -1288,6 +1306,7 @@ turnstile_update_inheritor_locked(
 
 			old_inheritor_needs_update = turnstile_remove_turnstile_promotion(
 				old_turnstile, turnstile);
+#ifndef __DARLING__
 		} else if (old_inheritor_flags & TURNSTILE_INHERITOR_WORKQ) {
 			/*
 			 * We don't need to do anything when the push was WORKQ
@@ -1295,6 +1314,7 @@ turnstile_update_inheritor_locked(
 			 */
 			turnstile_stats_update(1, TSU_NO_PRI_CHANGE_NEEDED |
 			    TSU_TURNSTILE_ARG, turnstile);
+#endif
 		} else {
 			panic("Inheritor flags lost along the way");
 		}
@@ -1318,6 +1338,7 @@ turnstile_update_inheritor_locked(
 
 			new_inheritor_needs_update = turnstile_add_turnstile_promotion(
 				new_turnstile, turnstile);
+#ifndef __DARLING__
 		} else if (new_inheritor_flags & TURNSTILE_INHERITOR_WORKQ) {
 			struct workqueue *wq_inheritor = new_inheritor;
 
@@ -1327,6 +1348,7 @@ turnstile_update_inheritor_locked(
 				turnstile_stats_update(1, TSU_NO_PRI_CHANGE_NEEDED |
 				    TSU_TURNSTILE_ARG | TSU_BOOST_ARG, turnstile);
 			}
+#endif
 		} else {
 			panic("Inheritor flags lost along the way");
 		}
@@ -1394,9 +1416,11 @@ turnstile_stash_inheritor(
 	} else if (flags & TURNSTILE_INHERITOR_TURNSTILE) {
 		thread->inheritor_flags |= TURNSTILE_INHERITOR_TURNSTILE;
 		turnstile_reference((struct turnstile *)new_inheritor);
+#ifndef __DARLING__
 	} else if (flags & TURNSTILE_INHERITOR_WORKQ) {
 		thread->inheritor_flags |= TURNSTILE_INHERITOR_WORKQ;
 		workq_reference((struct workqueue *)new_inheritor);
+#endif
 	} else {
 		panic("Missing type in flags (%x) for inheritor (%p)", flags,
 		    new_inheritor);
@@ -2686,11 +2710,13 @@ turnstile_update_inheritor_priority_chain(
 			} else if (turnstile->ts_inheritor_flags & TURNSTILE_INHERITOR_TURNSTILE) {
 				turnstile_update_inheritor_turnstile_priority_chain(&turnstile,
 				    total_hop, tsu_flags);
+#ifndef __DARLING__
 			} else if (turnstile->ts_inheritor_flags & TURNSTILE_INHERITOR_WORKQ) {
 				turnstile_update_inheritor_workq_priority_chain(turnstile, s);
 				turnstile_stats_update(total_hop + 1, TSU_NO_PRI_CHANGE_NEEDED | tsu_flags,
 				    NULL);
 				return;
+#endif
 			} else {
 				panic("Inheritor flags not passed in turnstile_update_inheritor");
 			}
@@ -2776,8 +2802,10 @@ turnstile_cleanup(void)
 		thread_deallocate_safe(old_inheritor);
 	} else if (inheritor_flags & TURNSTILE_INHERITOR_TURNSTILE) {
 		turnstile_deallocate_safe((struct turnstile *)old_inheritor);
+#ifndef __DARLING__
 	} else if (inheritor_flags & TURNSTILE_INHERITOR_WORKQ) {
 		workq_deallocate_safe((struct workqueue *)old_inheritor);
+#endif
 	} else {
 		panic("Inheritor flags lost along the way");
 	}
@@ -2800,6 +2828,7 @@ turnstile_update_thread_priority_chain(thread_t thread)
 	    TURNSTILE_INHERITOR_THREAD | TURNSTILE_UPDATE_BOOST);
 }
 
+#ifndef __DARLING__
 /*
  * Name: turnstile_update_inheritor_workq_priority_chain
  *
@@ -2838,6 +2867,7 @@ turnstile_update_inheritor_workq_priority_chain(struct turnstile *turnstile, spl
 		workq_deallocate_safe(wq);
 	}
 }
+#endif
 
 /*
  * Name: turnstile_update_inheritor_thread_priority_chain

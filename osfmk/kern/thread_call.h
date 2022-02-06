@@ -369,6 +369,17 @@ __options_closed_decl(thread_call_flags_t, uint16_t, {
 	THREAD_CALL_FLAG_CONTINUOUS     = 0x0100,       /* deadline is in continuous time */
 });
 
+#ifdef __DARLING__
+#include <linux/workqueue.h>
+struct thread_call {
+	struct call_entry tc_call;
+	struct delayed_work tc_work;
+	int free;
+	thread_call_index_t tc_index;
+	uint32_t tc_flags;
+	uint64_t tc_deadline;
+};
+#else
 struct thread_call {
 	/* Originally requested deadline */
 	uint64_t                                tc_soft_deadline;
@@ -390,10 +401,15 @@ struct thread_call {
 	uint64_t                                tc_submit_count;
 	uint64_t                                tc_finish_count;
 };
+#endif
 
 typedef struct thread_call thread_call_data_t;
 
 extern void             thread_call_initialize(void);
+
+#ifdef __DARLING__
+extern void thread_call_deinitialize(void);
+#endif
 
 extern void             thread_call_setup(
 	thread_call_t                   call,

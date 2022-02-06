@@ -59,6 +59,10 @@ typedef unsigned long   size_t;
  * Common type definitions that lots of old files seem to want.
  */
 
+#ifdef __DARLING__
+#define daddr_t xnu_daddr_t
+#endif
+
 typedef unsigned char   u_char;         /* unsigned char */
 typedef unsigned short  u_short;        /* unsigned short */
 typedef unsigned int    u_int;          /* unsigned int */
@@ -100,7 +104,9 @@ typedef volatile unsigned long  vulong_t;
  * Deprecation macro
  */
 #if __GNUC__ >= 3
+#ifndef __DARLING__
 #define __deprecated    __attribute__((__deprecated__))
+#endif
 #else
 #define __deprecated /* nothing */
 #endif

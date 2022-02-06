@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <kern/ux_handler.h>
 #include <sys/ux_exception.h>
 
@@ -50,6 +55,10 @@
 
 #include <libkern/section_keywords.h>
 
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
+
 /*
  * Mach kobject port to reflect Mach exceptions into Unix signals.
  *
@@ -70,7 +79,18 @@ ux_handler_init(void)
 {
 	ux_handler_port = ipc_kobject_alloc_port((ipc_kobject_t)&ux_handler_kobject,
 	    IKOT_UX_HANDLER, IPC_KOBJECT_ALLOC_NONE);
+
+#ifdef __DARLING__
+	// the XNU kernel normally has to wait because of some "MAC hook goo"
+	// enabled via "CONFIG_MACF", but we have that turned off for Darling,
+	// so we should be able to just jump into the setup immediately
+	ux_handler_setup();
+#endif
 }
+
+#ifdef __DARLING__
+extern kern_return_t host_set_exception_ports(host_priv_t host_priv, exception_mask_t exception_mask, ipc_port_t new_port, exception_behavior_t new_behavior, thread_state_flavor_t new_flavor);
+#endif
 
 /*
  * setup is called late in BSD initialization from initproc's context

@@ -26,6 +26,10 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
 
 #include <sys/work_interval.h>
 
@@ -47,6 +51,9 @@
 
 #include <stdatomic.h>
 
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 /*
  * With the introduction of auto-join work intervals, it is possible
  * to change the work interval (and related thread group) of a thread in a
@@ -824,8 +831,10 @@ kern_work_interval_notify(thread_t thread, struct kern_work_interval_args* kwi_a
 
 	splx(s);
 
+#ifndef __DARLING__
 	/* called without interrupts disabled */
 	machine_work_interval_notify(thread, kwi_args);
+#endif
 
 	return KERN_SUCCESS;
 }

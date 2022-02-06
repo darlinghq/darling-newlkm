@@ -69,6 +69,10 @@ typedef void            (*timer_call_func_t)(
 	timer_call_param_t      param0,
 	timer_call_param_t      param1);
 
+#ifdef __DARLING__
+#include <kern/thread_call.h>
+typedef struct thread_call timer_call_data_t, *timer_call_t;
+#else
 typedef struct timer_call {
 	uint64_t                                tc_soft_deadline;
 	decl_simple_lock_data(, tc_lock);          /* protects tc_queue */
@@ -86,6 +90,7 @@ typedef struct timer_call {
 	/* this field is locked by the lock in the object tc_queue points at */
 	bool                                    tc_async_dequeue;
 } timer_call_data_t, *timer_call_t;
+#endif
 
 #define EndOfAllTime            0xFFFFFFFFFFFFFFFFULL
 
