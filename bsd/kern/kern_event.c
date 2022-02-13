@@ -54,6 +54,15 @@
 /*
  *	@(#)kern_event.c       1.0 (3/31/2000)
  */
+
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+
+// make sure the BSD `ast.h` is the one that gets picked up
+#include "ast.h"
+#endif
+
 #include <stdint.h>
 #include <machine/atomic.h>
 
@@ -65,8 +74,10 @@
 #include <sys/kauth.h>
 #include <sys/malloc.h>
 #include <sys/unistd.h>
+#ifndef __DARLING__
 #include <sys/file_internal.h>
 #include <sys/fcntl.h>
+#endif
 #include <sys/select.h>
 #include <sys/queue.h>
 #include <sys/event.h>
@@ -80,7 +91,9 @@
 #include <sys/uio.h>
 #include <sys/sysproto.h>
 #include <sys/user.h>
+#ifndef __DARLING__
 #include <sys/vnode_internal.h>
+#endif
 #include <string.h>
 #include <sys/proc_info.h>
 #include <sys/codesign.h>
@@ -117,6 +130,15 @@
 #include <sys/kern_memorystatus.h>
 #endif
 
+#ifdef __DARLING__
+#include <kern/ipc_tt.h>
+
+#include <duct/duct_post_xnu.h>
+
+extern int darling_fd_lookup(proc_t proc, int fd, struct file** out_file);
+extern boolean_t kdp_is_in_zone(void* addr, const char* zone_name);
+#endif
+
 #if DEVELOPMENT || DEBUG
 #define KEVENT_PANIC_ON_WORKLOOP_OWNERSHIP_LEAK  (1U << 0)
 #define KEVENT_PANIC_ON_NON_ENQUEUED_PROCESS     (1U << 1)
@@ -140,6 +162,15 @@ extern int cansignal(struct proc *, kauth_cred_t, struct proc *, int); /* bsd/ke
 
 #define KQ_EVENT        NO_EVENT64
 
+#ifdef __DARLING__
+// because we want to avoid unnecessary memory allocation for `fileproc`s/`fileglob`s
+// (kqueue only cares about `fg_data` in `fileglob` anyways)
+// we also went ahead a removed the `vfs_context_t` parameter, since kqueue doesn't use it
+static int kqueue_select(struct kqfile* kq, int which, void* wq_link_id);
+static int kqueue_close(struct kqfile* kqf);
+static int kqueue_kqfilter(struct kqfile* kqf, struct knote *kn); // got rid of `kev`; it's unused
+static int kqueue_drain(struct kqfile* kqf);
+#else
 static int kqueue_select(struct fileproc *fp, int which, void *wq_link_id,
     vfs_context_t ctx);
 static int kqueue_close(struct fileglob *fg, vfs_context_t ctx);
@@ -157,6 +188,7 @@ static const struct fileops kqueueops = {
 	.fo_drain    = kqueue_drain,
 	.fo_kqfilter = kqueue_kqfilter,
 };
+#endif
 
 static inline int kevent_modern_copyout(struct kevent_qos_s *, user_addr_t *);
 static int kevent_register_wait_prepare(struct knote *kn, struct kevent_qos_s *kev, int result);
@@ -168,6 +200,7 @@ static void kevent_register_wait_cleanup(struct knote *kn);
 static struct kqtailq *kqueue_get_suppressed_queue(kqueue_t kq, struct knote *kn);
 static void kqueue_threadreq_initiate(struct kqueue *kq, workq_threadreq_t, kq_index_t qos, int flags);
 
+#ifndef __DARLING__
 static void kqworkq_unbind(proc_t p, workq_threadreq_t);
 static thread_qos_t kqworkq_unbind_locked(struct kqworkq *kqwq, workq_threadreq_t, thread_t thread);
 static workq_threadreq_t kqworkq_get_request(struct kqworkq *kqwq, kq_index_t qos_index);
@@ -216,6 +249,7 @@ enum {
 };
 static void kqworkloop_update_threads_qos(struct kqworkloop *kqwl, int op, kq_index_t qos);
 static int kqworkloop_end_processing(struct kqworkloop *kqwl, int flags, int kevent_flags);
+#endif
 
 static struct knote *knote_alloc(void);
 static void knote_free(struct knote *kn);
@@ -269,6 +303,7 @@ extern const struct filterops memorystatus_filtops;
 extern const struct filterops fs_filtops;
 extern const struct filterops sig_filtops;
 extern const struct filterops machport_filtops;
+#ifndef __DARLING__
 extern const struct filterops pipe_nfiltops;
 extern const struct filterops pipe_rfiltops;
 extern const struct filterops pipe_wfiltops;
@@ -284,6 +319,7 @@ extern const struct filterops necp_fd_rfiltops;
 extern const struct filterops fsevent_filtops;
 extern const struct filterops vnode_filtops;
 extern const struct filterops tty_filtops;
+#endif
 
 const static struct filterops file_filtops;
 const static struct filterops kqread_filtops;
@@ -291,6 +327,10 @@ const static struct filterops proc_filtops;
 const static struct filterops timer_filtops;
 const static struct filterops user_filtops;
 const static struct filterops workloop_filtops;
+
+#ifdef __DARLING__
+const static struct filterops dkqueue_vnode_filtops;
+#endif
 
 /*
  *
@@ -314,7 +354,11 @@ static const struct filterops * const sysfilt_ops[EVFILTID_MAX] = {
 	[~EVFILT_READ]                  = &file_filtops,
 	[~EVFILT_WRITE]                 = &file_filtops,
 	[~EVFILT_AIO]                   = &bad_filtops,
+#ifdef __DARLING__
+	[~EVFILT_VNODE]                 = &dkqueue_vnode_filtops,
+#else
 	[~EVFILT_VNODE]                 = &file_filtops,
+#endif
 	[~EVFILT_PROC]                  = &proc_filtops,
 	[~EVFILT_SIGNAL]                = &sig_filtops,
 	[~EVFILT_TIMER]                 = &timer_filtops,
@@ -324,16 +368,23 @@ static const struct filterops * const sysfilt_ops[EVFILTID_MAX] = {
 	[~EVFILT_UNUSED_11]             = &bad_filtops,
 	[~EVFILT_VM]                    = &bad_filtops,
 	[~EVFILT_SOCK]                  = &file_filtops,
-#if CONFIG_MEMORYSTATUS
+#if CONFIG_MEMORYSTATUS && !defined(__DARLING__) // temporary, until we implement the memorystatus filter
 	[~EVFILT_MEMORYSTATUS]          = &memorystatus_filtops,
 #else
 	[~EVFILT_MEMORYSTATUS]          = &bad_filtops,
 #endif
 	[~EVFILT_EXCEPT]                = &file_filtops,
+
+	// TODO: workloop support
+#ifdef __DARLING__
+	[~EVFILT_WORKLOOP]              = &bad_filtops,
+#else
 	[~EVFILT_WORKLOOP]              = &workloop_filtops,
+#endif
 
 	/* Private filters */
 	[EVFILTID_KQREAD]               = &kqread_filtops,
+#ifndef __DARLING__
 	[EVFILTID_PIPE_N]               = &pipe_nfiltops,
 	[EVFILTID_PIPE_R]               = &pipe_rfiltops,
 	[EVFILTID_PIPE_W]               = &pipe_wfiltops,
@@ -349,6 +400,7 @@ static const struct filterops * const sysfilt_ops[EVFILTID_MAX] = {
 	[EVFILTID_VN]                   = &vnode_filtops,
 	[EVFILTID_TTY]                  = &tty_filtops,
 	[EVFILTID_PTMX]                 = &ptmx_kqops,
+#endif
 
 	/* fake filter for detached knotes, keep last */
 	[EVFILTID_DETACHED]             = &bad_filtops,
@@ -908,7 +960,7 @@ knote_fill_kevent(struct knote *kn, struct kevent_qos_s *kev, int64_t data)
 	kev->data = data;
 }
 
-
+#ifndef __DARLING__
 #pragma mark file_filtops
 
 static int
@@ -921,12 +973,17 @@ SECURITY_READ_ONLY_EARLY(static struct filterops) file_filtops = {
 	.f_isfd = 1,
 	.f_attach = filt_fileattach,
 };
+#endif // !__DARLING__
 
 #pragma mark kqread_filtops
 
 #define f_flag fp_glob->fg_flag
 #define f_ops fp_glob->fg_ops
+#ifdef __DARLING__
+#define f_data private_data
+#else
 #define f_data fp_glob->fg_data
+#endif
 #define f_lflags fp_glob->fg_lflags
 
 static void
@@ -986,6 +1043,7 @@ SECURITY_READ_ONLY_EARLY(static struct filterops) kqread_filtops = {
 	.f_process = filt_kqprocess,
 };
 
+#ifndef __DARLING__
 #pragma mark proc_filtops
 
 static int
@@ -1220,6 +1278,7 @@ SECURITY_READ_ONLY_EARLY(static struct filterops) proc_filtops = {
 	.f_touch   = filt_proctouch,
 	.f_process = filt_procprocess,
 };
+#endif // !__DARLING__
 
 #pragma mark timer_filtops
 
@@ -1884,6 +1943,8 @@ SECURITY_READ_ONLY_EARLY(static struct filterops) user_filtops = {
 	.f_process = filt_userprocess,
 };
 
+// TODO: workloop support
+#ifndef __DARLING__
 #pragma mark workloop_filtops
 
 #define EPREEMPTDISABLED (-1)
@@ -2740,6 +2801,7 @@ SECURITY_READ_ONLY_EARLY(static struct filterops) workloop_filtops = {
 	.f_allow_drop = filt_wlallow_drop,
 	.f_post_register_wait = filt_wlpost_register_wait,
 };
+#endif // !__DARLING__
 
 #pragma mark - kqueues allocation and deallocation
 
@@ -2845,7 +2907,9 @@ kqworkloop_release(struct kqworkloop *kqwl)
 	uint32_t refs = os_atomic_dec_orig(&kqwl->kqwl_retains, relaxed);
 
 	if (__improbable(refs <= 1)) {
+#ifndef __DARLING__
 		kqworkloop_dealloc(kqwl, KQWL_DEALLOC_NONE, refs - 1);
+#endif
 	}
 }
 
@@ -2996,6 +3060,7 @@ kqueue_alloc(struct proc *p)
 	return kqueue_init(kqf, NULL, SYNC_POLICY_FIFO | SYNC_POLICY_PREPOST).kq;
 }
 
+#ifndef __DARLING__
 /*!
  * @function kqueue_internal
  *
@@ -3046,6 +3111,7 @@ kqueue(struct proc *p, __unused struct kqueue_args *uap, int32_t *retval)
 {
 	return kqueue_internal(p, fileproc_alloc_init, NULL, retval);
 }
+#endif
 
 #pragma mark kqworkq allocation and deallocation
 
@@ -3145,6 +3211,7 @@ kqhash_unlock(struct filedesc *fdp)
 	lck_mtx_unlock(&fdp->fd_kqhashlock);
 }
 
+#ifndef __DARLING__
 OS_ALWAYS_INLINE
 static inline void
 kqworkloop_hash_insert_locked(struct filedesc *fdp, kqueue_id_t id,
@@ -3414,6 +3481,7 @@ kqworkloop_get_or_create(struct proc *p, kqueue_id_t id,
 
 	return error;
 }
+#endif
 
 #pragma mark - knotes
 
@@ -3557,7 +3625,9 @@ kqworkloops_dealloc(proc_t p)
 	kqhash_unlock(fdp);
 
 	LIST_FOREACH_SAFE(kqwl, &tofree, kqwl_hashlink, kqwln) {
+#ifndef __DARLING__
 		kqworkloop_dealloc(kqwl, KQWL_DEALLOC_SKIP_HASH_REMOVE, 1);
+#endif
 	}
 }
 
@@ -3764,12 +3834,19 @@ restart:
 		/*
 		 * No knote found, need to attach a new one (attach)
 		 */
-
+#ifdef __DARLING__
+		struct file     *knote_fp = NULL;
+#else
 		struct fileproc *knote_fp = NULL;
+#endif
 
 		/* grab a file reference for the new knote */
 		if (fops->f_isfd) {
+#ifdef __DARLING__
+			if ((error = darling_fd_lookup(p, (int)kev->ident, &knote_fp)) != 0) {
+#else
 			if ((error = fp_lookup(p, (int)kev->ident, &knote_fp, 0)) != 0) {
+#endif
 				goto out;
 			}
 		}
@@ -3778,7 +3855,11 @@ restart:
 		if (kn == NULL) {
 			error = ENOMEM;
 			if (knote_fp != NULL) {
+#ifdef __DARLING__
+				fput(knote_fp);
+#else
 				fp_drop(p, (int)kev->ident, knote_fp, 0);
+#endif
 			}
 			goto out;
 		}
@@ -3820,7 +3901,11 @@ restart:
 		if (error) {
 			knote_free(kn);
 			if (knote_fp != NULL) {
+#ifdef __DARLING__
+				fput(knote_fp);
+#else
 				fp_drop(p, (int)kev->ident, knote_fp, 0);
+#endif
 			}
 
 			if (error == ERESTART) {
@@ -3858,6 +3943,7 @@ restart:
 			goto out;
 		}
 
+#ifndef __DARLING__
 		/*
 		 * end "attaching" phase - now just attached
 		 *
@@ -3870,6 +3956,7 @@ restart:
 		    (kq->kq_state & KQ_WORKLOOP)) {
 			kqworkloop_set_overcommit((struct kqworkloop *)kq);
 		}
+#endif
 	} else if (!knote_lock(kq, kn, &knlc, KNOTE_KQ_LOCK_ON_SUCCESS)) {
 		/*
 		 * The knote was dropped while we were waiting for the lock,
@@ -4158,6 +4245,7 @@ knote_process(struct knote *kn, kevent_ctx_t kectx,
 	return error;
 }
 
+#ifndef __DARLING__
 /*
  * Returns -1 if the kqueue was unbound and processing should not happen
  */
@@ -4380,6 +4468,7 @@ done:
 
 	return rc;
 }
+#endif
 
 /*
  * Return 0 to indicate that processing should proceed,
@@ -4447,6 +4536,7 @@ kqfile_begin_processing(struct kqfile *kq)
 	return 0;
 }
 
+#ifndef __DARLING__
 /*
  * Try to end the processing, only called when a workq thread is attempting to
  * park (KEVENT_FLAG_PARKING is set).
@@ -4561,6 +4651,7 @@ kqworkloop_end_processing(struct kqworkloop *kqwl, int flags, int kevent_flags)
 
 	return rc;
 }
+#endif
 
 /*
  * Called with kqueue lock held.
@@ -4606,6 +4697,7 @@ kqfile_end_processing(struct kqfile *kq)
 	return (kq->kqf_state & KQ_WAKEUP) ? -1 : 0;
 }
 
+#ifndef __DARLING__
 static int
 kqueue_workloop_ctl_internal(proc_t p, uintptr_t cmd, uint64_t __unused options,
     struct kqueue_workloop_params *params, int *retval)
@@ -4722,13 +4814,20 @@ kqueue_workloop_ctl(proc_t p, struct kqueue_workloop_ctl_args *uap, int *retval)
 	return kqueue_workloop_ctl_internal(p, uap->cmd, uap->options, &params,
 	           retval);
 }
+#endif
 
 /*ARGSUSED*/
 static int
+#ifdef __DARLING__
+kqueue_select(struct kqfile* kq, int which, void *wq_link_id)
+#else
 kqueue_select(struct fileproc *fp, int which, void *wq_link_id,
     __unused vfs_context_t ctx)
+#endif
 {
+#ifndef __DARLING__
 	struct kqfile *kq = (struct kqfile *)fp->f_data;
+#endif
 	struct kqtailq *suppressq = &kq->kqf_suppressed;
 	struct kqtailq *queue = &kq->kqf_queue;
 	struct knote *kn;
@@ -4838,13 +4937,21 @@ out:
  */
 /*ARGSUSED*/
 static int
+#ifdef __DARLING__
+kqueue_close(struct kqfile* kqf)
+#else
 kqueue_close(struct fileglob *fg, __unused vfs_context_t ctx)
+#endif
 {
+#ifndef __DARLING__
 	struct kqfile *kqf = (struct kqfile *)fg->fg_data;
+#endif
 
 	assert((kqf->kqf_state & KQ_WORKQ) == 0);
 	kqueue_dealloc(&kqf->kqf_kqueue);
+#ifndef __DARLING__
 	fg->fg_data = NULL;
+#endif
 	return 0;
 }
 
@@ -4862,10 +4969,16 @@ kqueue_close(struct fileglob *fg, __unused vfs_context_t ctx)
  * that relationship is torn down.
  */
 static int
+#ifdef __DARLING__
+kqueue_kqfilter(struct kqfile* kqf, struct knote *kn)
+#else
 kqueue_kqfilter(struct fileproc *fp, struct knote *kn,
     __unused struct kevent_qos_s *kev)
+#endif
 {
+#ifndef __DARLING__
 	struct kqfile *kqf = (struct kqfile *)fp->f_data;
+#endif
 	struct kqueue *kq = &kqf->kqf_kqueue;
 	struct kqueue *parentkq = knote_get_kq(kn);
 
@@ -4936,9 +5049,15 @@ kqueue_kqfilter(struct fileproc *fp, struct knote *kn,
  */
 /*ARGSUSED*/
 static int
+#ifdef __DARLING__
+kqueue_drain(struct kqfile* kqf)
+#else
 kqueue_drain(struct fileproc *fp, __unused vfs_context_t ctx)
+#endif
 {
+#ifndef __DARLING__
 	struct kqfile *kqf = (struct kqfile *)fp->fp_glob->fg_data;
+#endif
 
 	assert((kqf->kqf_state & KQ_WORKQ) == 0);
 
@@ -5010,6 +5129,7 @@ kqueue_stat(struct kqueue *kq, void *ub, int isstat64, proc_t p)
 	return 0;
 }
 
+#ifndef __DARLING__
 static inline bool
 kqueue_threadreq_can_use_ast(struct kqueue *kq)
 {
@@ -5184,6 +5304,7 @@ kqueue_threadreq_bind(struct proc *p, workq_threadreq_t kqr, thread_t thread,
 	kqr->tr_state = WORKQ_TR_STATE_BOUND;
 
 	if (kqu.kq->kq_state & KQ_WORKLOOP) {
+#ifndef __DARLING__
 		struct turnstile *ts = kqu.kqwl->kqwl_turnstile;
 
 		if (__improbable(thread == kqu.kqwl->kqwl_owner)) {
@@ -5224,6 +5345,7 @@ kqueue_threadreq_bind(struct proc *p, workq_threadreq_t kqr, thread_t thread,
 		if (kqr->tr_kq_override_index) {
 			thread_add_servicer_override(thread, kqr->tr_kq_override_index);
 		}
+#endif
 	} else {
 		assert(kqr->tr_kq_override_index == 0);
 
@@ -5547,6 +5669,7 @@ kqworkloop_wakeup(struct kqworkloop *kqwl, kq_index_t qos)
 
 	kqworkloop_update_threads_qos(kqwl, KQWL_UTQ_UPDATE_WAKEUP_QOS, qos);
 }
+#endif
 
 static struct kqtailq *
 kqueue_get_suppressed_queue(kqueue_t kq, struct knote *kn)
@@ -5577,6 +5700,10 @@ kqueue_alloc_turnstile(kqueue_t kqu)
 		return TURNSTILE_NULL;
 	}
 
+#ifdef __DARLING__
+	// we don't have workloop support yet, so we don't need turnstiles
+	return TURNSTILE_NULL;
+#else
 	struct turnstile *ts = turnstile_alloc(), *free_ts = TURNSTILE_NULL;
 	bool workq_locked = false;
 
@@ -5623,6 +5750,7 @@ kqueue_alloc_turnstile(kqueue_t kqu)
 		turnstile_update_inheritor_complete(ts, TURNSTILE_INTERLOCK_NOT_HELD);
 	}
 	return ts;
+#endif
 }
 
 __attribute__((always_inline))
@@ -5647,6 +5775,7 @@ kqueue_threadreq_get_turnstile(workq_threadreq_t kqr)
 	return TURNSTILE_NULL;
 }
 
+#ifndef __DARLING__
 static void
 kqworkloop_set_overcommit(struct kqworkloop *kqwl)
 {
@@ -5701,18 +5830,22 @@ kqworkq_update_override(struct kqworkq *kqwq, struct knote *kn,
 		}
 	}
 }
+#endif
 
 static void
 kqueue_update_override(kqueue_t kqu, struct knote *kn, thread_qos_t qos)
 {
+#ifndef __DARLING__
 	if (kqu.kq->kq_state & KQ_WORKLOOP) {
 		kqworkloop_update_threads_qos(kqu.kqwl, KQWL_UTQ_UPDATE_WAKEUP_OVERRIDE,
 		    qos);
 	} else {
 		kqworkq_update_override(kqu.kqwq, kn, qos);
 	}
+#endif
 }
 
+#ifndef __DARLING__
 static void
 kqworkloop_unbind_locked(struct kqworkloop *kqwl, thread_t thread,
     enum kqwl_unbind_locked_mode how)
@@ -5855,6 +5988,7 @@ kqworkq_get_request(struct kqworkq *kqwq, kq_index_t qos_index)
 	assert(qos_index < KQWQ_NBUCKETS);
 	return &kqwq->kqwq_request[qos_index];
 }
+#endif
 
 static void
 knote_reset_priority(kqueue_t kqu, struct knote *kn, pthread_priority_t pp)
@@ -5990,11 +6124,13 @@ waitq_set__CALLING_PREPOST_HOOK__(waitq_set_prepost_hook_t *kq_hook)
 	kqlock(kqu);
 
 	if (kqu.kq->kq_count > 0) {
+#ifndef __DARLING_
 		if (kqu.kq->kq_state & KQ_WORKLOOP) {
 			kqworkloop_wakeup(kqu.kqwl, KQWL_BUCKET_STAYACTIVE);
 		} else {
 			kqworkq_wakeup(kqu.kqwq, KQWQ_QOS_MANAGER);
 		}
+#endif
 	}
 
 	kqunlock(kqu);
@@ -6218,7 +6354,11 @@ restart:
 			kqunlock(kq);
 			knote_fops(kn)->f_detach(kn);
 			if (kn->kn_is_fd) {
+#ifdef __DARLING__
+				fput(kn->kn_fp);
+#else
 				fp_drop(p, (int)kn->kn_id, kn->kn_fp, 0);
+#endif
 			}
 			kn->kn_filtid = EVFILTID_DETACHED;
 			kqlock(kq);
@@ -6353,12 +6493,14 @@ kq_add_knote(struct kqueue *kq, struct knote *kn, struct knote_lock_ctx *knlc,
 		if ((u_int)fdp->fd_knlistsize <= kn->kn_id) {
 			u_int size = 0;
 
+#ifndef __DARLING__
 			/* Make sure that fd stays below current process's soft limit AND system allowed per-process limits */
 			if (kn->kn_id >= (uint64_t) nofile
 			    || kn->kn_id >= (uint64_t)maxfilesperproc) {
 				ret = EINVAL;
 				goto out_locked;
 			}
+#endif
 			/* have to grow the fd_knlist */
 			size = fdp->fd_knlistsize;
 			while (size <= kn->kn_id) {
@@ -6563,13 +6705,17 @@ knote_enqueue(kqueue_t kqu, struct knote *kn, kn_status_t wakeup_mask)
 	}
 
 	if (kn->kn_status & wakeup_mask) {
+#ifndef __DARLING__
 		if (kqu.kq->kq_state & KQ_WORKLOOP) {
 			kqworkloop_wakeup(kqu.kqwl, kn->kn_qos_index);
 		} else if (kqu.kq->kq_state & KQ_WORKQ) {
 			kqworkq_wakeup(kqu.kqwq, kn->kn_qos_index);
 		} else {
+#endif
 			kqfile_wakeup(kqu.kqf, kn->kn_qos_index);
+#ifndef __DARLING__
 		}
+#endif
 	}
 }
 
@@ -6731,10 +6877,12 @@ knote_apply_touch(kqueue_t kqu, struct knote *kn, struct kevent_qos_s *kev,
 		knote_enqueue(kqu, kn, wakeup_mask);
 	}
 
+#ifndef __DARLING__
 	if ((result & FILTER_THREADREQ_NODEFEER) &&
 	    act_clear_astkevent(current_thread(), AST_KEVENT_REDRIVE_THREADREQ)) {
 		workq_kern_threadreq_redrive(kqu.kq->kq_p, WORKQ_THREADREQ_NONE);
 	}
+#endif
 }
 
 /*
@@ -6772,7 +6920,11 @@ knote_drop(struct kqueue *kq, struct knote *kn, struct knote_lock_ctx *knlc)
 	/* kq may be freed when kq_remove_knote() returns */
 	kq_remove_knote(kq, kn, p, knlc);
 	if (kn->kn_is_fd && ((kn->kn_status & KN_VANISHED) == 0)) {
+#ifdef __DARLING__
+		fput(kn->kn_fp);
+#else
 		fp_drop(p, (int)kn->kn_id, kn->kn_fp, 0);
+#endif
 	}
 
 	knote_free(kn);
@@ -6781,7 +6933,7 @@ knote_drop(struct kqueue *kq, struct knote *kn, struct knote_lock_ctx *knlc)
 void
 knote_init(void)
 {
-#if CONFIG_MEMORYSTATUS
+#if CONFIG_MEMORYSTATUS && !defined(__DARLING__)
 	/* Initialize the memorystatus list lock */
 	memorystatus_kevent_init(&kq_lck_grp, LCK_ATTR_NULL);
 #endif
@@ -6843,12 +6995,23 @@ kevent_adjust_flags_for_proc(proc_t p, int flags)
 OS_NOINLINE
 static int
 kevent_get_kqfile(struct proc *p, int fd, int flags,
+#ifdef __DARLING__
+    struct file **fpp, struct kqueue **kqp)
+#else
     struct fileproc **fpp, struct kqueue **kqp)
+#endif
 {
 	int error = 0;
 	struct kqueue *kq;
 
+#ifdef __DARLING__
+	if ((error = darling_fd_lookup(p, fd, fp)) == 0) {
+		// no error; fp contains a valid file pointer
+		kq = (struct kqueue*)(*fp)->f_data;
+	}
+#else
 	error = fp_get_ftype(p, fd, DTYPE_KQUEUE, EBADF, fpp);
+#endif
 	if (__improbable(error)) {
 		return error;
 	}
@@ -6877,7 +7040,11 @@ kevent_get_kqfile(struct proc *p, int fd, int flags,
 	 */
 	if (__improbable((bool)(flags & KEVENT_FLAG_LEGACY32) !=
 	    (bool)(kq_state & KQ_KEV32))) {
+#ifdef __DARLING__
+		fput(*fpp);
+#else
 		fp_drop(p, fd, *fpp, 0);
+#endif
 		return EINVAL;
 	}
 
@@ -7248,7 +7415,11 @@ kevent_cleanup(kqueue_t kqu, int flags, int error, kevent_ctx_t kectx)
 	} else if (flags & KEVENT_FLAG_WORKQ) {
 		/* nothing held */
 	} else {
+#ifdef __DARLING__
+		fput(kectx->kec_fp);
+#else
 		fp_drop(kqu.kqf->kqf_p, kectx->kec_fd, kectx->kec_fp, 0);
+#endif
 	}
 
 	/* don't restart after signals... */
@@ -7263,7 +7434,9 @@ kevent_cleanup(kqueue_t kqu, int flags, int error, kevent_ctx_t kectx)
 		thread_t th = current_thread();
 		struct uthread *uth = get_bsdthread_info(th);
 		if (uth->uu_kqr_bound) {
+#ifndef __DARLING__
 			thread_unfreeze_base_pri(th);
+#endif
 		}
 	}
 	return error;
@@ -7308,17 +7481,21 @@ kqueue_process(kqueue_t kqu, int flags, kevent_ctx_t kectx,
 #endif
 	uint16_t kq_type = (kqu.kq->kq_state & (KQ_WORKQ | KQ_WORKLOOP));
 
+#ifndef __DARLING__
 	if (kq_type & KQ_WORKQ) {
 		rc = kqworkq_begin_processing(kqu.kqwq, kqr, flags);
 	} else if (kq_type & KQ_WORKLOOP) {
 		rc = kqworkloop_begin_processing(kqu.kqwl, flags);
 	} else {
+#endif
 kqfile_retry:
 		rc = kqfile_begin_processing(kqu.kqf);
 		if (rc == EBADF) {
 			return EBADF;
 		}
+#ifndef __DARLING__
 	}
+#endif
 
 	if (rc == -1) {
 		/* Nothing to process */
@@ -7374,13 +7551,17 @@ stop_processing:
 	if (error) {
 		flags &= ~KEVENT_FLAG_PARKING;
 	}
+#ifndef __DARLING__
 	if (kq_type & KQ_WORKQ) {
 		rc = kqworkq_end_processing(kqu.kqwq, kqr, flags);
 	} else if (kq_type & KQ_WORKLOOP) {
 		rc = kqworkloop_end_processing(kqu.kqwl, KQ_PROCESSING, flags);
 	} else {
+#endif
 		rc = kqfile_end_processing(kqu.kqf);
+#ifndef __DARLING__
 	}
+#endif
 
 	if (__probable(error)) {
 		return error;
@@ -7623,9 +7804,11 @@ kevent_internal(kqueue_t kqu,
 
 			kqlock_held(kqu);
 
+#ifndef __DARLING__
 			if (act_clear_astkevent(thread, AST_KEVENT_REDRIVE_THREADREQ)) {
 				workq_kern_threadreq_redrive(kqu.kq->kq_p, WORKQ_THREADREQ_NONE);
 			}
+#endif
 
 			// f_post_register_wait is meant to call a continuation and not to
 			// return, which is why we don't support FILTER_REGISTER_WAIT if
@@ -7708,7 +7891,9 @@ kevent_internal(kqueue_t kqu,
 		 * so we only need to do it if we didn't scan.
 		 */
 		kqlock(kqu);
+#ifndef __DARLING__
 		kqworkloop_end_processing(kqu.kqwl, 0, 0);
+#endif
 		kqunlock(kqu);
 	}
 
@@ -7785,7 +7970,9 @@ kevent_id(struct proc *p, struct kevent_id_args *uap, int32_t *retval)
 	} else if (__improbable(kevent_args_requesting_events(flags, uap->nevents))) {
 		return EXDEV;
 	} else {
+#ifndef __DARLING__
 		error = kqworkloop_get_or_create(p, uap->id, NULL, flags, &kqu.kqwl);
+#endif
 		if (__improbable(error)) {
 			return error;
 		}
@@ -8747,6 +8934,7 @@ knote_markstayactive(struct knote *kn)
 	assert((kn->kn_status & (KN_QUEUED | KN_SUPPRESSED)) == 0);
 
 	/* handle all stayactive knotes on the (appropriate) manager */
+#ifndef __DARLING__
 	if (kq->kq_state & KQ_WORKLOOP) {
 		struct kqworkloop *kqwl = (struct kqworkloop *)kq;
 
@@ -8757,8 +8945,11 @@ knote_markstayactive(struct knote *kn)
 	} else if (kq->kq_state & KQ_WORKQ) {
 		qos = KQWQ_QOS_MANAGER;
 	} else {
+#endif
 		qos = THREAD_QOS_UNSPECIFIED;
+#ifndef __DARLING__
 	}
+#endif
 
 	kn->kn_qos_override = qos;
 	kn->kn_qos_index = qos;
@@ -8901,10 +9092,14 @@ kevent_copyout_dynkqinfo(void *proc, kqueue_id_t kq_id, user_addr_t ubuf,
 		return ENOBUFS;
 	}
 
+#ifndef __DARLING__
 	kqwl = kqworkloop_hash_lookup_and_retain(p->p_fd, kq_id);
 	if (!kqwl) {
+#endif
 		return ESRCH;
+#ifndef __DARLING__
 	}
+#endif
 
 	/*
 	 * backward compatibility: allow the argument to this call to only be
@@ -8932,10 +9127,14 @@ kevent_copyout_dynkqextinfo(void *proc, kqueue_id_t kq_id, user_addr_t ubuf,
 	struct kqworkloop *kqwl;
 	int err;
 
+#ifndef __DARLING__
 	kqwl = kqworkloop_hash_lookup_and_retain(p->p_fd, kq_id);
 	if (!kqwl) {
+#endif
 		return ESRCH;
+#ifndef __DARLING__
 	}
+#endif
 
 	err = pid_kqueue_extinfo(p, &kqwl->kqwl_kqueue, ubuf, ubufsize, nknotes_out);
 	kqworkloop_release(kqwl);
@@ -9078,7 +9277,11 @@ kevent_set_return_to_kernel_user_tsd(proc_t p, thread_t thread)
 		assert(ast_flags64 < 0x100000000ull);
 	}
 
+#ifndef __DARLING__
 	ast_addr = thread_rettokern_addr(thread);
+#else
+	ast_addr = 0;
+#endif
 	if (ast_addr == 0) {
 		return;
 	}
@@ -9091,6 +9294,7 @@ kevent_set_return_to_kernel_user_tsd(proc_t p, thread_t thread)
 	}
 }
 
+#ifndef __DARLING__
 void
 kevent_ast(thread_t thread, uint16_t bits)
 {
@@ -9150,3 +9354,5 @@ SYSCTL_PROC(_kern_kevent, OID_AUTO, bound_id,
     "get the ID of the bound kqueue");
 
 #endif /* DEVELOPMENT || DEBUG */
+
+#endif

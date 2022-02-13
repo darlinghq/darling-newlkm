@@ -205,17 +205,27 @@ typedef struct priority_queue_entry_stable {
  * Return:
  * comparision result to indicate relative ordering of elements according to the heap type
  */
+#ifdef __DARLING__
+typedef int (*priority_queue_compare_fn_t)(struct priority_queue_entry *e1,
+    struct priority_queue_entry *e2);
+#else
 typedef int (^priority_queue_compare_fn_t)(struct priority_queue_entry *e1,
     struct priority_queue_entry *e2);
+#endif
 
 #define priority_heap_compare_ints(a, b) ((a) < (b) ? 1 : -1)
 
+#ifdef __DARLING__
+#define priority_heap_make_comparator(...) _Static_assert(0, "can't use priority_heap_make_comparator in Darling")
+};
+#else
 #define priority_heap_make_comparator(name1, name2, type, field, ...) \
 	(^int(priority_queue_entry_t __e1, priority_queue_entry_t __e2){        \
 	    type *name1 = pqe_element_fast(__e1, type, field);                  \
 	    type *name2 = pqe_element_fast(__e2, type, field);                  \
 	    __VA_ARGS__;                                                        \
 	})
+#endif
 
 /*
  * Type for any priority queue, only used for documentation purposes.
@@ -379,12 +389,21 @@ priority_queue_init(struct priority_queue *pq, ...);
  *      Returns:
  *              None
  */
+#ifdef __DARLING__
+#define priority_queue_destroy(pq, type, field, callback)   
+MACRO_BEGIN                                                                     \
+	void (*__callback)(type *) = (callback); /* type check */               \
+	_priority_queue_destroy(pq, offsetof(type, field),                      \
+	    (void (*)(void *))(__callback));                                    \
+MACRO_END
+#else
 #define priority_queue_destroy(pq, type, field, callback)                       \
 MACRO_BEGIN                                                                     \
 	void (^__callback)(type *) = (callback); /* type check */               \
 	_priority_queue_destroy(pq, offsetof(type, field),                      \
 	    (void (^)(void *))(__callback));                                    \
 MACRO_END
+#endif
 
 /*
  *      Macro:          priority_queue_min

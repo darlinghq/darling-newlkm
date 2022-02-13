@@ -26,6 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/task.h>
 
@@ -44,6 +49,10 @@
 
 #include <os/hash.h>
 #include <os/refcnt.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 /**
  * @file osfmk/kern/restartable.c

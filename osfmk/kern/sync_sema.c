@@ -36,6 +36,11 @@
  *	Contains RT distributed semaphore synchronization services.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+#endif
+
 #include <mach/mach_types.h>
 #include <mach/mach_traps.h>
 #include <mach/kern_return.h>
@@ -59,6 +64,10 @@
 #include <kern/mach_param.h>
 
 #include <libkern/OSAtomic.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 static unsigned int semaphore_event;
 #define SEMAPHORE_EVENT CAST_EVENT64_T(&semaphore_event)
@@ -1204,6 +1213,10 @@ semaphore_dereference(
 out:
 	zfree(semaphore_zone, semaphore);
 }
+
+#ifdef __DARLING__
+boolean_t kdp_is_in_zone(void* addr, const char* zone_name);
+#endif
 
 #define WAITQ_TO_SEMA(wq) ((semaphore_t) ((uintptr_t)(wq) - offsetof(struct semaphore, waitq)))
 void

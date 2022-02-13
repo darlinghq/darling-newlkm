@@ -67,6 +67,14 @@
  * Version 2.0.
  */
 
+#ifdef __DARLING__
+#include <duct/duct.h>
+#include <duct/duct_pre_xnu.h>
+
+// resolves an include order issue
+#include <kern/thread.h>
+#endif
+
 #include <kern/zalloc.h>
 #include <kern/kalloc.h>
 
@@ -74,6 +82,10 @@
 #include <sys/sysctl.h>
 
 #include <libkern/libkern.h>
+
+#ifdef __DARLING__
+#include <duct/duct_post_xnu.h>
+#endif
 
 ZONE_VIEW_DEFINE(ZV_NAMEI, "vfs.namei", KHEAP_ID_DATA_BUFFERS, MAXPATHLEN);
 
@@ -130,6 +142,8 @@ __MALLOC(size_t size, int type, int flags, vm_allocation_site_t *site)
 	return __MALLOC_ext(size, type, flags, site, KHEAP_DEFAULT);
 }
 
+// would complicate our current memory allocation system
+#ifndef __DARLING__
 void *
 __REALLOC(
 	void            *addr,
@@ -151,6 +165,7 @@ __REALLOC(
 
 	panic("_REALLOC: kalloc returned NULL (potential leak), size %llu", (uint64_t) size);
 }
+#endif
 
 void *
 _MALLOC_external(size_t size, int type, int flags);
@@ -183,6 +198,8 @@ _FREE_ZONE_external(void *elem, size_t size, int type __unused)
 {
 	(kheap_free)(KHEAP_KEXT, elem, size);
 }
+
+#ifndef __DARLING__
 
 #if DEBUG || DEVELOPMENT
 
@@ -384,6 +401,7 @@ SYSCTL_PROC(_kern, OID_AUTO, zones_collectable_bytes,
     CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_MASKED | CTLFLAG_LOCKED,
     0, 0, &sysctl_zones_collectable_bytes, "Q", "Collectable memory in zones");
 
+#endif
 
 #if DEBUG || DEVELOPMENT
 

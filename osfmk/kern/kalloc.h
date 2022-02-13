@@ -351,6 +351,7 @@ kalloc_bucket_size(
  * Note: all values passed to k*free() might be in the element to be freed,
  *       temporaries must be taken, and the resetting to be done prior to free.
  */
+#ifndef __DARLING__
 #define kfree(elem, size) ({ \
 	_Static_assert(sizeof(elem) == sizeof(void *), "elem isn't pointer sized"); \
 	__auto_type __kfree_eptr = &(elem); \
@@ -359,6 +360,7 @@ kalloc_bucket_size(
 	*__kfree_eptr = (__typeof__(__kfree_elem))NULL; \
 	(kfree)((void *)__kfree_elem, __kfree_size); \
 })
+#endif
 
 #define kheap_free(heap, elem, size) ({ \
 	_Static_assert(sizeof(elem) == sizeof(void *), "elem isn't pointer sized"); \
