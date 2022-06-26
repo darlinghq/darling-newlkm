@@ -21,9 +21,10 @@
  *===-----------------------------------------------------------------------===
  */
 
+#ifndef __clang__
+
 #ifdef __DARLING__
 #include_next <stdatomic.h>
-#ifndef __clang__
 #ifndef DARLING_GCC_STDATOMIC_H
 #define DARLING_GCC_STDATOMIC_H
 enum memory_order {
@@ -49,11 +50,17 @@ enum memory_order {
 #define __c11_atomic_fetch_or(_ptr, _val, _order) __atomic_or_fetch(_ptr, _val, _order)
 #define __c11_atomic_fetch_xor(_ptr, _val, _order) __atomic_xor_fetch(_ptr, _val, _order)
 #endif // DARLING_GCC_STDATOMIC_H
-#endif
+
+#else // !__DARLING__
+#error unsupported compiler
+#endif // __DARLING__
+
 #else
 
+#ifndef __DARLING__
 #ifndef __clang__
 #error unsupported compiler
+#endif
 #endif
 
 #ifndef __CLANG_STDATOMIC_H
@@ -62,7 +69,7 @@ enum memory_order {
 /* If we're hosted, fall back to the system's stdatomic.h. FreeBSD, for
  * example, already has a Clang-compatible stdatomic.h header.
  */
-#if __STDC_HOSTED__ && __has_include_next(<stdatomic.h>)
+#if !defined(DARLING) && __STDC_HOSTED__ && __has_include_next(<stdatomic.h>)
 # include_next <stdatomic.h>
 #else
 
@@ -226,5 +233,5 @@ void atomic_flag_clear_explicit(volatile atomic_flag *, memory_order);
 
 #endif /* __STDC_HOSTED__ */
 #endif /* __CLANG_STDATOMIC_H */
-#endif // !__DARLING__
+#endif // !__clang__
 
