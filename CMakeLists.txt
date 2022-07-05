@@ -121,20 +121,15 @@ else()
 endif()
 
 add_custom_target(lkm
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}"
-	COMMENT "Building the Linux kernel module"
-	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-	DEPENDS
-		lkm_generate
-		rtsig_h
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make
+	COMMENT "Darling no longer requires building the kernel module. There is no need to run `make lkm` anymore"
 )
 
 add_custom_target(lkm_install
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}" install && depmod
-	COMMENT "Installing the Linux kernel module"
-	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make
+	COMMENT "Darling no longer requires building the kernel module. There is no need to run `make lkm_install` anymore"
+)
 
 add_custom_target(lkm_clean
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make MIGDIR=${CMAKE_CURRENT_BINARY_DIR} MIGDIR_REL=${MIGDIR_REL} "EXTRA_CFLAGS=${LKM_CLANG_COMPAT_FLAGS}" clean
-	COMMENT "Cleaning the Linux kernel module build folder"
-	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/lkm-make
+	COMMENT "Darling no longer requires building the kernel module. There is no need to run `make lkm_clean` anymore")

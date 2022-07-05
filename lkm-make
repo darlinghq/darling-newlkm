@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # So that the user can see at least some build progress
-unset MFLAGS
-unset MAKEFLAGS
+# unset MFLAGS
+# unset MAKEFLAGS
 
-exec make "$@"
+# exec make "$@"
 
